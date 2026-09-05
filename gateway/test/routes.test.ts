@@ -3,6 +3,7 @@ import express from "express";
 import type { Server } from "http";
 import { createApp } from "../src/index.js";
 import { MemoryKeyStore } from "../src/keys.js";
+import { MemoryReceiptLog } from "../src/receipts.js";
 
 let base = "";
 let server: Server;
@@ -19,7 +20,7 @@ async function boot() {
   const stubPort = await new Promise<number>((r) => {
     const listener = stub.listen(0, () => r((listener.address() as any).port));
   });
-  const app = createApp({ fallbackUpstream: `http://127.0.0.1:${stubPort}` });
+  const app = createApp({ fallbackUpstream: `http://127.0.0.1:${stubPort}`, receipts: new MemoryReceiptLog() });
   const port = await new Promise<number>((r) =>
     (server = app.listen(0, () => r((server.address() as any).port))),
   );
@@ -87,5 +88,26 @@ describe("routes", () => {
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }
+  });
+
+  it("records hashes-only receipts per call", async () => {
+    const chat: any = await (
+      await fetch(`${base}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "llama-3.1-8b", messages: [{ role: "user", content: "secret-prompt" }] }),
+      })
+    ).json();
+    expect(chat.tor_receipt).toMatch(/^[0-9a-f]{64}$/);
+
+    const list: any = await (await fetch(`${base}/api/receipts?limit=5`)).json();
+    const mine = list.data.find((r: any) => r.id === chat.tor_receipt);
+    expect(mine).toBeDefined();
+    expect(JSON.stringify(mine)).not.toContain("secret-prompt");
+    expect(JSON.stringify(mine)).not.toContain("stubbed");
+
+    const one: any = await (await fetch(`${base}/api/receipts/${chat.tor_receipt}`)).json();
+    expect(one.id).toBe(chat.tor_receipt);
+    expect(await (await fetch(`${base}/api/receipts/nope`)).status).toBe(404);
   });
 });

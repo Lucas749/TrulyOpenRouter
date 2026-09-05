@@ -4,6 +4,7 @@ import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, type HostInfo } from "./registry.js";
 import { issueKey, MemoryKeyStore, verifyKey, type KeyScopes } from "./keys.js";
+import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
 import { proxyChat, selectUpstream } from "./upstream.js";
 
 export interface GatewayOptions {
@@ -14,6 +15,7 @@ export interface GatewayOptions {
   fallbackUpstream?: string; // e.g. http://localhost:11434
   fetchHosts?: (modelId: string) => Promise<HostInfo[]>;
   keys?: MemoryKeyStore;
+  receipts?: MemoryReceiptLog;
 }
 
 async function resolveHosts(opts: GatewayOptions, modelId: string): Promise<HostInfo[]> {
@@ -83,12 +85,40 @@ export function createApp(opts: GatewayOptions = {}) {
         }
       }
       const fallback = opts.fallbackUpstream ?? process.env.UPSTREAM_URL;
-      const { endpoint } = await selectUpstream(model, () => resolveHosts(opts, model), fallback);
-      res.json(await proxyChat(endpoint, req.body));
+      const t0 = Date.now();
+      const { endpoint, host } = await selectUpstream(model, () => resolveHosts(opts, model), fallback);
+      const out = await proxyChat(endpoint, req.body);
+      if (opts.receipts) {
+        opts.receipts.append(
+          buildReceipt({
+            promptHash: sha256hex(JSON.stringify(req.body.messages ?? req.body)),
+            completionHash: sha256hex(JSON.stringify(out)),
+            modelDigest: host?.modelDigest ?? "fallback",
+            host: host?.address ?? "fallback",
+            priceWei: String(host?.pricePerReq ?? 0),
+            latencyMs: Date.now() - t0,
+          }),
+        );
+      }
+      res.json({ ...(out as object), tor_receipt: opts.receipts?.list(1)[0]?.id });
     } catch (e: any) {
       const code = String(e?.message ?? "").startsWith("no hosts") ? 404 : 502;
       res.status(code).json({ error: { message: String(e?.message ?? e), type: "upstream_error" } });
     }
+  });
+
+  app.get("/api/receipts", (req, res) => {
+    const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+    res.json({ data: opts.receipts?.list(limit) ?? [] });
+  });
+
+  app.get("/api/receipts/:id", (req, res) => {
+    const r = opts.receipts?.get(req.params.id);
+    if (!r) {
+      res.status(404).json({ error: { message: "unknown receipt", type: "not_found" } });
+      return;
+    }
+    res.json(r);
   });
 
   // Dev key management. Production issues keys from the web app (Privy session) instead.
