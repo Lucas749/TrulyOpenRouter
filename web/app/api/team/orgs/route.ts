@@ -5,7 +5,17 @@ import { saveQuorumKey } from "../../../../lib/quorum-keys";
 export async function GET() {
   try {
     const orgs: any = await privyApi("GET", "/organizations");
-    return NextResponse.json({ data: orgs.data ?? orgs ?? [] });
+    const list: any[] = orgs.data ?? orgs ?? [];
+    const wallets: any = await privyApi("GET", "/wallets").catch(() => ({ data: [] }));
+    const all: any[] = wallets.data ?? [];
+    return NextResponse.json({
+      data: list.map((o: any) => ({
+        ...o,
+        wallets: all
+          .filter((w: any) => w.entity?.id === o.id)
+          .map((w: any) => ({ id: w.id, address: w.address, policy_ids: w.policy_ids ?? [] })),
+      })),
+    });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }
