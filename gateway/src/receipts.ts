@@ -15,6 +15,7 @@ export interface ReceiptInput {
   tokensOut?: number;
   amountCredits?: string; // metered settle amount; "0" when unsettled
   modelId?: string; // for per-model aggregates
+  user?: string; // payer handle: key:<prefix> or "dev" — pseudonymous, for usage history
 }
 
 // Money rule (SPEC §7): 1 credit ≡ $0.001 BY DEFINITION. Displays derive $ as

@@ -115,7 +115,35 @@ describe("routes", () => {
 
     const one: any = await (await fetch(`${base}/api/receipts/${chat.tor_receipt}`)).json();
     expect(one.id).toBe(chat.tor_receipt);
+    expect(one.user).toBe("dev");
     expect(await (await fetch(`${base}/api/receipts/nope`)).status).toBe(404);
+  });
+
+  it("serves per-payer usage history and credits", async () => {
+    const { MemoryReceiptLog } = await import("../src/receipts.js");
+    const { buildReceipt } = await import("../src/receipts.js");
+    const receipts = new MemoryReceiptLog();
+    receipts.append(
+      buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", host: "h", priceWei: "1", latencyMs: 1, user: "key:abc" }),
+    );
+    receipts.append(
+      buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", host: "h", priceWei: "1", latencyMs: 1, user: "dev" }),
+    );
+    const app = createApp({ receipts });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const mine: any = await (await fetch(`http://127.0.0.1:${port}/api/users/key:abc/receipts`)).json();
+      expect(mine.data).toHaveLength(1);
+      const cred: any = await (
+        await fetch(`http://127.0.0.1:${port}/api/users/0x1111111111111111111111111111111111111111/credits`)
+      ).json();
+      expect(cred).toMatchObject({ credits: null }); // no vault configured
+      const nonAddr: any = await (await fetch(`http://127.0.0.1:${port}/api/users/dev/credits`)).json();
+      expect(nonAddr).toMatchObject({ credits: null });
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
   });
 
   it("settles metered debits per call", async () => {

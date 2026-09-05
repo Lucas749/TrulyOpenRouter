@@ -157,6 +157,7 @@ export function createApp(opts: GatewayOptions = {}) {
         tokensIn,
         tokensOut,
         modelId: model,
+        user: keyPrefix ? `key:${keyPrefix}` : "dev",
       };
       if (opts.receipts) opts.receipts.append(buildReceipt(receiptInput));
       const receipt = opts.receipts?.list(1)[0]?.id;
@@ -301,6 +302,34 @@ export function createApp(opts: GatewayOptions = {}) {
       earningsWei,
       receipts: mine.slice(0, 20),
     });
+  });
+
+  // Usage slice backend: vault credit balance + this payer's receipt history.
+  // :id is the payer handle ("key:<prefix>" or wallet address once web sessions map to keys).
+  app.get("/api/users/:id/receipts", (req, res) => {
+    const mine = (opts.receipts?.list(10_000) ?? []).filter((r) => r.user === req.params.id);
+    res.json({ data: mine.slice(0, 100) });
+  });
+
+  app.get("/api/users/:id/credits", async (req, res) => {
+    // Credits live onchain per wallet address; key handles have no vault account (null).
+    let credits: string | null = null;
+    if (opts.vaultAddress && opts.rpcUrl && /^0x[0-9a-fA-F]{40}$/.test(req.params.id)) {
+      try {
+        const client = createPublicClient({ transport: http(opts.rpcUrl) });
+        credits = String(
+          await client.readContract({
+            address: opts.vaultAddress,
+            abi: parseAbi(["function credits(address) view returns (uint256)"]),
+            functionName: "credits",
+            args: [req.params.id as Address],
+          }),
+        );
+      } catch {
+        credits = null;
+      }
+    }
+    res.json({ id: req.params.id, credits });
   });
 
   // Network stats for the landing strip + explorer. Only real aggregates; anything
