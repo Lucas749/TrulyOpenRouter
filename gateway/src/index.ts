@@ -8,6 +8,7 @@ import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
 import { MemoryHealth } from "./health.js";
 import { createVaultDebit } from "./vault.js";
 import { MemoryHostMeta, validRegion } from "./hostmeta.js";
+import { deriveBudgetAddress } from "./budget.js";
 import { MemoryDeviceFlow } from "./device.js";
 import { proxyChat, proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
 import { createPaidFetch } from "./payer.js";
@@ -461,7 +462,19 @@ export function createApp(opts: GatewayOptions = {}) {
     const scopes = (req.body?.scopes ?? {}) as KeyScopes;
     const { key, record } = issueKey(scopes);
     opts.keys.save(record);
-    res.json({ key, prefix: record.prefix }); // key shown ONCE
+    // Proper per-key budget account: deterministic derivation from the single master
+    // (env in dev, Key Ring in prod). Funding stays an explicit operator step.
+    let budget: string | null = null;
+    const master = process.env.BUDGET_MASTER;
+    if (master) {
+      try {
+        budget = deriveBudgetAddress(master as `0x${string}`, record.prefix);
+        (opts.payerAccounts ??= {})[record.prefix] = budget;
+      } catch {
+        budget = null;
+      }
+    }
+    res.json({ key, prefix: record.prefix, budget }); // key shown ONCE
   });
 
   app.delete("/api/keys/:prefix", (req, res) => {
@@ -470,6 +483,21 @@ export function createApp(opts: GatewayOptions = {}) {
       return;
     }
     res.json({ revoked: true });
+  });
+
+  // Budget account funding status (derived address + onchain HBAR check when RPC is set).
+  app.get("/api/keys/:prefix/budget", async (req, res) => {
+    const address = opts.payerAccounts?.[req.params.prefix] ?? null;
+    let funded: boolean | null = null;
+    if (address && opts.rpcUrl) {
+      try {
+        const client = createPublicClient({ transport: http(opts.rpcUrl) });
+        funded = (await client.getBalance({ address: address as Address })) > 0n;
+      } catch {
+        funded = null;
+      }
+    }
+    res.json({ prefix: req.params.prefix, budget: address, funded });
   });
 
   return app;
