@@ -1,43 +1,38 @@
-# What I need from you (checklist)
+# What I need from you (checklist) — updated 2026-09-05
 
 Work through top to bottom. Anything marked PUBLIC is safe to paste in chat.
 Anything marked SECRET stays in your env files — never paste secrets, seeds, or passwords.
 
-## 1. Hedera testnet (portal.hedera.com) — ~20 min
+## 1. Hedera testnet — ONE click left
 
-- [ ] Create **3 ECDSA** testnet accounts (ECDSA, not ED25519 — x402 needs ECDSA):
-  - `DEPLOYER` — deploys Registry + Vault (one-time, ~HBAR fees)
-  - `AGENT` — gateway's x402 payer (needs USDC)
-  - `SERVICE` — host payee (receives USDC; per-host wallets later)
-- [ ] Fund all three with testnet HBAR: faucet.hedera.com
-- [ ] Associate testnet USDC (`0.0.429274`) on AGENT + SERVICE
-- [ ] Fund AGENT with testnet USDC: faucet.circle.com (Hedera Testnet)
-- [ ] Send me (PUBLIC): the three `0.0.xxxxx` account IDs
-- [ ] Send me (SECRET, testnet-only — worthless funds, but keep the habit): `DEPLOYER_KEY`,
-      `HEDERA_AGENT_PRIVATE_KEY`, `HEDERA_SERVICE_PRIVATE_KEY` — I export them locally, deploy,
-      run the first live paid call, then you rotate them. NEVER mainnet keys, ever.
+- [x] 3 ECDSA accounts created + funded (1000 HBAR each)
+- [x] USDC (`0.0.429274`) associated on AGENT + SERVICE (done by agent)
+- [x] Keys received, contracts deployed + verified (Registry `0xdee24d…fcf2`, Vault `0x6cb798…f8f6`)
+- [ ] **Fund AGENT `0.0.10375331` with testnet USDC: faucet.circle.com** (select Hedera Testnet,
+      paste the AGENT id, any amount ≥ 10 USDC). This single click unblocks the first live paid
+      x402 call. Nothing else needed on Hedera.
 
-What I do the minute I have them: `forge script` deploy → verify on HashScan → flip the
-gateway from fallback-Ollama to x402-paid routes → record the first real paid inference.
+## 2. Privy — done, one verification later
 
-## 2. Privy (dashboard.privy.io) — ~10 min
+- [x] App created, App ID + secret received and stored (`web/.env.local`, gitignored)
+- [ ] Enable **Email** login (dashboard.privy.io → your app → Login methods) if not already on
+- [ ] Later, when I say the web app is servable: open it, log in once with your email, tell me
+      you see your `0x…` address on the login button. That confirms the whole auth chain.
 
-- [ ] Create app → copy the **App ID** (PUBLIC, starts with `cl…`) → send it to me
-- [ ] Enable **Email** login method; leave everything else default for now
-- [ ] Keep the **App Secret** to yourself for now — I only need it when we build org
-      wallets/policies (server-side SDK); it goes in `web/.env.local`, never in chat
-
-What I do: `NEXT_PUBLIC_PRIVY_APP_ID` → login button goes live → subscribe flow next.
-
-## 3. Ledger (your machine + device + USB) — ~15 min
+## 3. Ledger (your machine + device + USB) — ~15 min, do anytime
 
 - [ ] `npm i -g @ledgerhq/wallet-cli` → `wallet-cli genuine-check` (device + Ethereum app)
 - [ ] `wallet-cli skill install --agent cursor`
 - [ ] Store a ring password in your OS keychain, then:
       `WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w) wallet-cli ring init`
-      (one device tap; Linux: `secret-tool` variant — see LEDGER.md)
+      (one device tap)
 - [ ] Send me (PUBLIC, not secrets): the output of `wallet-cli ring keys` (key names only)
 - [ ] Send me NOTHING ELSE. No password, no seed, no recovery phrase — ever. If I ever ask,
       it's a bug; say no.
 
-What I do: secrets-broker wiring + VPS enrollment + tap-gated withdrawals; you tap on demand.
+## 4. Two decisions (reply in one line each, no work)
+
+- [ ] Genesis host models: your Ollama already has qwen3 27B + others — which 1–2 models should
+      the genesis hosts serve for the demo? (Default if you don't answer: `qwen2.5:0.5b` for speed
+      + one 27B to show routing by price.)
+- [ ] Video: who records the ≤5min demo takes (you, or do we script + screen-record here)?
