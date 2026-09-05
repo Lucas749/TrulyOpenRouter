@@ -4,6 +4,7 @@ import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { MockBanner, useMock } from "../../../components/mock";
 import { MOCK_HOSTS } from "../../../../lib/mock";
+import { accountUrl, topicUrl, txUrl } from "../../../../lib/chain";
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:4021";
 
@@ -35,7 +36,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[920px] items-center justify-between px-6">
           <Link href="/network" className="text-sm text-[#6E6E73] hover:text-black">← Network</Link>
-          <span className="font-mono text-sm">{address.slice(0, 10)}…</span>
+          <a href={accountUrl(address)} target="_blank" rel="noreferrer" className="font-mono text-sm text-[#2563EB]">{address.slice(0, 10)}… ↗</a>
           <button onClick={toggleMock} className="font-mono text-xs text-[#6E6E73] underline">{mock ? "real" : "mock"}</button>
         </div>
       </header>
@@ -74,6 +75,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
                     <div key={r.id} className="flex flex-wrap items-center gap-x-3 rounded-xl border border-[#E5E5E0] px-4 py-2.5 font-mono text-xs">
                       <span className="text-[#0B7A5D]">✓ {r.id.slice(0, 12)}…</span>
                       <span className="text-[#6E6E73]">{r.priceWei} wei · {(r.tokensIn ?? 0) + (r.tokensOut ?? 0)} tok · {r.latencyMs}ms</span>
+                      <a href={r.debitTx ? txUrl(r.debitTx) : topicUrl()} target="_blank" rel="noreferrer" className="ml-auto text-[#2563EB]">proof ↗</a>
                     </div>
                   ))}
                 </div>
