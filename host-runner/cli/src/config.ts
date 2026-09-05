@@ -28,5 +28,6 @@ export function saveConfig(cfg: TorConfig): void {
 }
 
 export function validCode(input: string): boolean {
-  return /^[A-Z2-9]{6}$/.test(input.trim().toUpperCase());
+  // Matches the gateway alphabet exactly (no 0/1/O/I confusables) — typos fail fast locally.
+  return /^[A-HJ-KM-NP-Z2-9]{6}$/.test(input.trim().toUpperCase());
 }
