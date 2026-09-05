@@ -11,11 +11,13 @@ import "../src/SubscriptionVault.sol";
 contract Deploy is Script {
     function run() external {
         uint256 key = vm.envUint("DEPLOYER_KEY");
+        // Explicit gateway role — NEVER msg.sender (scripts run as the default sender locally).
+        address gateway = vm.envAddress("GATEWAY_ADDR");
         vm.startBroadcast(key);
 
         HostRegistry registry = new HostRegistry(10 ether, 1 days);
-        // gateway set post-deploy via setGateway; daily quota 2000 credits; 1 credit = 1e15 wei
-        SubscriptionVault vault = new SubscriptionVault(msg.sender, 2_000, 1e15);
+        // gateway set at construction; daily quota 2000 credits; 1 credit = 1e15 wei
+        SubscriptionVault vault = new SubscriptionVault(gateway, 2_000, 1e15);
         vault.setPlan(0, 10_000 * 1e15, 10_000); // $10-style plan: 10k credits
 
         vm.stopBroadcast();
