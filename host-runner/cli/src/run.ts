@@ -8,7 +8,7 @@ import { networkInterfaces } from "os";
 import { createPublicClient, createWalletClient, http, parseAbi } from "viem";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { configDir, loadConfig, saveConfig } from "./config.js";
-import { banner, box, err, ok, Spinner, warn } from "./ui.js";
+import { banner, box, ok, Spinner, warn } from "./ui.js";
 
 const REGISTRY_ABI = parseAbi([
   "function register(string endpoint, string modelId, bytes32 modelDigest, bytes32 imageDigest, uint256 pricePerReq, uint256 pricePer1kTokens, bytes teePubkey) payable",
@@ -143,21 +143,28 @@ export async function run(o: RunOptions): Promise<void> {
     await sh("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d", "guard"]);
     spin.stop(ok("guard up — set HOST_WALLET to your 0.0.x id for paid serving"));
 
-    // 9. sync to backend: region + owner claim
+    // 9. sync to backend: region + owner claim (best-effort — serving works regardless)
     if (o.region) {
-      await api(o.gateway, `/api/hosts/${account.address}/meta`, { method: "POST", body: JSON.stringify({ region: o.region }) });
-      console.log(ok(`region ${o.region} (self-reported)`));
+      try {
+        await api(o.gateway, `/api/hosts/${account.address}/meta`, { method: "POST", body: JSON.stringify({ region: o.region }) });
+        console.log(ok(`region ${o.region} (self-reported)`));
+      } catch (e) {
+        console.log(warn(`region sync skipped: ${String((e as Error)?.message ?? e).slice(0, 120)}`));
+      }
     }
     const me = loadConfig();
     if (me.userId) {
-      await api(o.gateway, `/api/hosts/${account.address}/owner`, { method: "POST", body: JSON.stringify({ userId: me.userId }) });
-      console.log(ok(`claimed for account ${me.userId} — see it on /host/dashboard`));
+      try {
+        await api(o.gateway, `/api/hosts/${account.address}/owner`, { method: "POST", body: JSON.stringify({ userId: me.userId }) });
+        console.log(ok(`claimed for account ${me.userId} — see it on /host/dashboard`));
+      } catch (e) {
+        console.log(warn(`claim skipped: ${String((e as Error)?.message ?? e).slice(0, 120)} — run tor-host link later`));
+      }
     } else {
       console.log(warn("not linked to a web account — run `tor-host login`, then `tor-host link`"));
     }
     console.log(box("Discoverable", [`model:    ${o.model}`, `host:     ${account.address}`, `watch:    ${o.gateway.replace(/:\d+$/, ":3002")}/network`]));
   } catch (e) {
-    console.error(err(String((e as Error)?.message ?? e).slice(0, 400)));
-    throw e;
+    throw e; // index.ts renders once
   }
 }
