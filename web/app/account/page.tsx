@@ -3,20 +3,42 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { createPublicClient, http, parseAbi } from "viem";
+import { createPublicClient, createWalletClient, custom, http, parseAbi } from "viem";
 import { hederaTestnet } from "../../lib/hedera-chains";
 import LoginButton from "../components/login-button";
 
 const VAULT = "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576";
-const VAULT_ABI = parseAbi(["function credits(address) view returns (uint256)"]);
+const VAULT_ABI = parseAbi([
+  "function credits(address) view returns (uint256)",
+  "function refund()",
+]);
 
 export default function AccountPage() {
   const { ready, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
   const [hbar, setHbar] = useState<string | null>(null);
   const [credits, setCredits] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
   const address = (user?.wallet?.address ?? wallets[0]?.address) as `0x${string}` | undefined;
+
+  async function refund() {
+    const w = wallets[0];
+    if (!w || !address) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      await w.switchChain(hederaTestnet.id);
+      const provider = await w.getEthereumProvider();
+      const walletClient = createWalletClient({ account: address, chain: hederaTestnet, transport: custom(provider) });
+      const hash = await walletClient.writeContract({ address: VAULT, abi: VAULT_ABI, functionName: "refund" });
+      setMsg(`refunded ✓ ${hash.slice(0, 18)}… — unused credits back as HBAR`);
+    } catch (e: any) {
+      setMsg(`refund failed: ${String(e?.message ?? e).slice(0, 160)}`);
+    }
+    setBusy(false);
+  }
 
   useEffect(() => {
     if (!address) return;
@@ -66,8 +88,12 @@ export default function AccountPage() {
             </div>
             <div className="flex gap-3">
               <Link href="/onboarding" className="flex h-10 flex-1 items-center justify-center rounded-full bg-black text-sm text-white">Top up $10</Link>
+              <button onClick={refund} disabled={busy || credits === "0"} className="flex h-10 flex-1 items-center justify-center rounded-full border border-black/10 text-sm disabled:opacity-40">
+                {busy ? "confirm in wallet…" : "Refund unused"}
+              </button>
               <Link href="/api" className="flex h-10 flex-1 items-center justify-center rounded-full border border-black/10 text-sm">API keys</Link>
             </div>
+            {msg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{msg}</p>}
             <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">balances read live from Hedera testnet (relay + vault {VAULT.slice(0, 10)}…)</p>
           </>
         )}
