@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Activity, CircleCheck, Clock, Cpu, ExternalLink, Receipt as ReceiptIcon, Server } from "lucide-react";
+import Globe from "../components/globe";
 import { MockBanner, useMock } from "../components/mock";
 import { MOCK_HOSTS, type MockHost } from "../../lib/mock";
 
@@ -108,8 +109,10 @@ export default function NetworkPage() {
 
         <div className="flex min-h-[380px] flex-col overflow-hidden rounded-[14px] border border-[#0A0E14] bg-[#0A0E14] sm:min-h-[440px]">
           <div className="flex items-center gap-2 px-[18px] pt-4 font-mono text-[10px] uppercase tracking-[0.12em] text-[#6B7686]">◉ Live network</div>
-          <div className="flex flex-1 items-center justify-center px-6 text-center">
-            <p className="max-w-sm font-mono text-xs leading-relaxed text-[#6B7686]">interactive globe lands here — host nodes + settling arcs, fed by the table below {mock ? "(mock nodes)" : "(live registry)"}</p>
+          <div className="relative min-h-[300px] flex-1">
+            <div className="absolute inset-0">
+              <Globe hosts={shownHosts.map((h: any) => ({ id: h.address, region: h.region ?? null, active: h.active }))} />
+            </div>
           </div>
           <div className="flex items-end justify-between gap-3 p-[14px_18px]">
             <div className="flex items-center gap-1.5 text-[11px] text-[#8B95A5]">
