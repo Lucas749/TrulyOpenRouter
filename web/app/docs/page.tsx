@@ -1,0 +1,89 @@
+"use client";
+
+import Link from "next/link";
+import { useState } from "react";
+
+function Snippet({ title, code }: { title: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-5">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">{title}</span>
+        <button onClick={copy} className="rounded-full bg-[#F4F4F4] px-3 py-1 font-mono text-xs hover:bg-[#ECECEC]">{copied ? "copied ✓" : "copy"}</button>
+      </div>
+      <pre className="m-0 overflow-x-auto rounded-lg bg-[#0D0D0D] p-4 font-mono text-xs leading-relaxed text-[#E6EAF0]">{code}</pre>
+    </div>
+  );
+}
+
+export default function DocsPage() {
+  return (
+    <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
+      <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-[920px] items-center justify-between px-6">
+          <Link href="/" className="text-[18px] font-semibold">Truly<span className="text-[15px] font-normal text-[#8F8F8F]">OpenRouter</span></Link>
+          <nav className="flex items-center gap-6 text-sm font-medium text-[#6E6E73]">
+            <Link href="/chat" className="hover:text-black">Chat</Link>
+            <Link href="/network" className="hover:text-black">Network</Link>
+            <Link href="/host" className="hover:text-black">Serve</Link>
+          </nav>
+        </div>
+      </header>
+      <main className="mx-auto flex max-w-[920px] flex-col gap-6 px-6 py-10">
+        <div>
+          <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">API docs</h1>
+          <p className="mb-0 mt-2 text-[#5D5D5D]">OpenAI-compatible. Two env vars and any harness works — opencode, Cursor, Cline, or plain curl. Testnet gateway: <span className="font-mono text-sm text-black">http://127.0.0.1:4121</span> (local) · contracts on Hedera testnet.</p>
+        </div>
+        <Snippet title="Python (openai SDK)" code={`from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:4121/v1",
+    api_key="tor_sk_…",  # create at /api
+)
+
+response = client.chat.completions.create(
+    model="qwen2.5:0.5b",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(response.choices[0].message.content)`} />
+        <Snippet title="opencode provider" code={`# opencode.json — custom provider pointing at the router
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "trulyopenrouter/qwen2.5-7b",
+  "provider": {
+    "trulyopenrouter": {
+      "options": { "baseURL": "http://127.0.0.1:4121/v1", "apiKey": "tor_sk_…" }
+    }
+  }
+}`} />
+        <Snippet title="Keys + receipts (curl)" code={`# issue a scoped key (shown once)
+curl -X POST http://127.0.0.1:4121/api/keys \\
+  -H 'Content-Type: application/json' \\
+  -d '{"scopes":{"models":["qwen2.5:0.5b"]}}'
+
+# chat — response carries tor_receipt + tor_settled
+curl -X POST http://127.0.0.1:4121/v1/chat/completions \\
+  -H 'Content-Type: application/json' \\
+  -H "Authorization: Bearer tor_sk_…" \\
+  -d '{"model":"qwen2.5:0.5b","messages":[{"role":"user","content":"hi"}]}'
+
+# verify the receipt (hashes only — bodies never leave the hosts)
+curl http://127.0.0.1:4121/api/receipts/<id>
+
+# network truth
+curl http://127.0.0.1:4121/api/hosts
+curl http://127.0.0.1:4121/api/stats`} />
+        <div className="rounded-[14px] border border-[#E5E5E0] bg-[#F7F7F5] p-5 text-sm leading-relaxed text-[#5D5D5D]">
+          <p className="m-0 mb-2 font-medium text-black">Money path (Hedera testnet)</p>
+          <p className="m-0 font-mono text-xs leading-relaxed">Registry 0xa454…dc3 · Vault 0xd75c…f576 · USDC 0.0.429274 · facilitator api.testnet.blocky402.com · 1 credit ≡ $0.001 by definition · contract value unit is tinybar (sent/1e10) — see SPEC money rule.</p>
+          <p className="mb-0 mt-2"><Link href="/api" className="text-[#2563EB] underline">Manage keys →</Link></p>
+        </div>
+      </main>
+    </div>
+  );
+}
