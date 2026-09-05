@@ -1,0 +1,10 @@
+{
+  "name": "tor-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@hiero-ledger/sdk": "^2.85.0",
+    "dotenv": "^16.4.5"
+  }
+}
