@@ -27,8 +27,8 @@
     "path": "subscribe(AGENT,10HBAR) -> gateway routes registry host (docker Ollama) -> receipt -> vault debit -> host withdraw",
     "verified": "credits 10000->9898, hostEarnings 92->0"
   },
-  "firstGatedLoop": {
-    "path": "gateway pays host x402 gate itself (AGENT USDC) + vault metered debit + receipt, single call",
+  "hcsAuditTopic": "0.0.10379640",
+  "firstGatedLoop": {    "path": "gateway pays host x402 gate itself (AGENT USDC) + vault metered debit + receipt, single call",
     "verified": "AGENT USDC 19999000->19998000 (-$0.001), vault credits -2, receipt settled:true",
     "note": "SERVICE-side USDC settles async via Blocky402 facilitator"
   },
