@@ -8,7 +8,8 @@ import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
 import { MemoryHealth } from "./health.js";
 import { createVaultDebit } from "./vault.js";
 import { MemoryHostMeta, validRegion } from "./hostmeta.js";
-import { proxyChat, selectUpstream } from "./upstream.js";
+import { proxyChat, proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
+import { createPaidFetch } from "./payer.js";
 import { settleCall, type DebitFn } from "./settle.js";
 
 export interface GatewayOptions {
@@ -21,6 +22,7 @@ export interface GatewayOptions {
   fetchHosts?: (modelId: string) => Promise<HostInfo[]>;
   keys?: MemoryKeyStore;
   receipts?: MemoryReceiptLog;
+  x402?: X402Creds; // gateway payer for gated hosts (Key Ring in prod, env in dev)
   // key prefix -> vault account. Production derives a budget account per key at issuance (SPEC §4).
   payerAccounts?: Record<string, string>;
   meta?: MemoryHostMeta; // self-reported regions; absent = collection off
@@ -145,7 +147,9 @@ export function createApp(opts: GatewayOptions = {}) {
       const { endpoint, host } = await selectUpstream(model, () => resolveHosts(opts, model), fallback);
       selectedHost = host;
       emit("submitted", { endpoint });
-      const out = await proxyChat(endpoint, req.body);
+      const paidFetch = opts.x402 ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }) : undefined;
+      const { out, paid } = await proxyWithFallback(endpoint, req.body, opts.x402, paidFetch, () => emit("paying", {}));
+      if (paid) emit("paid-host", {});
       emit("running", {});
       const usage = (out as any)?.usage ?? {};
       const tokensIn = Number(usage.prompt_tokens ?? 0);
@@ -429,6 +433,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
   if (rpcUrl) opts.rpcUrl = rpcUrl;
   if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;
+  if (process.env.X402_PAYER_ID && process.env.X402_PAYER_KEY) {
+    opts.x402 = { accountId: process.env.X402_PAYER_ID, privateKey: process.env.X402_PAYER_KEY };
+  }
   if (process.env.VAULT_ADDRESS && rpcUrl && process.env.OPERATOR_KEY) {
     opts.settle = createVaultDebit({
       rpcUrl,
