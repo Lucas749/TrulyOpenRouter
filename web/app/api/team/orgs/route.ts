@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { newAuthKey, privyApi } from "../../../../lib/privy-server";
+import { newAuthKeypair, privyApi } from "../../../../lib/privy-server";
+import { saveQuorumKey } from "../../../../lib/quorum-keys";
 
 export async function GET() {
   try {
@@ -19,11 +20,14 @@ export async function POST(req: Request) {
     if (!name || typeof name !== "string" || name.length > 64) {
       return NextResponse.json({ error: "name required (<=64 chars)" }, { status: 400 });
     }
+    const { publicKey, privateKey } = newAuthKeypair();
     const quorum: any = await privyApi("POST", "/key_quorums", {
-      public_keys: [newAuthKey()],
+      public_keys: [publicKey],
       authorization_threshold: 1,
       display_name: `${name}-admins`,
     });
+    // Server holds this key -> one-click approvals below. Pre-store orgs lack it (see quorum-keys.ts).
+    saveQuorumKey(quorum.id, privateKey);
     const org: any = await privyApi("POST", "/organizations", {
       display_name: name,
       default_key_quorum_id: quorum.id,

@@ -28,3 +28,13 @@ export function newAuthKey(): string {
   const { publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   return publicKey.export({ format: "der", type: "spki" }).toString("base64");
 }
+
+/// @notice Fresh keypair: public goes to Privy, private stays server-side (quorum-keys store).
+/// Format matches privy-sign.ts (`wallet-auth:<base64 PKCS8>`).
+export function newAuthKeypair(): { publicKey: string; privateKey: string } {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  return {
+    publicKey: publicKey.export({ format: "der", type: "spki" }).toString("base64"),
+    privateKey: "wallet-auth:" + privateKey.export({ format: "der", type: "pkcs8" }).toString("base64"),
+  };
+}
