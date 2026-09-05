@@ -80,14 +80,24 @@ export function createApp(opts: GatewayOptions = {}) {
 
   app.get("/v1/models", async (_req, res) => {
     const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    const now = Date.now();
+    const all = opts.receipts?.list(10_000) ?? [];
+    const day = 86_400_000;
     const data = [];
     for (const id of models) {
       const hosts = await resolveHosts(opts, id);
+      const mine = all.filter((r) => r.modelId === id && now - r.ts < day);
+      const tokens = mine.reduce((a, r) => a + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0);
+      const credits = mine.reduce((a, r) => a + BigInt(r.amountCredits ?? "0"), 0n);
       data.push({
         id,
         owned_by: "trulyopenrouter",
         hosts: hosts.length,
         minPricePerReq: hosts.length ? String(hosts.reduce((a, b) => (a.pricePerReq < b.pricePerReq ? a : b)).pricePerReq) : null,
+        calls24h: mine.length,
+        tokens24h: tokens,
+        // $ = credits × 0.001 by defined unit (receipts.ts money rule)
+        avgCreditsPer1kTokens: tokens > 0 ? String((credits * 1000n) / BigInt(tokens)) : null,
       });
     }
     res.json({ data });

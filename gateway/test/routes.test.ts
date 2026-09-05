@@ -350,4 +350,25 @@ describe("routes", () => {
       await new Promise<void>((r) => srv.close(() => r()));
     }
   });
+
+  it("enriches models with 24h cost figures", async () => {
+    const { MemoryReceiptLog } = await import("../src/receipts.js");
+    const { buildReceipt } = await import("../src/receipts.js");
+    const receipts = new MemoryReceiptLog();
+    receipts.append(
+      buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", modelId: "demo-model", host: "h", priceWei: "5", latencyMs: 1, tokensIn: 400, tokensOut: 600, amountCredits: "4" }),
+    );
+    const app = createApp({ knownModels: ["demo-model", "idle-model"], fetchHosts: async () => [], receipts });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const m: any = await (await fetch(`http://127.0.0.1:${port}/v1/models`)).json();
+      const demo = m.data.find((x: any) => x.id === "demo-model");
+      expect(demo).toMatchObject({ calls24h: 1, tokens24h: 1000, avgCreditsPer1kTokens: "4" });
+      const idle = m.data.find((x: any) => x.id === "idle-model");
+      expect(idle).toMatchObject({ calls24h: 0, tokens24h: 0, avgCreditsPer1kTokens: null });
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
 });
