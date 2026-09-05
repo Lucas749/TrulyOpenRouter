@@ -277,4 +277,37 @@ describe("routes", () => {
       await new Promise<void>((r) => srv.close(() => r()));
     }
   });
+
+  it("records upstream failures into host reliability", async () => {
+    const { MemoryHealth } = await import("../src/health.js");
+    const health = new MemoryHealth();
+    const host = {
+      address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      endpoint: "http://127.0.0.1:1",
+      modelId: "demo-model",
+      modelDigest: "0xabc",
+      pricePerReq: 5n,
+      pricePer1kTokens: 1n,
+      stake: 7n,
+      active: true,
+      lastHeartbeat: 0,
+      latencyMs: 200,
+      reliability: 1,
+    };
+    const app = createApp({ knownModels: ["demo-model"], fetchHosts: async () => [host], health });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const r = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "demo-model", messages: [] }),
+      });
+      expect(r.status).toBe(502); // nothing listens on :1
+      const hosts: any = await (await fetch(`http://127.0.0.1:${port}/api/hosts`)).json();
+      expect(hosts.data[0]).toMatchObject({ fail24h: 1, reliability: 0 });
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
 });

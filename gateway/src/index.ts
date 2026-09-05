@@ -5,6 +5,7 @@ import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, type HostInfo } from "./registry.js";
 import { issueKey, MemoryKeyStore, verifyKey, type KeyScopes } from "./keys.js";
 import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
+import { MemoryHealth } from "./health.js";
 import { MemoryHostMeta, validRegion } from "./hostmeta.js";
 import { proxyChat, selectUpstream } from "./upstream.js";
 import { settleCall, type DebitFn } from "./settle.js";
@@ -20,6 +21,7 @@ export interface GatewayOptions {
   keys?: MemoryKeyStore;
   receipts?: MemoryReceiptLog;
   meta?: MemoryHostMeta; // self-reported regions; absent = collection off
+  health?: MemoryHealth; // upstream failure window; absent = collection off
   settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
 }
 
@@ -92,6 +94,7 @@ export function createApp(opts: GatewayOptions = {}) {
   });
 
   app.post("/v1/chat/completions", async (req, res) => {
+    let selectedHost: HostInfo | null = null;
     try {
       const model = req.body?.model;
       if (typeof model !== "string" || !model) {
@@ -127,6 +130,7 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       emit("routed", { model });
       const { endpoint, host } = await selectUpstream(model, () => resolveHosts(opts, model), fallback);
+      selectedHost = host;
       emit("submitted", { endpoint });
       const out = await proxyChat(endpoint, req.body);
       emit("running", {});
@@ -167,6 +171,7 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       res.json({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled });
     } catch (e: any) {
+      if (selectedHost && opts.health) opts.health.recordFail(selectedHost.address);
       const code = String(e?.message ?? "").startsWith("no hosts") ? 404 : 502;
       res.status(code).json({ error: { message: String(e?.message ?? e), type: "upstream_error" } });
     }
@@ -197,21 +202,25 @@ export function createApp(opts: GatewayOptions = {}) {
     const all = opts.receipts?.list(10_000) ?? [];
     const day = 86_400_000;
     res.json({
-      data: [...seen.values()].map((h) => ({
-        address: h.address,
-        endpoint: h.endpoint,
-        modelId: h.modelId,
-        modelDigest: h.modelDigest,
-        pricePerReq: String(h.pricePerReq),
-        pricePer1kTokens: String(h.pricePer1kTokens),
-        stake: String(h.stake),
-        active: h.active,
-        lastHeartbeat: h.lastHeartbeat,
-        calls24h: all.filter((r) => r.host === h.address && now - r.ts < day).length,
-        region: opts.meta?.regionOf(h.address) ?? null, // self-reported, never verified geo
-        latencyMs: null, // observed EMA not tracked yet
-        reliability: null, // success-rate window not tracked yet
-      })),
+      data: [...seen.values()].map((h) => {
+        const success24h = all.filter((r) => r.host === h.address && now - r.ts < day).length;
+        return {
+          address: h.address,
+          endpoint: h.endpoint,
+          modelId: h.modelId,
+          modelDigest: h.modelDigest,
+          pricePerReq: String(h.pricePerReq),
+          pricePer1kTokens: String(h.pricePer1kTokens),
+          stake: String(h.stake),
+          active: h.active,
+          lastHeartbeat: h.lastHeartbeat,
+          calls24h: success24h,
+          fail24h: opts.health?.fails24h(h.address) ?? 0,
+          region: opts.meta?.regionOf(h.address) ?? null, // self-reported, never verified geo
+          latencyMs: null, // observed EMA not tracked yet
+          reliability: opts.health?.reliability(success24h, h.address) ?? null,
+        };
+      }),
     });
   });
 
