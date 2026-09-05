@@ -5,6 +5,7 @@ import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, type HostInfo } from "./registry.js";
 import { issueKey, MemoryKeyStore, verifyKey, type KeyScopes } from "./keys.js";
 import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
+import { MemoryHostMeta, validRegion } from "./hostmeta.js";
 import { proxyChat, selectUpstream } from "./upstream.js";
 import { settleCall, type DebitFn } from "./settle.js";
 
@@ -18,6 +19,7 @@ export interface GatewayOptions {
   fetchHosts?: (modelId: string) => Promise<HostInfo[]>;
   keys?: MemoryKeyStore;
   receipts?: MemoryReceiptLog;
+  meta?: MemoryHostMeta; // self-reported regions; absent = collection off
   settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
 }
 
@@ -206,10 +208,26 @@ export function createApp(opts: GatewayOptions = {}) {
         active: h.active,
         lastHeartbeat: h.lastHeartbeat,
         calls24h: all.filter((r) => r.host === h.address && now - r.ts < day).length,
+        region: opts.meta?.regionOf(h.address) ?? null, // self-reported, never verified geo
         latencyMs: null, // observed EMA not tracked yet
         reliability: null, // success-rate window not tracked yet
       })),
     });
+  });
+
+  // Hosts self-report their region slug. Validated, overwrite-only, no auth in dev
+  // (production: signature check against the host key — see SPEC).
+  app.post("/api/hosts/:address/meta", (req, res) => {
+    if (!opts.meta) {
+      res.status(501).json({ error: { message: "host meta not configured", type: "unavailable" } });
+      return;
+    }
+    if (!validRegion(req.body?.region)) {
+      res.status(400).json({ error: { message: "region must match [a-z0-9-]{2,32}", type: "invalid_request" } });
+      return;
+    }
+    opts.meta.setRegion(req.params.address, req.body.region);
+    res.json({ address: req.params.address, region: req.body.region });
   });
 
   // Network stats for the landing strip + explorer. Only real aggregates; anything
@@ -250,7 +268,6 @@ export function createApp(opts: GatewayOptions = {}) {
     }
     res.json({
       hostsOnline: hosts.filter((h) => h.active).length,
-      regions: null, // self-reported regions not collected yet (SPEC)
       modelsServed: models.filter((m) => hosts.some((h) => h.modelId === m)).length,
       models,
       requests24h: last24h.length,
@@ -261,6 +278,7 @@ export function createApp(opts: GatewayOptions = {}) {
       avgCreditsPer1kTokens,
       poolBalanceWei,
       ts: now,
+      regions: opts.meta?.distinctRegions() ?? null,
     });
   });
 

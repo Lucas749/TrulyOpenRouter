@@ -247,4 +247,34 @@ describe("routes", () => {
       await new Promise<void>((r) => srv.close(() => r()));
     }
   });
+
+  it("collects self-reported regions and counts them in stats", async () => {
+    const { MemoryHostMeta } = await import("../src/hostmeta.js");
+    const meta = new MemoryHostMeta();
+    const app = createApp({ knownModels: [], meta });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const bad = await (
+        await fetch(`http://127.0.0.1:${port}/api/hosts/0xabc/meta`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ region: "BAD NAME" }),
+        })
+      );
+      expect(bad.status).toBe(400);
+      const ok: any = await (
+        await fetch(`http://127.0.0.1:${port}/api/hosts/0xabc/meta`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ region: "eu-central" }),
+        })
+      ).json();
+      expect(ok).toMatchObject({ region: "eu-central" });
+      const s: any = await (await fetch(`http://127.0.0.1:${port}/api/stats`)).json();
+      expect(s.regions).toEqual(["eu-central"]);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
 });
