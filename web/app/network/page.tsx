@@ -5,6 +5,9 @@ import { useEffect, useState } from "react";
 import { Activity, CircleCheck, Clock, Cpu, ExternalLink, Receipt as ReceiptIcon, Server } from "lucide-react";
 import Globe from "../components/globe";
 import DataSections from "./sections";
+import { topicUrl, txUrl } from "../../lib/chain";
+
+const receiptUrl = (r: any): string => (r.debitTx ? txUrl(r.debitTx) : topicUrl());
 import { MockBanner, useMock } from "../components/mock";
 import { MOCK_HOSTS, type MockHost } from "../../lib/mock";
 
@@ -186,7 +189,7 @@ export default function NetworkPage() {
                   <span className="inline-flex items-center gap-1 text-[#0B7A5D]"><CircleCheck className="h-3.5 w-3.5" /> settled</span>
                   <span>{short(r.host)} → {r.modelId ?? short(r.id, 10)}</span>
                   <span className="text-[#6E6E73]">{r.latencyMs}ms</span>
-                  <a href="#" className="ml-auto inline-flex items-center gap-1 text-[#2563EB]">HashScan <ExternalLink className="h-3 w-3" /></a>
+                  <a href={receiptUrl(r)} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1 text-[#2563EB]">HashScan <ExternalLink className="h-3 w-3" /></a>
                 </div>
               ))
             ) : (
@@ -203,6 +206,7 @@ export default function NetworkPage() {
                   <ReceiptIcon className="h-3.5 w-3.5 text-[#8F8F8F]" />
                   <span>{short(r.id, 10)}</span>
                   <span className="text-[#6E6E73]">{r.priceWei} wei · {r.amountCredits ?? "0"} credits</span>
+                  <a href={receiptUrl(r)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#2563EB]">proof ↗</a>
                   <span className="ml-auto text-[#6E6E73]">{r.latencyMs}ms</span>
                 </div>
               ))
