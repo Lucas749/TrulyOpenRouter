@@ -161,7 +161,8 @@ describe("routes", () => {
     expect(user).toBe("dev");
     expect(host).toBe("fallback");
     expect(amount).toBe(1n); // fallback flat rate
-    expect(receipt).toBe(chat.tor_receipt);
+    const { sha256hex } = await import("../src/receipts.js");
+    expect(receipt).toBe(`0x${sha256hex(chat.tor_receipt)}`); // bytes32 link, not the id itself
   });
 
   it("streams status events when asked", async () => {
