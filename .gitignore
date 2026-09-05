@@ -6,3 +6,6 @@ node_modules/
 dist/
 build/
 *.log
+contracts/out/
+contracts/cache/
+contracts/broadcast/
