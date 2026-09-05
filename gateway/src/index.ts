@@ -181,6 +181,9 @@ export function createApp(opts: GatewayOptions = {}) {
           )
         : { settled: false, amountCredits: 0n, hostShare: 0n };
       if (opts.receipts && receipt) opts.receipts.annotate(receipt, { amountCredits: String(settled.amountCredits) });
+      if (opts.settle && !settled.settled) {
+        console.error(`settle failed user=${payer} host=${host?.address} amount=${settled.amountCredits}: ${settled.error}`);
+      }
       emit("settled", { receipt });
       if (sse) {
         res.write(`data: ${JSON.stringify({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled })}\n\n`);
