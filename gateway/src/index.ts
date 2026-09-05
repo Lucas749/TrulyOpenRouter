@@ -175,7 +175,8 @@ export function createApp(opts: GatewayOptions = {}) {
               host,
               promptTokens: tokensIn,
               completionTokens: tokensOut,
-              receiptHash: (receipt ?? "0x") as `0x${string}`,
+              // bytes32 link to the receipt: sha256 of the receipt id (ids are hex, not bytes).
+              receiptHash: receipt ? (`0x${sha256hex(receipt)}` as `0x${string}`) : (`0x${"00".repeat(32)}` as `0x${string}`),
             },
             opts.settle,
           )
