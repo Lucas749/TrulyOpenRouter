@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Activity, CircleCheck, Clock, Cpu, ExternalLink, Receipt as ReceiptIcon, Server } from "lucide-react";
 import Globe from "../components/globe";
+import DataSections from "./sections";
 import { MockBanner, useMock } from "../components/mock";
 import { MOCK_HOSTS, type MockHost } from "../../lib/mock";
 
@@ -31,6 +32,8 @@ interface Receipt {
   latencyMs: number;
   amountCredits?: string;
   modelId?: string;
+  tokensIn?: number;
+  tokensOut?: number;
   ts: number;
 }
 
@@ -50,6 +53,7 @@ export default function NetworkPage() {
   const [tab, setTab] = useState<"hosts" | "live" | "receipts">("hosts");
   const [hosts, setHosts] = useState<Host[] | null>(null);
   const [receipts, setReceipts] = useState<Receipt[] | null>(null);
+  const [models, setModels] = useState<any[]>([]);
 
   useEffect(() => {
     if (mock) return;
@@ -58,9 +62,11 @@ export default function NetworkPage() {
       try {
         const h: any = await (await fetch(`${GATEWAY}/api/hosts`)).json();
         const r: any = await (await fetch(`${GATEWAY}/api/receipts?limit=50`)).json();
+        const m: any = await (await fetch(`${GATEWAY}/v1/models`)).json();
         if (!live) return;
         setHosts(h.data ?? []);
         setReceipts(r.data ?? []);
+        setModels(m.data ?? []);
       } catch {
         /* gateway down: skeletons stay */
       }
@@ -80,11 +86,18 @@ export default function NetworkPage() {
   const shownHosts: (Host | MockHost)[] = mock ? MOCK_HOSTS : (hosts ?? []);
   const shownReceipts = mock
     ? [
-        { id: "9f2c4be10a", host: "h-0f4c…", priceWei: "1200", latencyMs: 310, amountCredits: "2", modelId: "Llama-3.1-8B", ts: Date.now() },
-        { id: "4a71d0b39c", host: "h-7b1e…", priceWei: "900", latencyMs: 288, amountCredits: "1", ts: Date.now() },
-        { id: "c081ae5d22", host: "h-2d90…", priceWei: "1500", latencyMs: 402, amountCredits: "2", ts: Date.now() },
+        { id: "9f2c4be10a", host: "h-0f4c…", priceWei: "1200", latencyMs: 310, amountCredits: "2", modelId: "Llama-3.1-8B", tokensIn: 900, tokensOut: 420, ts: Date.now() - 400_000 },
+        { id: "4a71d0b39c", host: "h-7b1e…", priceWei: "900", latencyMs: 288, amountCredits: "1", modelId: "Qwen2.5-7B", tokensIn: 1400, tokensOut: 600, ts: Date.now() - 1_400_000 },
+        { id: "c081ae5d22", host: "h-2d90…", priceWei: "1500", latencyMs: 402, amountCredits: "2", modelId: "Mistral-7B", tokensIn: 700, tokensOut: 900, ts: Date.now() - 3_000_000 },
       ]
     : (receipts ?? []);
+  const shownModels = mock
+    ? [
+        { id: "Llama-3.1-8B", calls24h: 15438, tokens24h: 9_200_000, avgCreditsPer1kTokens: "1" },
+        { id: "Qwen2.5-7B", calls24h: 21387, tokens24h: 14_600_000, avgCreditsPer1kTokens: "1" },
+        { id: "Mistral-7B", calls24h: 10087, tokens24h: 5_100_000, avgCreditsPer1kTokens: "2" },
+      ]
+    : models;
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
@@ -198,6 +211,8 @@ export default function NetworkPage() {
             )}
           </div>
         )}
+
+        <DataSections hosts={shownHosts} models={shownModels} receipts={shownReceipts} />
       </main>
     </div>
   );
