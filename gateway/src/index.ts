@@ -8,6 +8,7 @@ import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
 import { MemoryHealth } from "./health.js";
 import { createVaultDebit } from "./vault.js";
 import { MemoryHostMeta, validRegion } from "./hostmeta.js";
+import { MemoryDeviceFlow } from "./device.js";
 import { proxyChat, proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
 import { createPaidFetch } from "./payer.js";
 import { settleCall, type DebitFn } from "./settle.js";
@@ -26,6 +27,7 @@ export interface GatewayOptions {
   // key prefix -> vault account. Production derives a budget account per key at issuance (SPEC §4).
   payerAccounts?: Record<string, string>;
   meta?: MemoryHostMeta; // self-reported regions; absent = collection off
+  devices?: MemoryDeviceFlow; // CLI device-code login; absent = endpoint 501
   health?: MemoryHealth; // upstream failure window; absent = collection off
   settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
 }
@@ -284,6 +286,35 @@ export function createApp(opts: GatewayOptions = {}) {
 
   app.get("/api/owners/:userId/hosts", (req, res) => {
     res.json({ data: opts.meta?.hostsOf(req.params.userId) ?? [] });
+  });
+
+  // CLI device-code login. POST /api/device/code -> show code -> user approves on web
+  // (POST /api/device/approve, Privy-authed in prod) -> CLI polls GET /api/device/poll.
+  const needDevices = (res: any) => {
+    if (opts.devices) return false;
+    res.status(501).json({ error: { message: "device flow not configured", type: "unavailable" } });
+    return true;
+  };
+
+  app.post("/api/device/code", (_req, res) => {
+    if (needDevices(res)) return;
+    const { code, expiresAt } = opts.devices!.issue();
+    res.json({ code, expiresAt, approveUrl: "/host/link" });
+  });
+
+  app.get("/api/device/poll", (req, res) => {
+    if (needDevices(res)) return;
+    res.json(opts.devices!.poll(String(req.query.code ?? "")));
+  });
+
+  app.post("/api/device/approve", (req, res) => {
+    if (needDevices(res)) return;
+    const out = opts.devices!.approve(String(req.body?.code ?? ""), String(req.body?.userId ?? ""));
+    if (!out) {
+      res.status(400).json({ error: { message: "bad or expired code", type: "invalid_request" } });
+      return;
+    }
+    res.json(out);
   });
 
   // Per-host detail for explorer pages: onchain record + 24h activity + withdrawable earnings
