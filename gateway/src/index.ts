@@ -22,6 +22,29 @@ export interface GatewayOptions {
 
 async function resolveHosts(opts: GatewayOptions, modelId: string): Promise<HostInfo[]> {
   if (opts.fetchHosts) return opts.fetchHosts(modelId);
+  // Demo mode: static host list, no chain (HOSTS_JSON=[{endpoint,modelId,pricePerReq,...}]).
+  if (process.env.HOSTS_JSON) {
+    try {
+      const all = JSON.parse(process.env.HOSTS_JSON) as Partial<HostInfo>[];
+      return all
+        .filter((h) => h.modelId === modelId)
+        .map((h, i) => ({
+          address: (h.address ?? `0x${String(i + 1).padStart(40, "0")}`) as `0x${string}`,
+          endpoint: String(h.endpoint),
+          modelId: String(h.modelId),
+          modelDigest: (h.modelDigest ?? "demo") as `0x${string}`,
+          pricePerReq: BigInt(h.pricePerReq ?? 1),
+          pricePer1kTokens: BigInt(h.pricePer1kTokens ?? 0),
+          stake: BigInt(h.stake ?? 0),
+          active: true,
+          lastHeartbeat: Date.now(),
+          latencyMs: 200,
+          reliability: 1,
+        }));
+    } catch {
+      return [];
+    }
+  }
   if (!opts.registry || !opts.rpcUrl) return [];
   const client = createPublicClient({ transport: http(opts.rpcUrl) });
   return fetchEligibleHosts(client, opts.registry, modelId);

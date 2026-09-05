@@ -15,7 +15,7 @@ async function boot() {
   // stub upstream speaking OpenAI chat completions
   const stub = express();
   stub.use(express.json());
-  stub.post("/chat/completions", (_req, res) =>
+  stub.post("/v1/chat/completions", (_req, res) =>
     res.json({ choices: [{ message: { content: "stubbed" } }] }),
   );
   const stubPort = await new Promise<number>((r) => {
@@ -147,5 +147,40 @@ describe("routes", () => {
       expect(text).toContain(`event: ${ev}`);
     }
     expect(text).toContain("tor_receipt");
+  });
+
+  it("routes to the cheapest HOSTS_JSON host", async () => {
+    const mkStub = async (tag: string) => {
+      const stub = express();
+      stub.use(express.json());
+      stub.post("/v1/chat/completions", (_req, res) => res.json({ from: tag, choices: [] }));
+      const s: Server = stub.listen(0);
+      return { s, port: (s.address() as any).port };
+    };
+    const cheap = await mkStub("cheap");
+    const pricey = await mkStub("pricey");
+    process.env.HOSTS_JSON = JSON.stringify([
+      { endpoint: `http://127.0.0.1:${pricey.port}`, modelId: "demo-model", pricePerReq: 5000 },
+      { endpoint: `http://127.0.0.1:${cheap.port}`, modelId: "demo-model", pricePerReq: 5 },
+      { endpoint: "http://127.0.0.1:1", modelId: "other-model", pricePerReq: 1 },
+    ]);
+    const app = createApp({});
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const out: any = await (
+        await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "demo-model", messages: [] }),
+        })
+      ).json();
+      expect(out.from).toBe("cheap");
+    } finally {
+      delete process.env.HOSTS_JSON;
+      await new Promise<void>((r) => srv.close(() => r()));
+      await new Promise<void>((r) => cheap.s.close(() => r()));
+      await new Promise<void>((r) => pricey.s.close(() => r()));
+    }
   });
 });
