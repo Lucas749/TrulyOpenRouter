@@ -44,9 +44,10 @@ export function renderSteps(steps: Step[]): string {
 }
 
 export function box(title: string, lines: string[], width = 56): string {
-  const top = `╭─ ${title} ${"─".repeat(Math.max(0, width - title.length - 4))}╮`;
-  const bottom = `╰${"─".repeat(width)}╯`;
-  const body = lines.map((l) => `│ ${l.padEnd(width - 2)}│`).join("\n");
+  const w = Math.max(width, title.length + 4, ...lines.map((l) => l.length + 2));
+  const top = `╭─ ${title} ${"─".repeat(Math.max(0, w - title.length - 4))}╮`;
+  const bottom = `╰${"─".repeat(w)}╯`;
+  const body = lines.map((l) => `│ ${l.padEnd(w - 2)}│`).join("\n");
   return `${C.gray}${top}${C.reset}\n${body}\n${C.gray}${bottom}${C.reset}`;
 }
 

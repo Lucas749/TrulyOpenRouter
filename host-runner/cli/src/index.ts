@@ -3,6 +3,7 @@ import { loadConfig } from "./config.js";
 import { login } from "./login.js";
 import { link } from "./link.js";
 import { run } from "./run.js";
+import { leave } from "./leave.js";
 import { status } from "./status.js";
 
 const [, , cmd, ...rest] = process.argv;
@@ -23,7 +24,16 @@ try {
   if (cmd === "login") await login(flag("gateway") ?? "http://127.0.0.1:4121");
   else if (cmd === "status") await status();
   else if (cmd === "link") await link(gateway());
-  else if (cmd === "run") {
+  else if (cmd === "leave") {
+    const cfg = await (await fetch(`${gateway()}/api/config`)).json().catch(() => ({}));
+    await leave({
+      gateway: gateway(),
+      rpcUrl: flag("rpc-url") ?? cfg.rpcUrl ?? "https://testnet.hashio.io/api",
+      registry: flag("registry") ?? cfg.registry ?? "",
+      vault: flag("vault") ?? "",
+      dryRun: rest.includes("--dry-run"),
+    });
+  } else if (cmd === "run") {
     const model = flag("model");
     if (!model) throw new Error("usage: tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N] [--endpoint URL]");
     await run({
@@ -36,7 +46,7 @@ try {
       endpoint: flag("endpoint"),
     });
   } else {
-    console.log("tor-host — serve open models on TrulyOpenRouter\n\n  tor-host login [--gateway=URL]   link this machine to your web account\n  tor-host status                      docker, gateway, host, earnings\n  tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N]\n  tor-host link                        claim this host for your account");
+    console.log("tor-host — serve open models on TrulyOpenRouter\n\n  tor-host login [--gateway=URL]   link this machine to your web account\n  tor-host status                      docker, gateway, host, earnings\n  tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N]\n  tor-host link                        claim this host for your account\n  tor-host leave [--dry-run]           deregister, withdraw, stop guard");
     if (cmd) process.exitCode = 1;
   }
 } catch (e) {
