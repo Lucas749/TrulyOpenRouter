@@ -14,6 +14,7 @@ export interface HostInfo {
   pricePer1kTokens: bigint;
   stake: bigint;
   active: boolean;
+  challenged?: boolean;
   lastHeartbeat: number;
   latencyMs: number;
   reliability: number; // 0..1 success rate over recent receipts
@@ -49,6 +50,7 @@ export async function fetchEligibleHosts(
     pricePer1kTokens: BigInt(h.pricePer1kTokens ?? h[5]),
     stake: BigInt(h.stake ?? h[7]),
     active: Boolean(h.active ?? h[8]),
+    challenged: Boolean(h.challenged ?? h[12] ?? false),
     lastHeartbeat: Number(h.lastHeartbeat ?? h[10]),
     latencyMs: 250, // default until observed; scorer refines with live EMA
     reliability: 1,

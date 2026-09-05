@@ -1,5 +1,5 @@
 import express from "express";
-import { createPublicClient, http, type Address } from "viem";
+import { createPublicClient, http, parseAbi, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, type HostInfo } from "./registry.js";
@@ -237,6 +237,60 @@ export function createApp(opts: GatewayOptions = {}) {
     }
     opts.meta.setRegion(req.params.address, req.body.region);
     res.json({ address: req.params.address, region: req.body.region });
+  });
+
+  // Per-host detail for explorer pages: onchain record + 24h activity + withdrawable earnings
+  // (vault read when configured, else null — frontend shows "—").
+  app.get("/api/hosts/:address", async (req, res) => {
+    const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    let found: HostInfo | undefined;
+    for (const id of models) {
+      found = (await resolveHosts(opts, id)).find(
+        (h) => h.address.toLowerCase() === req.params.address.toLowerCase(),
+      );
+      if (found) break;
+    }
+    if (!found) {
+      res.status(404).json({ error: { message: "unknown host", type: "not_found" } });
+      return;
+    }
+    const now = Date.now();
+    const mine = (opts.receipts?.list(10_000) ?? []).filter((r) => r.host === found!.address);
+    const success24h = mine.filter((r) => now - r.ts < 86_400_000).length;
+    let earningsWei: string | null = null;
+    if (opts.vaultAddress && opts.rpcUrl) {
+      try {
+        const client = createPublicClient({ transport: http(opts.rpcUrl) });
+        earningsWei = String(
+          await client.readContract({
+            address: opts.vaultAddress,
+            abi: parseAbi(["function hostEarnings(address) view returns (uint256)"]),
+            functionName: "hostEarnings",
+            args: [found.address as Address],
+          }),
+        );
+      } catch {
+        earningsWei = null;
+      }
+    }
+    res.json({
+      address: found.address,
+      endpoint: found.endpoint,
+      modelId: found.modelId,
+      modelDigest: found.modelDigest,
+      pricePerReq: String(found.pricePerReq),
+      pricePer1kTokens: String(found.pricePer1kTokens),
+      stake: String(found.stake),
+      active: found.active,
+      lastHeartbeat: found.lastHeartbeat,
+      challenged: found.challenged ?? null,
+      region: opts.meta?.regionOf(found.address) ?? null,
+      calls24h: success24h,
+      fail24h: opts.health?.fails24h(found.address) ?? 0,
+      reliability: opts.health?.reliability(success24h, found.address) ?? null,
+      earningsWei,
+      receipts: mine.slice(0, 20),
+    });
   });
 
   // Network stats for the landing strip + explorer. Only real aggregates; anything

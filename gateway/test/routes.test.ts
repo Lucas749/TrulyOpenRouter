@@ -310,4 +310,44 @@ describe("routes", () => {
       await new Promise<void>((r) => srv.close(() => r()));
     }
   });
+
+  it("serves host detail with earnings when vault is wired", async () => {
+    const { MemoryReceiptLog } = await import("../src/receipts.js");
+    const { buildReceipt } = await import("../src/receipts.js");
+    const addr = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const host = {
+      address: addr,
+      endpoint: "http://h:11434",
+      modelId: "demo-model",
+      modelDigest: "0xabc",
+      pricePerReq: 5n,
+      pricePer1kTokens: 1n,
+      stake: 7n,
+      active: true,
+      challenged: true,
+      lastHeartbeat: 9,
+      latencyMs: 200,
+      reliability: 1,
+    };
+    const receipts = new MemoryReceiptLog();
+    receipts.append(
+      buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "0xabc", modelId: "demo-model", host: addr, priceWei: "5", latencyMs: 1 }),
+    );
+    const app = createApp({ knownModels: ["demo-model"], fetchHosts: async () => [host], receipts });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const d: any = await (await fetch(`http://127.0.0.1:${port}/api/hosts/${addr}`)).json();
+      expect(d).toMatchObject({
+        modelId: "demo-model",
+        challenged: true,
+        calls24h: 1,
+        earningsWei: null, // no vault configured
+      });
+      expect(d.receipts).toHaveLength(1);
+      expect(await (await fetch(`http://127.0.0.1:${port}/api/hosts/0x0000000000000000000000000000000000000000`)).status).toBe(404);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
 });
