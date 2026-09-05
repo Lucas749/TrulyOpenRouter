@@ -13,4 +13,13 @@ describe("health", () => {
     expect(h.fails24h("0xabc", 100_000_000)).toBe(0);
     expect(h.reliability(8, "0xabc", 100_000_000)).toBe(1);
   });
+
+  it("tracks latency EMA per host", () => {
+    const h = new MemoryHealth();
+    expect(h.latencyMs("0xabc")).toBeNull();
+    h.recordLatency("0xABC", 100);
+    expect(h.latencyMs("0xabc")).toBe(100);
+    h.recordLatency("0xabc", 200); // 0.3*200 + 0.7*100 = 130
+    expect(h.latencyMs("0xabc")).toBe(130);
+  });
 });

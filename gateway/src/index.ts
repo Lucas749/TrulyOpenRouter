@@ -150,6 +150,7 @@ export function createApp(opts: GatewayOptions = {}) {
       const paidFetch = opts.x402 ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }) : undefined;
       const { out, paid } = await proxyWithFallback(endpoint, req.body, opts.x402, paidFetch, () => emit("paying", {}));
       if (paid) emit("paid-host", {});
+      if (host && opts.health) opts.health.recordLatency(host.address, Date.now() - t0);
       emit("running", {});
       const usage = (out as any)?.usage ?? {};
       const tokensIn = Number(usage.prompt_tokens ?? 0);
@@ -243,7 +244,7 @@ export function createApp(opts: GatewayOptions = {}) {
           calls24h: success24h,
           fail24h: opts.health?.fails24h(h.address) ?? 0,
           region: opts.meta?.regionOf(h.address) ?? null, // self-reported, never verified geo
-          latencyMs: null, // observed EMA not tracked yet
+          latencyMs: opts.health?.latencyMs(h.address) ?? null, // observed EMA, null until served
           reliability: opts.health?.reliability(success24h, h.address) ?? null,
         };
       }),
@@ -314,6 +315,7 @@ export function createApp(opts: GatewayOptions = {}) {
       calls24h: success24h,
       fail24h: opts.health?.fails24h(found.address) ?? 0,
       reliability: opts.health?.reliability(success24h, found.address) ?? null,
+      latencyMs: opts.health?.latencyMs(found.address) ?? null,
       earningsWei,
       receipts: mine.slice(0, 20),
     });
