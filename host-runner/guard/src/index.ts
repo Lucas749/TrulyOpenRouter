@@ -4,7 +4,7 @@ import { HTTPFacilitatorClient, x402ResourceServer } from "@x402/core/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 
 export interface GuardOptions {
-  payTo: string; // host wallet (Hedera account id)
+  payTo?: string; // host wallet; falls back to HOST_WALLET, empty = dev mode
   upstream?: string; // Ollama/OpenAI baseURL, default http://127.0.0.1:11434
   facilitatorUrl?: string; // default Blocky402 testnet
   priceUsdc?: string; // default $0.001
