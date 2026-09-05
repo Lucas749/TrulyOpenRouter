@@ -26,7 +26,7 @@ export default function HostDashboardPage() {
     })();
   }, []);
 
-  const totalEarned = detail.reduce((a, d) => a + BigInt(d.earningsWei ?? 0), 0n);
+  const totalEarned = detail.reduce((a, d) => a + BigInt(d.earningsWei ?? 0), BigInt(0));
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
