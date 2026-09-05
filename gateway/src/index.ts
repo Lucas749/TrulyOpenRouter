@@ -13,6 +13,7 @@ export interface GatewayOptions {
   registry?: Address;
   rpcUrl?: string;
   knownModels?: string[];
+  vaultAddress?: Address; // pool balance source; absent = omitted (frontend shows —)
   fallbackUpstream?: string; // e.g. http://localhost:11434
   fetchHosts?: (modelId: string) => Promise<HostInfo[]>;
   keys?: MemoryKeyStore;
@@ -175,6 +176,45 @@ export function createApp(opts: GatewayOptions = {}) {
       return;
     }
     res.json(r);
+  });
+
+  // Network stats for the landing strip + explorer. Only real aggregates; anything
+  // unwired is null (frontend renders "—", never a guess).
+  app.get("/api/stats", async (_req, res) => {
+    const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    const seen = new Map<string, HostInfo>();
+    for (const id of models) {
+      for (const h of await resolveHosts(opts, id)) seen.set(h.address, h);
+    }
+    const hosts = [...seen.values()];
+    const now = Date.now();
+    const day = 86_400_000;
+    const all = opts.receipts?.list(10_000) ?? [];
+    const last24h = all.filter((r) => now - r.ts < day);
+    const midnight = new Date();
+    midnight.setUTCHours(0, 0, 0, 0);
+    const settledToday = all.filter((r) => r.ts >= midnight.getTime()).length;
+    const prices = last24h.map((r) => BigInt(r.priceWei)).filter((p) => p > 0n);
+    let poolBalanceWei: string | null = null;
+    if (opts.vaultAddress && opts.rpcUrl) {
+      try {
+        const client = createPublicClient({ transport: http(opts.rpcUrl) });
+        poolBalanceWei = String(await client.getBalance({ address: opts.vaultAddress }));
+      } catch {
+        poolBalanceWei = null;
+      }
+    }
+    res.json({
+      hostsOnline: hosts.filter((h) => h.active).length,
+      regions: null, // self-reported regions not collected yet (SPEC)
+      modelsServed: models.filter((m) => hosts.some((h) => h.modelId === m)).length,
+      models,
+      requests24h: last24h.length,
+      settledToday,
+      avgPriceWeiPerReq: prices.length ? String(prices.reduce((a, b) => a + b, 0n) / BigInt(prices.length)) : null,
+      poolBalanceWei,
+      ts: now,
+    });
   });
 
   // Dev key management. Production issues keys from the web app (Privy session) instead.

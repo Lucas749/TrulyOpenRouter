@@ -183,4 +183,35 @@ describe("routes", () => {
       await new Promise<void>((r) => pricey.s.close(() => r()));
     }
   });
+
+  it("reports real-only stats, nulls for the unwired", async () => {
+    const { MemoryReceiptLog } = await import("../src/receipts.js");
+    const { buildReceipt } = await import("../src/receipts.js");
+    const receipts = new MemoryReceiptLog();
+    const now = Date.now();
+    const mk = (ts: number, price: string) =>
+      buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", host: "h", priceWei: price, latencyMs: 1 }, ts);
+    receipts.append(mk(now - 1000, "1000"));
+    receipts.append(mk(now - 100_000_000, "2000")); // >24h ago
+    const app = createApp({
+      knownModels: ["demo-model"],
+      fetchHosts: async () => [],
+      receipts,
+    });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const s: any = await (await fetch(`http://127.0.0.1:${port}/api/stats`)).json();
+      expect(s.hostsOnline).toBe(0);
+      expect(s.modelsServed).toBe(0);
+      expect(s.requests24h).toBe(1);
+      expect(s.settledToday).toBeGreaterThanOrEqual(1);
+      expect(s.avgPriceWeiPerReq).toBe("1000");
+      expect(s.regions).toBeNull();
+      expect(s.poolBalanceWei).toBeNull();
+      expect(typeof s.ts).toBe("number");
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
 });
