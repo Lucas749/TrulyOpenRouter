@@ -86,8 +86,20 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       const fallback = opts.fallbackUpstream ?? process.env.UPSTREAM_URL;
       const t0 = Date.now();
+      const sse = (req.headers.accept ?? "").includes("text/event-stream");
+      const emit = (event: string, data: unknown) => {
+        if (sse) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      if (sse) {
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+      }
+      emit("routed", { model });
       const { endpoint, host } = await selectUpstream(model, () => resolveHosts(opts, model), fallback);
+      emit("submitted", { endpoint });
       const out = await proxyChat(endpoint, req.body);
+      emit("running", {});
       if (opts.receipts) {
         opts.receipts.append(
           buildReceipt({
@@ -100,7 +112,14 @@ export function createApp(opts: GatewayOptions = {}) {
           }),
         );
       }
-      res.json({ ...(out as object), tor_receipt: opts.receipts?.list(1)[0]?.id });
+      const receipt = opts.receipts?.list(1)[0]?.id;
+      emit("settled", { receipt });
+      if (sse) {
+        res.write(`data: ${JSON.stringify({ ...(out as object), tor_receipt: receipt })}\n\n`);
+        res.end();
+        return;
+      }
+      res.json({ ...(out as object), tor_receipt: receipt });
     } catch (e: any) {
       const code = String(e?.message ?? "").startsWith("no hosts") ? 404 : 502;
       res.status(code).json({ error: { message: String(e?.message ?? e), type: "upstream_error" } });

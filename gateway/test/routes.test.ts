@@ -110,4 +110,17 @@ describe("routes", () => {
     expect(one.id).toBe(chat.tor_receipt);
     expect(await (await fetch(`${base}/api/receipts/nope`)).status).toBe(404);
   });
+
+  it("streams status events when asked", async () => {
+    const res = await fetch(`${base}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({ model: "llama-3.1-8b", messages: [] }),
+    });
+    const text = await res.text();
+    for (const ev of ["routed", "submitted", "running", "settled"]) {
+      expect(text).toContain(`event: ${ev}`);
+    }
+    expect(text).toContain("tor_receipt");
+  });
 });
