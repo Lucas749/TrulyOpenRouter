@@ -19,7 +19,7 @@ try {
   else if (cmd === "link") await link(gateway());
   else if (cmd === "run") {
     const model = flag("model");
-    if (!model) throw new Error("usage: tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N]");
+    if (!model) throw new Error("usage: tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N] [--endpoint URL]");
     await run({
       gateway: gateway(),
       model,
@@ -27,6 +27,7 @@ try {
       price1k: flag("price-1k"),
       region: flag("region"),
       stakeHbar: flag("stake-hbar"),
+      endpoint: flag("endpoint"),
     });
   } else {
     console.log("tor-host — serve open models on TrulyOpenRouter\n\n  tor-host login [--gateway=URL]   link this machine to your web account\n  tor-host status                      docker, gateway, host, earnings\n  tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N]\n  tor-host link                        claim this host for your account");

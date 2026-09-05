@@ -4,6 +4,7 @@ import { chmodSync, existsSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
+import { networkInterfaces } from "os";
 import { createPublicClient, createWalletClient, http, parseAbi } from "viem";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { configDir, loadConfig, saveConfig } from "./config.js";
@@ -23,6 +24,17 @@ export interface RunOptions {
   stakeHbar?: string;
   rpcUrl?: string;
   registry?: string;
+  endpoint?: string; // override; default = auto-detected LAN IP :4122
+}
+
+/// @notice First non-internal IPv4 (the address other machines route to).
+export function lanIp(): string {
+  for (const ifs of Object.values(networkInterfaces())) {
+    for (const i of ifs ?? []) {
+      if (i.family === "IPv4" && !i.internal) return i.address;
+    }
+  }
+  return "127.0.0.1";
 }
 
 function sh(cmd: string, args: string[], opts?: { timeoutMs?: number }): Promise<{ ok: boolean; out: string }> {
@@ -119,7 +131,7 @@ export async function run(o: RunOptions): Promise<void> {
       address: registry,
       abi: REGISTRY_ABI,
       functionName: "register",
-      args: [`http://<your-ip>:4122`, o.model, digest, "0x0000000000000000000000000000000000000000000000000000000000000000", BigInt(o.priceReq ?? 100000), BigInt(o.price1k ?? 100000), "0x"],
+      args: [o.endpoint ?? `http://${lanIp()}:4122`, o.model, digest, "0x0000000000000000000000000000000000000000000000000000000000000000", BigInt(o.priceReq ?? 100000), BigInt(o.price1k ?? 100000), "0x"],
       value: stakeWei,
       chain: undefined,
     });

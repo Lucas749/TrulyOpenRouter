@@ -31,4 +31,9 @@ describe("cli roundtrips", () => {
     expect(digestModelfile("FROM x")).toMatch(/^0x[0-9a-f]{64}$/);
     expect(digestModelfile("FROM y")).not.toBe(digestModelfile("FROM x"));
   });
+
+  it("detects a LAN IPv4 (or loops back)", async () => {
+    const { lanIp } = await import("../src/run.js");
+    expect(lanIp()).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+  });
 });
