@@ -220,7 +220,7 @@ describe("routes", () => {
     const receipts = new MemoryReceiptLog();
     const now = Date.now();
     const mk = (ts: number, price: string) =>
-      buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", host: "h", priceWei: price, latencyMs: 1 }, ts);
+      buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", host: "h", priceWei: price, latencyMs: 1, tokensIn: 400, tokensOut: 600, amountCredits: "2" }, ts);
     receipts.append(mk(now - 1000, "1000"));
     receipts.append(mk(now - 100_000_000, "2000")); // >24h ago
     const app = createApp({
@@ -237,6 +237,9 @@ describe("routes", () => {
       expect(s.requests24h).toBe(1);
       expect(s.settledToday).toBeGreaterThanOrEqual(1);
       expect(s.avgPriceWeiPerReq).toBe("1000");
+      expect(s.tokensIn24h).toBe(400);
+      expect(s.tokensOut24h).toBe(600);
+      expect(s.avgCreditsPer1kTokens).toBe("2"); // 2 credits / 1000 tokens
       expect(s.regions).toBeNull();
       expect(s.poolBalanceWei).toBeNull();
       expect(typeof s.ts).toBe("number");

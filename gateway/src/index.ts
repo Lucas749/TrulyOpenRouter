@@ -129,6 +129,8 @@ export function createApp(opts: GatewayOptions = {}) {
       const out = await proxyChat(endpoint, req.body);
       emit("running", {});
       const usage = (out as any)?.usage ?? {};
+      const tokensIn = Number(usage.prompt_tokens ?? 0);
+      const tokensOut = Number(usage.completion_tokens ?? 0);
       const receiptInput = {
         promptHash: sha256hex(JSON.stringify(req.body.messages ?? req.body)),
         completionHash: sha256hex(JSON.stringify(out)),
@@ -136,6 +138,9 @@ export function createApp(opts: GatewayOptions = {}) {
         host: host?.address ?? "fallback",
         priceWei: String(host?.pricePerReq ?? 0),
         latencyMs: Date.now() - t0,
+        tokensIn,
+        tokensOut,
+        modelId: model,
       };
       if (opts.receipts) opts.receipts.append(buildReceipt(receiptInput));
       const receipt = opts.receipts?.list(1)[0]?.id;
@@ -144,13 +149,14 @@ export function createApp(opts: GatewayOptions = {}) {
             {
               user: keyPrefix ? `key:${keyPrefix}` : "dev",
               host,
-              promptTokens: Number(usage.prompt_tokens ?? 0),
-              completionTokens: Number(usage.completion_tokens ?? 0),
+              promptTokens: tokensIn,
+              completionTokens: tokensOut,
               receiptHash: (receipt ?? "0x") as `0x${string}`,
             },
             opts.settle,
           )
-        : { settled: false };
+        : { settled: false, amountCredits: 0n, hostShare: 0n };
+      if (opts.receipts && receipt) opts.receipts.annotate(receipt, { amountCredits: String(settled.amountCredits) });
       emit("settled", { receipt });
       if (sse) {
         res.write(`data: ${JSON.stringify({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled })}\n\n`);
@@ -223,6 +229,16 @@ export function createApp(opts: GatewayOptions = {}) {
     midnight.setUTCHours(0, 0, 0, 0);
     const settledToday = all.filter((r) => r.ts >= midnight.getTime()).length;
     const prices = last24h.map((r) => BigInt(r.priceWei)).filter((p) => p > 0n);
+    const metered = last24h.filter(
+      (r) => (r.tokensIn ?? 0) + (r.tokensOut ?? 0) > 0 && BigInt(r.amountCredits ?? "0") > 0n,
+    );
+    const tokensIn24h = metered.reduce((a, r) => a + (r.tokensIn ?? 0), 0);
+    const tokensOut24h = metered.reduce((a, r) => a + (r.tokensOut ?? 0), 0);
+    const credits24h = metered.reduce((a, r) => a + BigInt(r.amountCredits ?? "0"), 0n);
+    const totalTokens = tokensIn24h + tokensOut24h;
+    // $ = credits × 0.001 by defined unit (receipts.ts money rule) — frontend converts.
+    const avgCreditsPer1kTokens =
+      totalTokens > 0 ? String((credits24h * 1000n) / BigInt(totalTokens)) : null;
     let poolBalanceWei: string | null = null;
     if (opts.vaultAddress && opts.rpcUrl) {
       try {
@@ -240,6 +256,9 @@ export function createApp(opts: GatewayOptions = {}) {
       requests24h: last24h.length,
       settledToday,
       avgPriceWeiPerReq: prices.length ? String(prices.reduce((a, b) => a + b, 0n) / BigInt(prices.length)) : null,
+      tokensIn24h,
+      tokensOut24h,
+      avgCreditsPer1kTokens,
       poolBalanceWei,
       ts: now,
     });
