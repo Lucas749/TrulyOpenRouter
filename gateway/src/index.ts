@@ -6,6 +6,7 @@ import { fetchEligibleHosts, type HostInfo } from "./registry.js";
 import { issueKey, MemoryKeyStore, verifyKey, type KeyScopes } from "./keys.js";
 import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
 import { MemoryHealth } from "./health.js";
+import { createVaultDebit } from "./vault.js";
 import { MemoryHostMeta, validRegion } from "./hostmeta.js";
 import { proxyChat, selectUpstream } from "./upstream.js";
 import { settleCall, type DebitFn } from "./settle.js";
@@ -411,7 +412,19 @@ const PORT = Number(process.env.PORT ?? 4021);
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   // Standalone server defaults: fresh key store + receipt log (tests inject their own).
-  createApp({ keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog() }).listen(PORT, () =>
-    console.log(`tor-gateway on :${PORT}`),
-  );
+  // Live legs (all env-driven, all optional in dev):
+  //   REGISTRY (HostRegistry) + RPC_URL + MODELS + VAULT_ADDRESS + OPERATOR_KEY (vault debit)
+  const rpcUrl = process.env.RPC_URL ?? "";
+  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog() };
+  if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
+  if (rpcUrl) opts.rpcUrl = rpcUrl;
+  if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;
+  if (process.env.VAULT_ADDRESS && rpcUrl && process.env.OPERATOR_KEY) {
+    opts.settle = createVaultDebit({
+      rpcUrl,
+      vault: process.env.VAULT_ADDRESS as Address,
+      operatorKey: process.env.OPERATOR_KEY as `0x${string}`,
+    });
+  }
+  createApp(opts).listen(PORT, () => console.log(`tor-gateway on :${PORT}`));
 }
