@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
-import { MockBanner, useMock } from "../../components/mock";
-import { MOCK_HOSTS } from "../../../lib/mock";
+import { MockBanner, useMock } from "../../../components/mock";
+import { MOCK_HOSTS } from "../../../../lib/mock";
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:4021";
 
