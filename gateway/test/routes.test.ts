@@ -15,9 +15,9 @@ async function boot() {
   stub.post("/chat/completions", (_req, res) =>
     res.json({ choices: [{ message: { content: "stubbed" } }] }),
   );
-  const stubPort = await new Promise<number>((r) =>
-    stub.listen(0, () => r((stub.address() as any).port)),
-  );
+  const stubPort = await new Promise<number>((r) => {
+    const listener = stub.listen(0, () => r((listener.address() as any).port));
+  });
   const app = createApp({ fallbackUpstream: `http://127.0.0.1:${stubPort}` });
   const port = await new Promise<number>((r) =>
     (server = app.listen(0, () => r((server.address() as any).port))),
