@@ -21,8 +21,13 @@
       "hashscan": "https://hashscan.io/testnet/contract/0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576"
     }
   },
-  "hosts": {
-    "genesis1": {
+  "firstLiveLoop": {
+    "subscribeTx": "0xbc6a0fdf538d3bdac8adb9230d9a167c972f88745a535f5f5c2ad95cb0b3da85",
+    "withdrawTx": "0x02bdc9f322bd7da968e3b73225729c3d7c60629af2d8ca4b5e79671c5951d8fc",
+    "path": "subscribe(AGENT,10HBAR) -> gateway routes registry host (docker Ollama) -> receipt -> vault debit -> host withdraw",
+    "verified": "credits 10000->9898, hostEarnings 92->0"
+  },
+  "hosts": {    "genesis1": {
       "address": "0x46B84077f60671fE2872c306e076734B4d8D2E79",
       "account": "0.0.10378181",
       "model": "qwen2.5:0.5b",
