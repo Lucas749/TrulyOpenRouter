@@ -2,24 +2,38 @@
   "network": "hedera-testnet",
   "chainId": 296,
   "deployer": "0x6579522f330205d45f7418c75be08bc42c93882a",
+  "valueUnit": "tinybar — the hashio relay delivers contract msg.value in tinybars, not wei (sent_wei / 1e10). All params below are in DELIVERED units. Display: units / 1e8 = HBAR. See SPEC money rule.",
   "contracts": {
     "HostRegistry": {
-      "address": "0xdee24d30494004bb0d9cd5efcf9bcf27878fc1ef",
-      "constructorArgs": { "minStakeWei": "10000000000000000000", "unstakeDelaySec": 86400 },
-      "hashscan": "https://hashscan.io/testnet/contract/0xdee24d30494004bb0d9cd5efcf9bcf27878fc1ef"
+      "address": "0xa45461bdefef422a81b22f36ebfd0995c7642dc3",
+      "constructorArgs": { "minStakeDeliveredUnits": "1000000000", "unstakeDelaySec": 86400 },
+      "minStakeMeans": "10 HBAR sent",
+      "hashscan": "https://hashscan.io/testnet/contract/0xa45461bdefef422a81b22f36ebfd0995c7642dc3"
     },
     "SubscriptionVault": {
-      "address": "0x6cb798173d51f35a9b724473dcc188ead7dff8f6",
+      "address": "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576",
       "constructorArgs": {
         "gateway": "0x6579522f330205d45f7418c75be08bc42c93882a",
         "dailyQuota": 2000,
-        "refundRateWeiPerCredit": "1000000000000000"
+        "refundRateDeliveredUnitsPerCredit": "100000"
       },
-      "plan0": { "priceWei": "10000000000000000000", "credits": 10000 },
-      "deployTx": "0x14309bdb13270e26075ee56dad02212edac0895f36bcab83a4cc0d2095a60152",
-      "planTx": "0x5348af8ee5b2474d5cec29241e3d8e56cce1e0e5fe06041635a9a7b3e28832f6",
-      "hashscan": "https://hashscan.io/testnet/contract/0x6cb798173d51f35a9b724473dcc188ead7dff8f6"
+      "plan0": { "priceDeliveredUnits": "1000000000", "priceMeans": "10 HBAR sent", "credits": 10000 },
+      "hashscan": "https://hashscan.io/testnet/contract/0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576"
     }
   },
-  "notes": "Deployed with explicit cast nonces (relay mirror lags; forge script sequences go stale). Gateway role = deployer until setGateway to the gateway operator."
+  "hosts": {
+    "genesis1": {
+      "address": "0x46B84077f60671fE2872c306e076734B4d8D2E79",
+      "account": "0.0.10378181",
+      "model": "qwen2.5:0.5b",
+      "modelDigest": "0xbf64cee14657a35f80d2a596a0015584c59aadf2d7df7ed4f2d8deec91288c2d",
+      "endpoint": "http://127.0.0.1:4122"
+    }
+  },
+  "supersededV1": {
+    "HostRegistry": "0xdee24d30494004bb0d9cd5efcf9bcf27878fc1ef",
+    "SubscriptionVault": "0x6cb798173d51f35a9b724473dcc188ead7dff8f6",
+    "reason": "wei-denominated params unreachable through relay value scaling"
+  },
+  "notes": "Deploy with explicit cast nonces (relay mirror lags; forge script sequences go stale). Gateway role = deployer until setGateway to the gateway operator."
 }
