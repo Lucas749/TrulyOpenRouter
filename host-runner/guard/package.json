@@ -1,0 +1,26 @@
+{
+  "name": "tor-guard",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@x402/core": "^2.25.0",
+    "@x402/express": "^2.25.0",
+    "@x402/hedera": "^2.25.0",
+    "express": "^4.22.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.4.1",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.7"
+  }
+}
