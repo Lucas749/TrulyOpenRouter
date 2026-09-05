@@ -61,6 +61,12 @@ describe("routes", () => {
     expect(bad.status).toBe(400);
   });
 
+  it("publishes chain config for CLIs", async () => {
+    const res: any = await (await fetch(`${base}/api/config`)).json();
+    expect(res).toMatchObject({ chainId: 296, chain: "hedera-testnet", usdc: "0.0.429274" });
+    expect(typeof res.facilitator).toBe("string");
+  });
+
   it("issues, enforces, and revokes api keys", async () => {
     const keys = new MemoryKeyStore();
     const app = createApp({ keys, fallbackUpstream: "http://127.0.0.1:1" });

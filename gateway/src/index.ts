@@ -68,6 +68,20 @@ export function createApp(opts: GatewayOptions = {}) {
   app.use(express.json({ limit: "10mb" }));
   app.get("/health", (_req, res) => res.json({ ok: true, service: "tor-gateway" }));
 
+  // Single source of chain truth for CLIs and frontends (no hardcoded addresses downstream).
+  app.get("/api/config", (_req, res) => {
+    res.json({
+      chainId: 296,
+      chain: "hedera-testnet",
+      rpcUrl: opts.rpcUrl ?? process.env.RPC_URL ?? null,
+      registry: process.env.REGISTRY ?? null,
+      vault: process.env.VAULT_ADDRESS ?? null,
+      models: opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean),
+      facilitator: "https://api.testnet.blocky402.com",
+      usdc: "0.0.429274",
+    });
+  });
+
   const payTo = opts.payTo ?? process.env.HEDERA_SERVICE_ACCOUNT_ID ?? "";
   if (payTo) {
     app.use(
