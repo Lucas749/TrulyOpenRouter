@@ -23,9 +23,10 @@ describe("settle", () => {
   });
 
   it("settles via debit fn, never throws", async () => {
-    const debit = vi.fn(async () => ({}));
+    const debit = vi.fn(async () => "0xabc123");
     const ok = await settleCall({ user: "u", host, promptTokens: 10, completionTokens: 10, receiptHash: "r" }, debit);
     expect(ok.settled).toBe(true);
+    expect(ok.txHash).toBe("0xabc123");
     expect(ok.hostShare).toBe((ok.amountCredits * 9n) / 10n);
     expect(debit).toHaveBeenCalledWith("u", host.address, ok.amountCredits, "r");
 

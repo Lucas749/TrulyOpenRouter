@@ -205,11 +205,21 @@ export function createApp(opts: GatewayOptions = {}) {
             opts.settle,
           )
         : { settled: false, amountCredits: 0n, hostShare: 0n };
-      if (opts.receipts && receipt) opts.receipts.annotate(receipt, { amountCredits: String(settled.amountCredits) });
+      if (opts.receipts && receipt) {
+        opts.receipts.annotate(receipt, {
+          amountCredits: String(settled.amountCredits),
+          ...(settled.txHash ? { debitTx: settled.txHash } : {}),
+        });
+        if (settled.txHash) opts.receipts.annotate(receipt, { debitTx: settled.txHash });
+      }
       if (opts.hcs && receipt) {
         const hcs = opts.hcs;
-        logReceiptHcs(hcs, receipt).then((seq) => {
-          if (seq) console.log(`hcs audit ✓ seq ${seq} <- ${receipt.slice(0, 12)}…`);
+        const id = receipt;
+        logReceiptHcs(hcs, id).then((seq) => {
+          if (seq) {
+            console.log(`hcs audit ✓ seq ${seq} <- ${id.slice(0, 12)}…`);
+            opts.receipts?.annotate(id, { hcsSeq: seq });
+          }
         });
       }
       if (opts.settle && !settled.settled) {

@@ -12,6 +12,7 @@ export interface SettleResult {
   amountCredits: bigint;
   hostShare: bigint; // 90%
   settled: boolean;
+  txHash?: string; // vault debit tx (the onchain proof link)
   error?: string;
 }
 
@@ -38,8 +39,8 @@ export type DebitFn = (user: string, host: string, amount: bigint, receiptHash: 
 export async function settleCall(input: SettleInput, debit: DebitFn): Promise<SettleResult> {
   const amount = priceForCall(input.host, input.promptTokens, input.completionTokens);
   try {
-    await debit(input.user, input.host?.address ?? "fallback", amount, input.receiptHash);
-    return { amountCredits: amount, hostShare: (amount * 9n) / 10n, settled: true };
+    const tx = await debit(input.user, input.host?.address ?? "fallback", amount, input.receiptHash);
+    return { amountCredits: amount, hostShare: (amount * 9n) / 10n, settled: true, txHash: String(tx ?? "") || undefined };
   } catch (e) {
     return { amountCredits: amount, hostShare: (amount * 9n) / 10n, settled: false, error: String(e) };
   }

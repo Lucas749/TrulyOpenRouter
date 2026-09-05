@@ -16,6 +16,8 @@ export interface ReceiptInput {
   amountCredits?: string; // metered settle amount; "0" when unsettled
   modelId?: string; // for per-model aggregates
   user?: string; // payer handle: key:<prefix> or "dev" — pseudonymous, for usage history
+  debitTx?: string; // vault debit tx hash (the money proof link)
+  hcsSeq?: string; // audit topic sequence (the public proof link)
 }
 
 // Money rule (SPEC §7): 1 credit ≡ $0.001 BY DEFINITION. Displays derive $ as
