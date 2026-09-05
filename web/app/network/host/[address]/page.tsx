@@ -2,17 +2,34 @@
 
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { createWalletClient, custom, parseAbi } from "viem";
+import { hederaTestnet } from "../../../../lib/hedera-chains";
 import { MockBanner, useMock } from "../../../components/mock";
 import { MOCK_HOSTS } from "../../../../lib/mock";
 import { accountUrl, topicUrl, txUrl } from "../../../../lib/chain";
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:4021";
+const REGISTRY = "0xa45461bdefef422a81b22f36ebfd0995c7642dc3";
+const REGISTRY_ABI = parseAbi(["function challenge(address host, bytes32 receiptId)"]);
 
 export default function HostDetailPage({ params }: { params: Promise<{ address: string }> }) {
   const { address } = use(params);
   const [mock, toggleMock] = useMock();
   const [d, setD] = useState<any | null>(null);
   const [missing, setMissing] = useState(false);
+  const [flagMsg, setFlagMsg] = useState<string | null>(null);
+  const [flagBusy, setFlagBusy] = useState(false);
+  const { authenticated } = usePrivy();
+  const { wallets } = useWallets();
+
+  async function load() {
+    try {
+      const r = await fetch(`${GATEWAY}/api/hosts/${address}`);
+      if (r.status === 404) setMissing(true);
+      else setD(await r.json());
+    } catch {}
+  }
 
   useEffect(() => {
     if (mock) {
@@ -21,14 +38,37 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
       else setMissing(true);
       return;
     }
-    (async () => {
-      try {
-        const r = await fetch(`${GATEWAY}/api/hosts/${address}`);
-        if (r.status === 404) setMissing(true);
-        else setD(await r.json());
-      } catch {}
-    })();
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mock, address]);
+
+  // Flag a host with its latest failed receipt (or zero hash for general review).
+  // Anyone with a wallet can challenge — review (not auto-slash) is the v1 semantic.
+  async function flag() {
+    const w = wallets[0];
+    const from = w?.address as `0x${string}` | undefined;
+    if (!w || !from || !d) return;
+    setFlagBusy(true);
+    setFlagMsg(null);
+    try {
+      await w.switchChain(hederaTestnet.id);
+      const provider = await w.getEthereumProvider();
+      const client = createWalletClient({ account: from, chain: hederaTestnet, transport: custom(provider) });
+      const receiptId = ((d.receipts ?? [])[0]?.id ?? "") as string;
+      const id32 = receiptId.length >= 64 ? `0x${receiptId.slice(0, 64)}` : `0x${"00".repeat(32)}`;
+      const hash = await client.writeContract({
+        address: REGISTRY,
+        abi: REGISTRY_ABI,
+        functionName: "challenge",
+        args: [address as `0x${string}`, id32 as `0x${string}`],
+      });
+      setFlagMsg(`challenged ✓ ${hash.slice(0, 18)}… — queued for review (no auto-slash in v1)`);
+      await load();
+    } catch (e: any) {
+      setFlagMsg(`challenge failed: ${String(e?.message ?? e).slice(0, 160)}`);
+    }
+    setFlagBusy(false);
+  }
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
@@ -49,7 +89,13 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
               <span className="inline-flex items-center gap-1.5 text-sm"><span className={`h-2 w-2 rounded-full ${d.active ? "bg-[#10A37F]" : "bg-[#DC2626]"}`} />{d.active ? "serving" : "offline"}</span>
               <span className="rounded-full bg-[#F4F4F4] px-2.5 py-0.5 text-xs">{d.modelId}</span>
               {d.challenged ? <span className="rounded-full bg-[#FDECEA] px-2.5 py-0.5 text-xs text-[#B3261E]">challenged — under review</span> : null}
+              {!mock && !d.challenged && (
+                <button onClick={flag} disabled={flagBusy || !authenticated} title={authenticated ? "Flag with latest receipt (wallet signs)" : "Log in to flag"} className="rounded-full border border-black/10 px-2.5 py-0.5 text-xs disabled:opacity-40">
+                  {flagBusy ? "flagging…" : "Flag host"}
+                </button>
+              )}
             </div>
+            {flagMsg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{flagMsg}</p>}
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               {[
                 ["PRICE / REQ", d.pricePerReq],
