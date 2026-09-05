@@ -11,10 +11,11 @@ export async function GET() {
 }
 
 /// @notice Full team setup in one call: quorum (server key, threshold 1) -> org -> wallet.
-/// Policies attach next (per-wallet guardrails); intents drive approvals after that.
+/// Optional capWei attaches a spending-cap policy AT CREATION (creation is app-authed;
+/// later policy changes need quorum authorization signatures — roadmap, documented).
 export async function POST(req: Request) {
   try {
-    const { name } = (await req.json().catch(() => ({}))) as { name?: string };
+    const { name, capWei } = (await req.json().catch(() => ({}))) as { name?: string; capWei?: string };
     if (!name || typeof name !== "string" || name.length > 64) {
       return NextResponse.json({ error: "name required (<=64 chars)" }, { status: 400 });
     }
@@ -27,11 +28,27 @@ export async function POST(req: Request) {
       display_name: name,
       default_key_quorum_id: quorum.id,
     });
-    const wallet: any = await privyApi("POST", "/wallets", {
-      entity: { id: org.id, type: "organization" },
-      chain_type: "ethereum",
-    });
-    return NextResponse.json({ org, quorumId: quorum.id, wallet });
+    let policy: any = null;
+    const walletBody: any = { entity: { id: org.id, type: "organization" }, chain_type: "ethereum" };
+    if (capWei) {
+      policy = await privyApi("POST", "/policies", {
+        version: "1.0",
+        name: `${name}-cap`,
+        chain_type: "ethereum",
+        owner_id: quorum.id,
+        rules: [
+          {
+            name: "cap-send",
+            method: "eth_sendTransaction",
+            action: "ALLOW",
+            conditions: [{ field_source: "ethereum_transaction", field: "value", operator: "lte", value: String(capWei) }],
+          },
+        ],
+      });
+      walletBody.policy_ids = [policy.id];
+    }
+    const wallet: any = await privyApi("POST", "/wallets", walletBody);
+    return NextResponse.json({ org, quorumId: quorum.id, policy, wallet });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }

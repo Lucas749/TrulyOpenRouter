@@ -12,6 +12,7 @@ interface Org {
 export default function TeamPage() {
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [name, setName] = useState("");
+  const [cap, setCap] = useState("0.5");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [created, setCreated] = useState<any | null>(null);
@@ -35,10 +36,11 @@ export default function TeamPage() {
     setMsg(null);
     setCreated(null);
     try {
+      const capWei = cap.trim() ? String(BigInt(Math.round(Number(cap) * 1e6)) * BigInt(1e12)) : undefined;
       const r = await fetch("/api/team/orgs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: name.trim(), ...(capWei ? { capWei } : {}) }),
       });
       const d: any = await r.json();
       if (!r.ok) throw new Error(d.error ?? r.status);
@@ -63,7 +65,8 @@ export default function TeamPage() {
       <main className="mx-auto flex max-w-[720px] flex-col gap-6 px-6 py-10">
         <p className="m-0 text-sm text-[#6E6E73]">Shared wallets with quorum ownership. Creating a team provisions key quorum → organization → wallet in one call.</p>
         <div className="flex gap-2">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" className="h-10 flex-1 rounded-lg border border-black/10 px-3 text-sm" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" className="h-10 flex-[2] rounded-lg border border-black/10 px-3 text-sm" />
+          <input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="cap ETH" className="h-10 flex-1 rounded-lg border border-black/10 px-3 font-mono text-sm" inputMode="decimal" />
           <button onClick={create} disabled={busy || !name.trim()} className="h-10 rounded-full bg-black px-5 text-sm text-white disabled:opacity-40">{busy ? "creating…" : "Create team"}</button>
         </div>
         {msg && <p className="m-0 font-mono text-xs text-[#B3261E]">{msg}</p>}
