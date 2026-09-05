@@ -8,6 +8,7 @@ import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
 import { MemoryHealth } from "./health.js";
 import { createVaultDebit } from "./vault.js";
 import { MemoryHostMeta, validRegion } from "./hostmeta.js";
+import { logReceiptHcs, type HcsConfig } from "./hcs.js";
 import { deriveBudgetAddress } from "./budget.js";
 import { MemoryDeviceFlow } from "./device.js";
 import { proxyChat, proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
@@ -28,6 +29,7 @@ export interface GatewayOptions {
   // key prefix -> vault account. Production derives a budget account per key at issuance (SPEC §4).
   payerAccounts?: Record<string, string>;
   meta?: MemoryHostMeta; // self-reported regions; absent = collection off
+  hcs?: HcsConfig; // audit topic; absent = no onchain log (receipts still served)
   devices?: MemoryDeviceFlow; // CLI device-code login; absent = endpoint 501
   health?: MemoryHealth; // upstream failure window; absent = collection off
   settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
@@ -204,6 +206,12 @@ export function createApp(opts: GatewayOptions = {}) {
           )
         : { settled: false, amountCredits: 0n, hostShare: 0n };
       if (opts.receipts && receipt) opts.receipts.annotate(receipt, { amountCredits: String(settled.amountCredits) });
+      if (opts.hcs && receipt) {
+        const hcs = opts.hcs;
+        logReceiptHcs(hcs, receipt).then((seq) => {
+          if (seq) console.log(`hcs audit ✓ seq ${seq} <- ${receipt.slice(0, 12)}…`);
+        });
+      }
       if (opts.settle && !settled.settled) {
         console.error(`settle failed user=${payer} host=${host?.address} amount=${settled.amountCredits}: ${settled.error}`);
       }
@@ -530,6 +538,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;
   if (process.env.X402_PAYER_ID && process.env.X402_PAYER_KEY) {
     opts.x402 = { accountId: process.env.X402_PAYER_ID, privateKey: process.env.X402_PAYER_KEY };
+  }
+  if (process.env.HCS_TOPIC_ID && process.env.HCS_OPERATOR_ID && process.env.HCS_OPERATOR_KEY) {
+    opts.hcs = {
+      topicId: process.env.HCS_TOPIC_ID,
+      operatorId: process.env.HCS_OPERATOR_ID,
+      operatorKey: process.env.HCS_OPERATOR_KEY,
+    };
   }
   if (process.env.VAULT_ADDRESS && rpcUrl && process.env.OPERATOR_KEY) {
     opts.settle = createVaultDebit({
