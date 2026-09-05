@@ -524,7 +524,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // Live legs (all env-driven, all optional in dev):
   //   REGISTRY (HostRegistry) + RPC_URL + MODELS + VAULT_ADDRESS + OPERATOR_KEY (vault debit)
   const rpcUrl = process.env.RPC_URL ?? "";
-  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog() };
+  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog(), devices: new MemoryDeviceFlow() };
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
   if (rpcUrl) opts.rpcUrl = rpcUrl;
   if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;
