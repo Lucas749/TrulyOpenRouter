@@ -15,4 +15,15 @@ describe("hostmeta", () => {
     expect(m.regionOf("0xAbC")).toBe("eu-west");
     expect(m.distinctRegions()).toEqual(["eu-west", "eu-central"]);
   });
+
+  it("maps hosts to owners", () => {
+    const m = new MemoryHostMeta();
+    expect(m.ownerOf("0xabc")).toBeNull();
+    expect(m.hostsOf("u1")).toEqual([]);
+    m.setOwner("0xABC", "u1");
+    m.setOwner("0xdef", "u1");
+    m.setOwner("0x123", "u2");
+    expect(m.ownerOf("0xabc")).toBe("u1");
+    expect(m.hostsOf("u1")).toEqual(["0xabc", "0xdef"]);
+  });
 });

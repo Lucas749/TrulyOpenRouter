@@ -9,6 +9,7 @@ export function validRegion(region: unknown): region is string {
 
 export class MemoryHostMeta {
   private regions = new Map<string, string>();
+  private owners = new Map<string, string>(); // host -> Privy user id (claimed at link time)
 
   setRegion(address: string, region: string): void {
     this.regions.set(address.toLowerCase(), region);
@@ -20,5 +21,17 @@ export class MemoryHostMeta {
 
   distinctRegions(): string[] {
     return [...new Set(this.regions.values())];
+  }
+
+  setOwner(address: string, userId: string): void {
+    this.owners.set(address.toLowerCase(), userId);
+  }
+
+  ownerOf(address: string): string | null {
+    return this.owners.get(address.toLowerCase()) ?? null;
+  }
+
+  hostsOf(userId: string): string[] {
+    return [...this.owners.entries()].filter(([, u]) => u === userId).map(([a]) => a);
   }
 }

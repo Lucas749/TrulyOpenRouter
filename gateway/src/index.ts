@@ -266,6 +266,26 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json({ address: req.params.address, region: req.body.region });
   });
 
+  // Claim a host for an account (link step of `tor-host login`). Dev: open + overwrite;
+  // production: signature check that the caller holds the host key (see SPEC).
+  app.post("/api/hosts/:address/owner", (req, res) => {
+    if (!opts.meta) {
+      res.status(501).json({ error: { message: "host meta not configured", type: "unavailable" } });
+      return;
+    }
+    const userId = req.body?.userId;
+    if (typeof userId !== "string" || !userId || userId.length > 128) {
+      res.status(400).json({ error: { message: "userId required", type: "invalid_request" } });
+      return;
+    }
+    opts.meta.setOwner(req.params.address, userId);
+    res.json({ address: req.params.address, owner: userId });
+  });
+
+  app.get("/api/owners/:userId/hosts", (req, res) => {
+    res.json({ data: opts.meta?.hostsOf(req.params.userId) ?? [] });
+  });
+
   // Per-host detail for explorer pages: onchain record + 24h activity + withdrawable earnings
   // (vault read when configured, else null — frontend shows "—").
   app.get("/api/hosts/:address", async (req, res) => {
