@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+/// @title SubscriptionVault — flat fee in, metered debits out.
+/// @notice Users subscribe (1 credit = $0.001 of inference). Only the gateway can debit, subject
+/// to a per-user daily fair-share quota. Hosts pull earnings; 10% protocol fee accrues to owner.
+/// v1 settles in native currency; HTS USDC is the testnet integration step (SPEC §8a).
+contract SubscriptionVault {
+    struct Plan {
+        uint256 priceWei;
+        uint256 credits;
+        bool exists;
+    }
+
+    /// @notice Wei refunded per unused credit. Set from plan 0 at construction.
+    uint256 public immutable REFUND_RATE_WEI_PER_CREDIT;
+    uint256 public constant PROTOCOL_FEE_BPS = 1000; // 10%
+
+    address public owner;
+    address public gateway;
+    uint256 public dailyQuota; // credits per user per rolling UTC day
+
+    mapping(uint256 => Plan) public plans;
+    mapping(address => uint256) public credits;
+    mapping(address => uint256) public hostEarnings;
+    mapping(address => uint256) public spentToday;
+    mapping(address => uint64) public quotaDay;
+    uint256 public accruedFees;
+
+    event GatewaySet(address indexed gateway);
+    event PlanSet(uint256 indexed planId, uint256 priceWei, uint256 credits);
+    event QuotaSet(uint256 dailyQuota);
+    event Subscribed(address indexed user, uint256 indexed planId, uint256 credits);
+    event Debited(address indexed user, address indexed host, uint256 amount, bytes32 receiptHash);
+    event HostPaid(address indexed host, uint256 amount, bytes32 receiptHash);
+    event Withdrawn(address indexed host, uint256 amount);
+    event FeesWithdrawn(uint256 amount);
+    event Refunded(address indexed user, uint256 credits, uint256 amount);
+
+    error NotOwner();
+    error NotGateway();
+    error UnknownPlan();
+    error WrongPayment(uint256 sent, uint256 required);
+    error InsufficientCredits(uint256 have, uint256 need);
+    error QuotaExceeded(uint256 wouldSpend, uint256 quota);
+    error NothingToWithdraw();
+    error NothingToRefund();
+    error InconsistentPlan(uint256 priceWei, uint256 expected);
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
+
+    modifier onlyGateway() {
+        if (msg.sender != gateway) revert NotGateway();
+        _;
+    }
+
+    constructor(address gateway_, uint256 dailyQuota_, uint256 refundRateWeiPerCredit) {
+        owner = msg.sender;
+        gateway = gateway_;
+        dailyQuota = dailyQuota_;
+        REFUND_RATE_WEI_PER_CREDIT = refundRateWeiPerCredit;
+        emit GatewaySet(gateway_);
+    }
+
+    function setGateway(address gateway_) external onlyOwner {
+        gateway = gateway_;
+        emit GatewaySet(gateway_);
+    }
+
+    function setPlan(uint256 planId, uint256 priceWei, uint256 credits_) external onlyOwner {
+        if (priceWei != credits_ * REFUND_RATE_WEI_PER_CREDIT) {
+            revert InconsistentPlan(priceWei, credits_ * REFUND_RATE_WEI_PER_CREDIT);
+        }
+        plans[planId] = Plan(priceWei, credits_, true);
+        emit PlanSet(planId, priceWei, credits_);
+    }
+
+    function setDailyQuota(uint256 dailyQuota_) external onlyOwner {
+        dailyQuota = dailyQuota_;
+        emit QuotaSet(dailyQuota_);
+    }
+
+    /// @notice Buy credits at exact plan price.
+    function subscribe(uint256 planId) external payable {
+        Plan storage p = plans[planId];
+        if (!p.exists) revert UnknownPlan();
+        if (msg.value != p.priceWei) revert WrongPayment(msg.value, p.priceWei);
+        credits[msg.sender] += p.credits;
+        emit Subscribed(msg.sender, planId, p.credits);
+    }
+
+    /// @notice Charge one routed call. Callable only by the gateway.
+    function debit(address user, address host, uint256 amount, bytes32 receiptHash)
+        external
+        onlyGateway
+    {
+        uint64 day = uint64(block.timestamp / 1 days);
+        if (quotaDay[user] != day) {
+            quotaDay[user] = day;
+            spentToday[user] = 0;
+        }
+        if (spentToday[user] + amount > dailyQuota) {
+            revert QuotaExceeded(spentToday[user] + amount, dailyQuota);
+        }
+        if (credits[user] < amount) revert InsufficientCredits(credits[user], amount);
+
+        credits[user] -= amount;
+        spentToday[user] += amount;
+
+        uint256 fee = (amount * PROTOCOL_FEE_BPS) / 10_000;
+        uint256 hostShare = amount - fee;
+        // Invariant: 1 credit ≡ REFUND_RATE_WEI_PER_CREDIT wei (enforced in setPlan), so all
+        // internal balances convert 1:1 at payout time (see withdraw/withdrawFees/refund).
+        hostEarnings[host] += hostShare;
+        accruedFees += fee;
+
+        emit Debited(user, host, amount, receiptHash);
+        emit HostPaid(host, hostShare, receiptHash);
+    }
+
+    /// @notice Hosts pull earnings. Under-threshold = instant; over-threshold is Ledger-tapped
+    /// offchain before this call is ever made (see LEDGER.md).
+    function withdraw() external {
+        uint256 earned = hostEarnings[msg.sender];
+        if (earned == 0) revert NothingToWithdraw();
+        hostEarnings[msg.sender] = 0;
+        uint256 amount = earned * REFUND_RATE_WEI_PER_CREDIT;
+        (bool ok,) = msg.sender.call{value: amount}("");
+        require(ok, "withdraw transfer failed");
+        emit Withdrawn(msg.sender, amount);
+    }
+
+    function withdrawFees() external onlyOwner {
+        uint256 fees = accruedFees;
+        if (fees == 0) revert NothingToWithdraw();
+        accruedFees = 0;
+        uint256 amount = fees * REFUND_RATE_WEI_PER_CREDIT;
+        (bool ok,) = owner.call{value: amount}("");
+        require(ok, "fee transfer failed");
+        emit FeesWithdrawn(amount);
+    }
+
+    /// @notice Cash out unused credits at the fixed refund rate.
+    function refund() external {
+        uint256 bal = credits[msg.sender];
+        if (bal == 0) revert NothingToRefund();
+        uint256 amount = bal * REFUND_RATE_WEI_PER_CREDIT;
+        credits[msg.sender] = 0;
+        // Quota spend stays spent: refunds cover unused credits only.
+        (bool ok,) = msg.sender.call{value: amount}("");
+        require(ok, "refund transfer failed");
+        emit Refunded(msg.sender, bal, amount);
+    }
+}
