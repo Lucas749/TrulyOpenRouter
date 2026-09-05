@@ -7,6 +7,7 @@ import { MemoryReceiptLog } from "../src/receipts.js";
 
 let base = "";
 let server: Server;
+const debits: unknown[][] = [];
 
 afterAll(() => new Promise<void>((resolve) => server?.close(() => resolve())));
 
@@ -20,7 +21,13 @@ async function boot() {
   const stubPort = await new Promise<number>((r) => {
     const listener = stub.listen(0, () => r((listener.address() as any).port));
   });
-  const app = createApp({ fallbackUpstream: `http://127.0.0.1:${stubPort}`, receipts: new MemoryReceiptLog() });
+  const app = createApp({
+    fallbackUpstream: `http://127.0.0.1:${stubPort}`,
+    receipts: new MemoryReceiptLog(),
+    settle: async (...args) => {
+      debits.push(args);
+    },
+  });
   const port = await new Promise<number>((r) =>
     (server = app.listen(0, () => r((server.address() as any).port))),
   );
@@ -109,6 +116,24 @@ describe("routes", () => {
     const one: any = await (await fetch(`${base}/api/receipts/${chat.tor_receipt}`)).json();
     expect(one.id).toBe(chat.tor_receipt);
     expect(await (await fetch(`${base}/api/receipts/nope`)).status).toBe(404);
+  });
+
+  it("settles metered debits per call", async () => {
+    debits.length = 0;
+    const chat: any = await (
+      await fetch(`${base}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "llama-3.1-8b", messages: [] }),
+      })
+    ).json();
+    expect(chat.tor_settled).toBe(true);
+    expect(debits).toHaveLength(1);
+    const [user, host, amount, receipt] = debits[0] as [string, string, bigint, string];
+    expect(user).toBe("dev");
+    expect(host).toBe("fallback");
+    expect(amount).toBe(1n); // fallback flat rate
+    expect(receipt).toBe(chat.tor_receipt);
   });
 
   it("streams status events when asked", async () => {

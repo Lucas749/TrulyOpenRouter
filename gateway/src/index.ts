@@ -6,6 +6,7 @@ import { fetchEligibleHosts, type HostInfo } from "./registry.js";
 import { issueKey, MemoryKeyStore, verifyKey, type KeyScopes } from "./keys.js";
 import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
 import { proxyChat, selectUpstream } from "./upstream.js";
+import { settleCall, type DebitFn } from "./settle.js";
 
 export interface GatewayOptions {
   payTo?: string; // Hedera service account; empty = dev mode (x402 gate off)
@@ -16,6 +17,7 @@ export interface GatewayOptions {
   fetchHosts?: (modelId: string) => Promise<HostInfo[]>;
   keys?: MemoryKeyStore;
   receipts?: MemoryReceiptLog;
+  settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
 }
 
 async function resolveHosts(opts: GatewayOptions, modelId: string): Promise<HostInfo[]> {
@@ -72,6 +74,7 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       // Bearer key (harness path): verify + enforce model allowlist. Absent = web/dev path.
       const auth = req.headers.authorization ?? "";
+      let keyPrefix: string | undefined;
       if (auth.startsWith("Bearer ") && opts.keys) {
         const presented = auth.slice("Bearer ".length);
         const record = opts.keys.find(presented);
@@ -79,6 +82,7 @@ export function createApp(opts: GatewayOptions = {}) {
           res.status(401).json({ error: { message: "invalid api key", type: "invalid_api_key" } });
           return;
         }
+        keyPrefix = record.prefix;
         if (record.scopes.models && !record.scopes.models.includes(model)) {
           res.status(404).json({ error: { message: `model ${model} not in key scope`, type: "model_not_found" } });
           return;
@@ -100,26 +104,36 @@ export function createApp(opts: GatewayOptions = {}) {
       emit("submitted", { endpoint });
       const out = await proxyChat(endpoint, req.body);
       emit("running", {});
-      if (opts.receipts) {
-        opts.receipts.append(
-          buildReceipt({
-            promptHash: sha256hex(JSON.stringify(req.body.messages ?? req.body)),
-            completionHash: sha256hex(JSON.stringify(out)),
-            modelDigest: host?.modelDigest ?? "fallback",
-            host: host?.address ?? "fallback",
-            priceWei: String(host?.pricePerReq ?? 0),
-            latencyMs: Date.now() - t0,
-          }),
-        );
-      }
+      const usage = (out as any)?.usage ?? {};
+      const receiptInput = {
+        promptHash: sha256hex(JSON.stringify(req.body.messages ?? req.body)),
+        completionHash: sha256hex(JSON.stringify(out)),
+        modelDigest: host?.modelDigest ?? "fallback",
+        host: host?.address ?? "fallback",
+        priceWei: String(host?.pricePerReq ?? 0),
+        latencyMs: Date.now() - t0,
+      };
+      if (opts.receipts) opts.receipts.append(buildReceipt(receiptInput));
       const receipt = opts.receipts?.list(1)[0]?.id;
+      const settled = opts.settle
+        ? await settleCall(
+            {
+              user: keyPrefix ? `key:${keyPrefix}` : "dev",
+              host,
+              promptTokens: Number(usage.prompt_tokens ?? 0),
+              completionTokens: Number(usage.completion_tokens ?? 0),
+              receiptHash: (receipt ?? "0x") as `0x${string}`,
+            },
+            opts.settle,
+          )
+        : { settled: false };
       emit("settled", { receipt });
       if (sse) {
-        res.write(`data: ${JSON.stringify({ ...(out as object), tor_receipt: receipt })}\n\n`);
+        res.write(`data: ${JSON.stringify({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled })}\n\n`);
         res.end();
         return;
       }
-      res.json({ ...(out as object), tor_receipt: receipt });
+      res.json({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled });
     } catch (e: any) {
       const code = String(e?.message ?? "").startsWith("no hosts") ? 404 : 502;
       res.status(code).json({ error: { message: String(e?.message ?? e), type: "upstream_error" } });
