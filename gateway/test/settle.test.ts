@@ -10,9 +10,16 @@ const host = {
 
 describe("settle", () => {
   it("prices base + per-1k tokens", () => {
-    expect(priceForCall(host, 500, 500)).toBe(1000n + 1n * 100n);
-    expect(priceForCall(host, 0, 2500)).toBe(1000n + 3n * 100n);
+    expect(priceForCall(host, 500, 500, 1n)).toBe(1000n + 1n * 100n);
+    expect(priceForCall(host, 0, 2500, 1n)).toBe(1000n + 3n * 100n);
     expect(priceForCall(null, 999, 999)).toBe(1n);
+  });
+
+  it("converts delivered units to credits", () => {
+    // 1 credit = 1e5 units (testnet REFUND_RATE)
+    const h = { ...host, pricePerReq: 100000n, pricePer1kTokens: 100000n };
+    expect(priceForCall(h, 500, 500)).toBe(2n);
+    expect(priceForCall({ ...h, pricePerReq: 0n, pricePer1kTokens: 0n }, 10, 10)).toBe(0n);
   });
 
   it("settles via debit fn, never throws", async () => {

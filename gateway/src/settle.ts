@@ -15,12 +15,21 @@ export interface SettleResult {
   error?: string;
 }
 
-/// @notice Metered price: base per-req + per-1k-tokens, in vault credits (1 credit = $0.001).
-/// Hosts price in wei onchain; the gateway maps wei→credits 1:1 at the testnet rate (SPEC §7).
-export function priceForCall(host: HostInfo | null, promptTokens: number, completionTokens: number): bigint {
+/// @notice Metered price in vault credits. Onchain prices arrive in delivered value units
+/// (tinybars on hashio — SPEC money rule); CREDIT_UNITS converts units→credits and MUST equal
+/// the Vault's REFUND_RATE (1e5 on testnet). Override via env when networks change.
+export const CREDIT_UNITS = BigInt(process.env.GATEWAY_CREDIT_UNITS ?? 100000);
+
+/// @notice base per-req + per-1k-tokens, floored to whole credits (free-tier hosts may price 0).
+export function priceForCall(
+  host: HostInfo | null,
+  promptTokens: number,
+  completionTokens: number,
+  unitsPerCredit: bigint = CREDIT_UNITS,
+): bigint {
   if (!host) return 1n; // fallback upstream: flat 1 credit
   const total1k = BigInt(Math.ceil((promptTokens + completionTokens) / 1000));
-  return host.pricePerReq + total1k * host.pricePer1kTokens;
+  return (host.pricePerReq + total1k * host.pricePer1kTokens) / unitsPerCredit;
 }
 
 export type DebitFn = (user: string, host: string, amount: bigint, receiptHash: string) => Promise<unknown>;
