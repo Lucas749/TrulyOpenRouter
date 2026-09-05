@@ -1,0 +1,25 @@
+{
+  "network": "hedera-testnet",
+  "chainId": 296,
+  "deployer": "0x6579522f330205d45f7418c75be08bc42c93882a",
+  "contracts": {
+    "HostRegistry": {
+      "address": "0xdee24d30494004bb0d9cd5efcf9bcf27878fc1ef",
+      "constructorArgs": { "minStakeWei": "10000000000000000000", "unstakeDelaySec": 86400 },
+      "hashscan": "https://hashscan.io/testnet/contract/0xdee24d30494004bb0d9cd5efcf9bcf27878fc1ef"
+    },
+    "SubscriptionVault": {
+      "address": "0x6cb798173d51f35a9b724473dcc188ead7dff8f6",
+      "constructorArgs": {
+        "gateway": "0x6579522f330205d45f7418c75be08bc42c93882a",
+        "dailyQuota": 2000,
+        "refundRateWeiPerCredit": "1000000000000000"
+      },
+      "plan0": { "priceWei": "10000000000000000000", "credits": 10000 },
+      "deployTx": "0x14309bdb13270e26075ee56dad02212edac0895f36bcab83a4cc0d2095a60152",
+      "planTx": "0x5348af8ee5b2474d5cec29241e3d8e56cce1e0e5fe06041635a9a7b3e28832f6",
+      "hashscan": "https://hashscan.io/testnet/contract/0x6cb798173d51f35a9b724473dcc188ead7dff8f6"
+    }
+  },
+  "notes": "Deployed with explicit cast nonces (relay mirror lags; forge script sequences go stale). Gateway role = deployer until setGateway to the gateway operator."
+}
