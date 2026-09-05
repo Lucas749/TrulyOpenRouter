@@ -184,6 +184,36 @@ describe("routes", () => {
     }
   });
 
+  it("lists hosts with 24h call counts", async () => {
+    process.env.HOSTS_JSON = JSON.stringify([
+      { address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", endpoint: "http://h1:11434", modelId: "demo-model", pricePerReq: 5, pricePer1kTokens: 1, stake: 7 },
+    ]);
+    const { MemoryReceiptLog } = await import("../src/receipts.js");
+    const { buildReceipt } = await import("../src/receipts.js");
+    const receipts = new MemoryReceiptLog();
+    receipts.append(
+      buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", host: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", priceWei: "5", latencyMs: 1 }, Date.now()),
+    );
+    const app = createApp({ knownModels: ["demo-model"], receipts });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const out: any = await (await fetch(`http://127.0.0.1:${port}/api/hosts`)).json();
+      expect(out.data).toHaveLength(1);
+      expect(out.data[0]).toMatchObject({
+        modelId: "demo-model",
+        pricePerReq: "5",
+        stake: "7",
+        active: true,
+        calls24h: 1,
+        latencyMs: null,
+      });
+    } finally {
+      delete process.env.HOSTS_JSON;
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+
   it("reports real-only stats, nulls for the unwired", async () => {
     const { MemoryReceiptLog } = await import("../src/receipts.js");
     const { buildReceipt } = await import("../src/receipts.js");

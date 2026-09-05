@@ -178,6 +178,34 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json(r);
   });
 
+  // Host directory for the explorer. Onchain truth + 24h call counts from receipts.
+  app.get("/api/hosts", async (_req, res) => {
+    const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    const seen = new Map<string, HostInfo>();
+    for (const id of models) {
+      for (const h of await resolveHosts(opts, id)) seen.set(h.address, h);
+    }
+    const now = Date.now();
+    const all = opts.receipts?.list(10_000) ?? [];
+    const day = 86_400_000;
+    res.json({
+      data: [...seen.values()].map((h) => ({
+        address: h.address,
+        endpoint: h.endpoint,
+        modelId: h.modelId,
+        modelDigest: h.modelDigest,
+        pricePerReq: String(h.pricePerReq),
+        pricePer1kTokens: String(h.pricePer1kTokens),
+        stake: String(h.stake),
+        active: h.active,
+        lastHeartbeat: h.lastHeartbeat,
+        calls24h: all.filter((r) => r.host === h.address && now - r.ts < day).length,
+        latencyMs: null, // observed EMA not tracked yet
+        reliability: null, // success-rate window not tracked yet
+      })),
+    });
+  });
+
   // Network stats for the landing strip + explorer. Only real aggregates; anything
   // unwired is null (frontend renders "—", never a guess).
   app.get("/api/stats", async (_req, res) => {
