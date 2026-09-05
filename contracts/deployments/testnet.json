@@ -27,7 +27,8 @@
     "path": "subscribe(AGENT,10HBAR) -> gateway routes registry host (docker Ollama) -> receipt -> vault debit -> host withdraw",
     "verified": "credits 10000->9898, hostEarnings 92->0"
   },
-  "hosts": {    "genesis1": {
+  "hosts": {
+    "genesis1": {
       "address": "0x46B84077f60671fE2872c306e076734B4d8D2E79",
       "account": "0.0.10378181",
       "model": "qwen2.5:0.5b",
