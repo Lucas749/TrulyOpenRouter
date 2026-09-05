@@ -399,4 +399,46 @@ describe("routes", () => {
       await new Promise<void>((r) => srv.close(() => r()));
     }
   });
+
+  it("maps api keys to vault payer accounts", async () => {
+    const { MemoryKeyStore } = await import("../src/keys.js");
+    const stub = express();
+    stub.use(express.json());
+    stub.post("/v1/chat/completions", (_req, res) => res.json({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 10 } }));
+    const stubSrv: Server = stub.listen(0);
+    const keys = new MemoryKeyStore();
+    const debits: unknown[][] = [];
+    const app = createApp({
+      keys,
+      payerAccounts: {},
+      fetchHosts: async () => [],
+      fallbackUpstream: `http://127.0.0.1:${(stubSrv.address() as any).port}`,
+      settle: async (...args) => {
+        debits.push(args);
+      },
+    });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const issued: any = await (
+        await fetch(`http://127.0.0.1:${port}/api/keys`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        })
+      ).json();
+      // unmapped key, no DEFAULT_PAYER -> dev handle, debit attempted and recorded
+      const r = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${issued.key}` },
+        body: JSON.stringify({ model: "m", messages: [] }),
+      });
+      expect(r.status).toBe(200);
+      expect(debits.length).toBe(1);
+      expect(debits[0][0]).toBe("dev");
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+      await new Promise<void>((r) => stubSrv.close(() => r()));
+    }
+  });
 });

@@ -26,16 +26,18 @@ export function createGuard(opts: GuardOptions) {
       "hedera:*",
       new ExactHederaScheme({}),
     );
+    const route = {
+      accepts: [
+        { scheme: "exact" as const, price: opts.priceUsdc ?? "$0.001", network: "hedera:testnet" as const, payTo },
+      ],
+      description: "Host inference — testnet USDC",
+      mimeType: "application/json",
+    };
     app.use(
       paymentMiddleware(
         {
-          "POST /chat/completions": {
-            accepts: [
-              { scheme: "exact", price: opts.priceUsdc ?? "$0.001", network: "hedera:testnet", payTo },
-            ],
-            description: "Host inference — testnet USDC",
-            mimeType: "application/json",
-          },
+          "POST /chat/completions": route,
+          "POST /v1/chat/completions": route,
         },
         rs,
       ),
@@ -44,7 +46,8 @@ export function createGuard(opts: GuardOptions) {
     console.warn("dev mode: x402 gate disabled (no HOST_WALLET)");
   }
 
-  app.post("/chat/completions", async (req, res) => {
+  // OpenAI-compatible paths: bare base serves /chat/*, versioned base serves /v1/chat/*.
+  const handleChat = async (req: any, res: any) => {
     try {
       const upstreamRes = await fetch(`${base}/chat/completions`, {
         method: "POST",
@@ -58,7 +61,9 @@ export function createGuard(opts: GuardOptions) {
     } catch (e) {
       res.status(502).json({ error: { message: `upstream error: ${String(e)}`, type: "upstream_error" } });
     }
-  });
+  };
+  app.post("/chat/completions", handleChat);
+  app.post("/v1/chat/completions", handleChat);
 
   return app;
 }

@@ -21,6 +21,8 @@ export interface GatewayOptions {
   fetchHosts?: (modelId: string) => Promise<HostInfo[]>;
   keys?: MemoryKeyStore;
   receipts?: MemoryReceiptLog;
+  // key prefix -> vault account. Production derives a budget account per key at issuance (SPEC §4).
+  payerAccounts?: Record<string, string>;
   meta?: MemoryHostMeta; // self-reported regions; absent = collection off
   health?: MemoryHealth; // upstream failure window; absent = collection off
   settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
@@ -162,10 +164,14 @@ export function createApp(opts: GatewayOptions = {}) {
       };
       if (opts.receipts) opts.receipts.append(buildReceipt(receiptInput));
       const receipt = opts.receipts?.list(1)[0]?.id;
+      // Vault needs a real account, not the "key:<prefix>" handle: explicit per-key
+      // mapping, else DEFAULT_PAYER (dev/test), else "dev" (fails closed on vault debit).
+      const payer =
+        (keyPrefix && opts.payerAccounts?.[keyPrefix]) || process.env.DEFAULT_PAYER || "dev";
       const settled = opts.settle
         ? await settleCall(
             {
-              user: keyPrefix ? `key:${keyPrefix}` : "dev",
+              user: payer,
               host,
               promptTokens: tokensIn,
               completionTokens: tokensOut,

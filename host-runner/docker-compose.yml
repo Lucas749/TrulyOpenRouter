@@ -14,7 +14,8 @@ services:
     ports:
       - "4122:4122"
     environment:
-      - HOST_WALLET=${HOST_WALLET:?set HOST_WALLET (host Hedera account id)}
+      # Empty HOST_WALLET = dev mode (x402 gate off). Set to host account id for paid serving.
+      - HOST_WALLET=${HOST_WALLET:-}
       - UPSTREAM_URL=http://ollama:11434
       - GUARD_PORT=4122
       - X402_TESTNET_FACILITATOR_URL=${X402_TESTNET_FACILITATOR_URL:-https://api.testnet.blocky402.com}
