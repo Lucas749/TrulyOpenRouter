@@ -1,6 +1,7 @@
 "use client";
 
 import { PrivyProvider } from "@privy-io/react-auth";
+import { hederaTestnet } from "../../lib/hedera-chains";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -9,6 +10,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       config={{
         loginMethods: ["email"],
         appearance: { theme: "light", landingHeader: "TrulyOpenRouter" },
+        defaultChain: hederaTestnet,
+        supportedChains: [hederaTestnet],
       }}
     >
       {children}
