@@ -67,7 +67,7 @@ export default function Landing() {
         })));
         const m: any = await (await fetch(`${GATEWAY}/v1/models`)).json();
         if (!live) return;
-        const mins = (m.data ?? []).map((x: any) => BigInt(x.minPricePerReq ?? 0)).filter((p: bigint) => p > 0n).sort((a: bigint, b: bigint) => (a < b ? -1 : 1));
+        const mins = (m.data ?? []).map((x: any) => BigInt(x.minPricePerReq ?? 0)).filter((p: bigint) => p > BigInt(0)).sort((a: bigint, b: bigint) => (a < b ? -1 : 1));
         if (mins.length) setMedianWei(String(mins[Math.floor(mins.length / 2)]));
       } catch {
         /* gateway down: skeletons stay, never fake */
