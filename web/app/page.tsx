@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import LoginButton from "./components/login-button";
 import { MockBanner, useMock } from "./components/mock";
 import { MOCK_HOST_MATH, MOCK_HERO, MOCK_RECEIPTS, MOCK_STATS, type StatPoint } from "../lib/mock";
+import { topicUrl, txUrl } from "../lib/chain";
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:4021";
 
@@ -63,7 +64,8 @@ export default function Landing() {
           host: short(String(x.host), 6),
           model: short(String(x.modelDigest), 10),
           latency: `${x.latencyMs}ms`,
-          url: "#",
+          // Real proof links: vault debit tx when settled, else the audit topic.
+          url: x.debitTx ? txUrl(x.debitTx) : topicUrl(),
         })));
         const m: any = await (await fetch(`${GATEWAY}/v1/models`)).json();
         if (!live) return;
