@@ -23,11 +23,15 @@ export async function proxyChat(
   body: unknown,
   fetchFn: typeof fetch = fetch,
 ): Promise<unknown> {
-  const res = await fetchFn(`${endpoint}/chat/completions`, {
+  // endpoint = OpenAI baseURL (…/v1 or bare host: both normalize to …/v1/chat/completions,
+  // covering Ollama :11434 and LM-Studio :1234/v1 layouts).
+  const base = endpoint.replace(/\/+$/, "");
+  const url = `${base.endsWith("/v1") ? base : `${base}/v1`}/chat/completions`;
+  const res = await fetchFn(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`upstream ${res.status} at ${endpoint}`);
+  if (!res.ok) throw new Error(`upstream ${res.status} at ${url}`);
   return res.json();
 }

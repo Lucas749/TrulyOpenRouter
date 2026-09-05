@@ -40,7 +40,13 @@ describe("proxyChat", () => {
     const fetchFn = vi.fn(async () => ({ ok: true, json: async () => ({ hi: 1 }) }));
     const out = await proxyChat("http://h1:11434", { model: "m" }, fetchFn as any);
     expect(out).toEqual({ hi: 1 });
-    expect(fetchFn.mock.calls[0][0]).toBe("http://h1:11434/chat/completions");
+    expect(fetchFn.mock.calls[0][0]).toBe("http://h1:11434/v1/chat/completions");
+  });
+
+  it("keeps explicit /v1 bases intact", async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+    await proxyChat("http://h1:1234/v1/", { model: "m" }, fetchFn as any);
+    expect(fetchFn.mock.calls[0][0]).toBe("http://h1:1234/v1/chat/completions");
   });
 
   it("throws on upstream error", async () => {
