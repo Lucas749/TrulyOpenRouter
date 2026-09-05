@@ -180,5 +180,8 @@ export function createApp(opts: GatewayOptions = {}) {
 const PORT = Number(process.env.PORT ?? 4021);
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  createApp().listen(PORT, () => console.log(`tor-gateway on :${PORT}`));
+  // Standalone server defaults: fresh key store + receipt log (tests inject their own).
+  createApp({ keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog() }).listen(PORT, () =>
+    console.log(`tor-gateway on :${PORT}`),
+  );
 }

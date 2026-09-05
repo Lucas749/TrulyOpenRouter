@@ -4,8 +4,9 @@
 set -eu
 cd "$(dirname "$0")/../gateway"
 
-PORT=4121 UPSTREAM_URL="http://127.0.0.1:11434" \
-  npx tsx src/index.ts > /tmp/tor-gateway.log 2>&1 &
+export PORT=4121
+export UPSTREAM_URL="http://127.0.0.1:11434"
+npx tsx src/index.ts > /tmp/tor-gateway.log 2>&1 &
 GW=$!
 trap "kill $GW" EXIT
 for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$PORT/health" > /dev/null && break; sleep 1; done
