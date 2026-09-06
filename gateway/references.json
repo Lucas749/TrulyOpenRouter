@@ -1,0 +1,13 @@
+{
+  "qwen2.5:0.5b": {
+    "stack": "ollama version is 0.33.3",
+    "capturedAt": "2026-09-06T21:02:45.586Z",
+    "refs": {
+      "cap-france": "paris",
+      "arith": "42",
+      "repeat": "blue seven quiet",
+      "backwards": "oolello",
+      "month": "october"
+    }
+  }
+}
