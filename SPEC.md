@@ -121,6 +121,29 @@ Base: PoC `packages/service` (Express + `@x402/express`, `@x402/hedera`, `@x402/
 - Fair-share: per-user rolling quota (e.g. 2,000 req/day) enforced in Vault; whale drains pool → throttled, pool survives. (World Selfie Check NOT integrated — cut with World; say quotas are the v1 answer.)
 - Slashing (stub): failed-receipt challenges queue; no auto-slash at hackathon (say so openly).
 
+## 7b. Model-identity verification (spot checks — the "actually served" proof)
+
+- Problem: a host can register model X's digest while serving cheaper weights under X's name.
+  Registration-time digests don't prove serving-time reality.
+- Mechanism: deterministic fingerprint probes (temperature 0, fixed seed 42, tiny max_tokens)
+  against reference outputs captured from a trusted run of the pinned serving stack
+  (`scripts/capture-references.mjs` → `gateway/references.json`, keyed by exact modelId).
+  References are bit-for-bit stable across runs (verified); model quirks (stable wrong answers)
+  are features, not bugs — they're the fingerprint.
+- Policy: battery majority + threshold (0.6) + 3 consecutive failing rounds convicts. Transport
+  errors are inconclusive (never failures). Single bad rounds never convict.
+- Enforcement: failing hosts leave routing rotation immediately (directory still lists them,
+  flagged); auto-challenge onchain only when explicitly enabled (`VERIFY_AUTO_CHALLENGE=1` +
+  registry + operator key) — contract queues for review, never auto-slashes.
+- Probes travel the paid path (hosts earn for them, receipts log them) — verification traffic
+  is transparent, not hidden. Sampling loop env-gated (`VERIFY_INTERVAL_MS`, off by default);
+  manual trigger `POST /api/verify/:address` (explorer "Verify now").
+- Limits (say openly): no logprobs on Ollama compat (unchecked upstream) → completion matching
+  only; references valid per serving stack (Ollama version + quant) — re-capture when the
+  host-runner image changes; cross-stack mismatches are signal, not proof.
+- Same battery/format works for exo-chained company fleets (identical chat interface) —
+  only the reference set differs per modelId. See design doc §9.
+
 ## 8. Sponsor implementation guides (WHAT + HOW + qual checklist)
 
 ### 8a. Hedera — AI & Agentic Payments ($6k, up to 3×$2k) [CORE — must be perfect]
