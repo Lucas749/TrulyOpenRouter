@@ -1,8 +1,10 @@
-import { type Address, type PublicClient, parseAbi } from "viem";
+import { type Address, type PublicClient, createWalletClient, http, parseAbi } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 export const REGISTRY_ABI = parseAbi([
   "function eligibleHosts(string modelId) view returns (address[])",
   "function getHost(address host) view returns ((string endpoint, string modelId, bytes32 modelDigest, bytes32 imageDigest, uint256 pricePerReq, uint256 pricePer1kTokens, bytes teePubkey, uint256 stake, bool active, uint64 registeredAt, uint64 lastHeartbeat, uint64 releaseAfter, bool challenged))",
+  "function challenge(address host, bytes32 receiptId)",
 ]);
 
 export interface HostInfo {
@@ -55,4 +57,30 @@ export async function fetchEligibleHosts(
     latencyMs: 250, // default until observed; scorer refines with live EMA
     reliability: 1,
   }));
+}
+
+export interface ChallengeConfig {
+  rpcUrl: string;
+  registry: Address;
+  operatorKey: `0x${string}`; // any funded key: challenge() is permissionless
+}
+
+/// @notice Flag a host onchain after failed verification. Queues for review only —
+/// the contract never auto-slashes (v1 stub). Wallet client injectable for tests.
+export async function fileChallenge(
+  cfg: ChallengeConfig,
+  host: string,
+  receiptId: `0x${string}`,
+  wallet?: { writeContract: (args: any) => Promise<string> },
+): Promise<string> {
+  const w =
+    wallet ??
+    createWalletClient({ account: privateKeyToAccount(cfg.operatorKey), transport: http(cfg.rpcUrl) });
+  return w.writeContract({
+    address: cfg.registry,
+    abi: REGISTRY_ABI,
+    functionName: "challenge",
+    args: [host as Address, receiptId],
+    chain: undefined,
+  });
 }

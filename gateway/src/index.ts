@@ -2,7 +2,7 @@ import express from "express";
 import { createPublicClient, http, parseAbi, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
-import { fetchEligibleHosts, type HostInfo } from "./registry.js";
+import { fetchEligibleHosts, fileChallenge, type HostInfo } from "./registry.js";
 import { issueKey, MemoryKeyStore, verifyKey, type KeyScopes } from "./keys.js";
 import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
 import { MemoryHealth } from "./health.js";
@@ -12,6 +12,7 @@ import { logReceiptHcs, type HcsConfig } from "./hcs.js";
 import { deriveBudgetAddress } from "./budget.js";
 import { MemoryDeviceFlow } from "./device.js";
 import { proxyChat, proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
+import { loadReferences, MemoryVerifier, PROBES, spotCheck, type CheckReport } from "./verify.js";
 import { createPaidFetch } from "./payer.js";
 import { settleCall, type DebitFn } from "./settle.js";
 
@@ -32,7 +33,82 @@ export interface GatewayOptions {
   hcs?: HcsConfig; // audit topic; absent = no onchain log (receipts still served)
   devices?: MemoryDeviceFlow; // CLI device-code login; absent = endpoint 501
   health?: MemoryHealth; // upstream failure window; absent = collection off
+  verifier?: MemoryVerifier; // model-identity spot checks; absent = collection off
   settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
+}
+
+/// @notice Paid sender for verification probes: probes travel the SAME path as user
+/// traffic (x402 when gated), so hosts earn for them and receipts stay complete.
+function verificationSender(opts: GatewayOptions, endpoint: string) {
+  return async (body: unknown) => {
+    const paidFetch = opts.x402
+      ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey })
+      : undefined;
+    const { out } = await proxyWithFallback(endpoint, body, opts.x402, paidFetch);
+    return out;
+  };
+}
+
+/// @notice One sampling tick: random active host with references → spot-check → record.
+/// Failing hosts are challenged onchain only when explicitly enabled (VERIFY_AUTO_CHALLENGE=1
+/// + registry + OPERATOR_KEY); otherwise the failure is logged and routing drains regardless.
+export async function verifyOnce(opts: GatewayOptions): Promise<CheckReport[]> {
+  if (!opts.verifier) return [];
+  const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+  const refs = loadReferences();
+  const seen = new Map<string, HostInfo>();
+  for (const id of models) {
+    for (const h of await resolveHosts(opts, id)) seen.set(h.address, h);
+  }
+  const candidates = [...seen.values()].filter((h) => h.active && refs[h.modelId]);
+  if (!candidates.length) return [];
+  const target = candidates[Math.floor(Math.random() * candidates.length)];
+  const report = await spotCheck(
+    target,
+    verificationSender(opts, target.endpoint),
+    PROBES,
+    refs[target.modelId].refs,
+    { model: target.modelId },
+  );
+  opts.verifier.record(report);
+  const summary = opts.verifier.verification(target.address);
+  console.log(
+    `verify ${target.address.slice(0, 10)}… ${target.modelId}: ${report.passed}/${report.total}` +
+      (report.inconclusive ? " (inconclusive)" : "") +
+      (summary.failing ? " FAILING" : ""),
+  );
+  if (summary.failing) {
+    if (process.env.VERIFY_AUTO_CHALLENGE === "1" && opts.registry && opts.rpcUrl && process.env.OPERATOR_KEY) {
+      try {
+        const tx = await fileChallenge(
+          {
+            rpcUrl: opts.rpcUrl,
+            registry: opts.registry,
+            operatorKey: process.env.OPERATOR_KEY as `0x${string}`,
+          },
+          target.address,
+          `0x${sha256hex(`${report.host}|${report.ts}|${report.passed}/${report.total}`)}`,
+        );
+        console.log(`challenge filed ✓ ${target.address} tx=${tx.slice(0, 18)}…`);
+      } catch (e) {
+        console.error(`challenge failed: ${String(e).slice(0, 200)}`);
+      }
+    } else {
+      console.warn(`host failing verification, challenge not configured: ${target.address}`);
+    }
+  }
+  return [report];
+}
+
+/// @notice Background sampling. VERIFY_INTERVAL_MS=0/unset = off. unref'd so tests exit cleanly.
+export function startVerifyLoop(opts: GatewayOptions): void {
+  const intervalMs = Number(process.env.VERIFY_INTERVAL_MS ?? 0);
+  if (!opts.verifier || !intervalMs) return;
+  const timer = setInterval(() => {
+    verifyOnce(opts).catch((e) => console.error(`verify tick: ${String(e).slice(0, 200)}`));
+  }, intervalMs);
+  (timer as any).unref?.();
+  console.log(`verify loop on: every ${intervalMs}ms`);
 }
 
 async function resolveHosts(opts: GatewayOptions, modelId: string): Promise<HostInfo[]> {
@@ -163,7 +239,12 @@ export function createApp(opts: GatewayOptions = {}) {
         res.setHeader("Connection", "keep-alive");
       }
       emit("routed", { model });
-      const { endpoint, host } = await selectUpstream(model, () => resolveHosts(opts, model), fallback);
+      const { endpoint, host } = await selectUpstream(model, async () => {
+        const hosts = await resolveHosts(opts, model);
+        // Failing verification = out of rotation until it recovers. The directory
+        // still lists the host (with its failing status) — exclusion is routing-only.
+        return opts.verifier ? hosts.filter((h) => !opts.verifier!.verification(h.address).failing) : hosts;
+      }, fallback);
       selectedHost = host;
       emit("submitted", { endpoint });
       const paidFetch = opts.x402 ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }) : undefined;
@@ -281,9 +362,48 @@ export function createApp(opts: GatewayOptions = {}) {
           region: opts.meta?.regionOf(h.address) ?? null, // self-reported, never verified geo
           latencyMs: opts.health?.latencyMs(h.address) ?? null, // observed EMA, null until served
           reliability: opts.health?.reliability(success24h, h.address) ?? null,
+          verification: opts.verifier?.verification(h.address) ?? null,
         };
       }),
     });
+  });
+
+  // On-demand spot check (demo + explorer "verify now"). Probes are paid calls like any other.
+  app.post("/api/verify/:address", async (req, res) => {
+    if (!opts.verifier) {
+      res.status(501).json({ error: { message: "verifier not configured", type: "unavailable" } });
+      return;
+    }
+    const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    let found: HostInfo | undefined;
+    for (const id of models) {
+      found = (await resolveHosts(opts, id)).find(
+        (h) => h.address.toLowerCase() === req.params.address.toLowerCase(),
+      );
+      if (found) break;
+    }
+    if (!found) {
+      res.status(404).json({ error: { message: "unknown host", type: "not_found" } });
+      return;
+    }
+    const refs = loadReferences()[found.modelId];
+    if (!refs) {
+      res.status(400).json({ error: { message: `no references for model ${found.modelId}`, type: "invalid_request" } });
+      return;
+    }
+    try {
+      const report = await spotCheck(
+        found,
+        verificationSender(opts, found.endpoint),
+        PROBES,
+        refs.refs,
+        { model: found.modelId },
+      );
+      opts.verifier.record(report);
+      res.json({ ...report, verification: opts.verifier.verification(found.address) });
+    } catch (e) {
+      res.status(502).json({ error: { message: String(e).slice(0, 200), type: "upstream_error" } });
+    }
   });
 
   // Hosts self-report their region slug. Validated, overwrite-only, no auth in dev
@@ -400,6 +520,7 @@ export function createApp(opts: GatewayOptions = {}) {
       fail24h: opts.health?.fails24h(found.address) ?? 0,
       reliability: opts.health?.reliability(success24h, found.address) ?? null,
       latencyMs: opts.health?.latencyMs(found.address) ?? null,
+      verification: opts.verifier?.verification(found.address) ?? null,
       earningsWei,
       receipts: mine.slice(0, 20),
     });
@@ -542,7 +663,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // Live legs (all env-driven, all optional in dev):
   //   REGISTRY (HostRegistry) + RPC_URL + MODELS + VAULT_ADDRESS + OPERATOR_KEY (vault debit)
   const rpcUrl = process.env.RPC_URL ?? "";
-  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog(), devices: new MemoryDeviceFlow(), meta: new MemoryHostMeta(), health: new MemoryHealth() };
+  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog(), devices: new MemoryDeviceFlow(), meta: new MemoryHostMeta(), health: new MemoryHealth(), verifier: new MemoryVerifier() };
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
   if (rpcUrl) opts.rpcUrl = rpcUrl;
   if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;
@@ -563,5 +684,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       operatorKey: process.env.OPERATOR_KEY as `0x${string}`,
     });
   }
+  startVerifyLoop(opts); // VERIFY_INTERVAL_MS=0/unset = off; VERIFY_AUTO_CHALLENGE=1 + OPERATOR_KEY files challenges
   createApp(opts).listen(PORT, () => console.log(`tor-gateway on :${PORT}`));
 }

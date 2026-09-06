@@ -4,6 +4,7 @@ import type { Server } from "http";
 import { createApp } from "../src/index.js";
 import { MemoryKeyStore } from "../src/keys.js";
 import { MemoryReceiptLog } from "../src/receipts.js";
+import { MemoryVerifier } from "../src/verify.js";
 
 let base = "";
 let server: Server;
@@ -446,6 +447,140 @@ describe("routes", () => {
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
       await new Promise<void>((r) => stubSrv.close(() => r()));
+    }
+  });
+});
+
+describe("verification routes", () => {
+  const MODEL = "qwen2.5:0.5b"; // has committed references in gateway/references.json
+
+  // Two stub hosts: bad answers every probe wrong, good answers them right.
+  async function twoHosts() {
+    const badApp = express();
+    badApp.use(express.json());
+    badApp.post("/v1/chat/completions", (req, res) => {
+      const prompt: string = req.body?.messages?.[0]?.content ?? "";
+      const answers: Record<string, string> = { France: "Lyon", "17 + 25": "43", "blue seven": "red eight loud", hello: "olleh", June: "July" };
+      const key = Object.keys(answers).find((k) => prompt.includes(k)) ?? "";
+      res.json({ choices: [{ message: { content: answers[key] ?? "??" } }] });
+    });
+    const goodApp = express();
+    goodApp.use(express.json());
+    goodApp.post("/v1/chat/completions", (req, res) => {
+      if (req.body?.messages?.[0]?.content === "ROUTE-ME") {
+        res.json({ choices: [{ message: { content: "served-by-good" } }] });
+        return;
+      }
+      const prompt: string = req.body?.messages?.[0]?.content ?? "";
+      const answers: Record<string, string> = { France: "Paris", "17 + 25": "42", "blue seven": "blue seven quiet", hello: "oolello", June: "October" };
+      const key = Object.keys(answers).find((k) => prompt.includes(k)) ?? "";
+      res.json({ choices: [{ message: { content: answers[key] ?? "??" } }] });
+    });
+    const listen = (app: express.Express) =>
+      new Promise<Server>((r) => {
+        const s = app.listen(0, () => r(s));
+      });
+    const badSrv = await listen(badApp);
+    const goodSrv = await listen(goodApp);
+    const badPort = (badSrv.address() as any).port;
+    const goodPort = (goodSrv.address() as any).port;
+    const mkHost = (tag: string, port: number) => ({
+      address: (tag === "bad" ? "0x0000000000000000000000000000000000000bad" : "0x0000000000000000000000000000000000000a11") as `0x${string}`,
+      endpoint: `http://127.0.0.1:${port}`,
+      modelId: MODEL,
+      modelDigest: "0xabc" as `0x${string}`,
+      pricePerReq: 1n,
+      pricePer1kTokens: 0n,
+      stake: 1n,
+      active: true,
+      lastHeartbeat: Date.now(),
+      latencyMs: 10,
+      reliability: 1,
+    });
+    return { badSrv, goodSrv, hosts: [mkHost("bad", badPort), mkHost("good", goodPort)] };
+  }
+
+  it("reports null verification until checked, then summarizes", async () => {
+    const { badSrv, goodSrv, hosts } = await twoHosts();
+    const app = createApp({
+      knownModels: [MODEL],
+      fetchHosts: async () => hosts,
+      verifier: new MemoryVerifier(),
+    });
+    const srv = app.listen(0);
+    const url = `http://127.0.0.1:${(srv.address() as any).port}`;
+    try {
+      const before: any = await (await fetch(`${url}/api/hosts`)).json();
+      expect(before.data).toHaveLength(2);
+      expect(before.data[0].verification).toMatchObject({ checks: 0, avgScore: null, failing: false });
+
+      const badAddr = hosts[0].address;
+      for (let i = 0; i < 3; i++) {
+        const r: any = await (await fetch(`${url}/api/verify/${badAddr}`, { method: "POST" })).json();
+        expect(r.total).toBe(5);
+        expect(r.score).toBe(0);
+      }
+      const after: any = await (await fetch(`${url}/api/hosts`)).json();
+      const bad = after.data.find((h: any) => h.address === badAddr);
+      expect(bad.verification).toMatchObject({ checks: 3, failing: true });
+      expect(bad.verification.avgScore).toBe(0);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+      await new Promise<void>((r) => badSrv.close(() => r()));
+      await new Promise<void>((r) => goodSrv.close(() => r()));
+    }
+  });
+
+  it("routes around failing hosts but still lists them", async () => {
+    const { badSrv, goodSrv, hosts } = await twoHosts();
+    const app = createApp({
+      knownModels: [MODEL],
+      fetchHosts: async () => hosts,
+      verifier: new MemoryVerifier(),
+    });
+    const srv = app.listen(0);
+    const url = `http://127.0.0.1:${(srv.address() as any).port}`;
+    try {
+      const badAddr = hosts[0].address;
+      for (let i = 0; i < 3; i++) {
+        await fetch(`${url}/api/verify/${badAddr}`, { method: "POST" });
+      }
+      const chat: any = await (
+        await fetch(`${url}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "ROUTE-ME" }] }),
+        })
+      ).json();
+      expect(chat.choices[0].message.content).toBe("served-by-good");
+      // …but the failing host is still listed, flagged
+      const dir: any = await (await fetch(`${url}/api/hosts`)).json();
+      expect(dir.data).toHaveLength(2);
+      expect(dir.data.find((h: any) => h.address === badAddr).verification.failing).toBe(true);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+      await new Promise<void>((r) => badSrv.close(() => r()));
+      await new Promise<void>((r) => goodSrv.close(() => r()));
+    }
+  });
+
+  it("501s without a verifier, 404s unknown hosts, 400s models without references", async () => {
+    const app = createApp({ knownModels: [MODEL], fetchHosts: async () => [] });
+    const srv = app.listen(0);
+    const url = `http://127.0.0.1:${(srv.address() as any).port}`;
+    try {
+      const noVerifier = await fetch(`${url}/api/verify/0xabc`, { method: "POST" });
+      expect(noVerifier.status).toBe(501);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+    const app2 = createApp({ knownModels: ["nope-model"], fetchHosts: async () => [], verifier: new MemoryVerifier() });
+    const srv2 = app2.listen(0);
+    const url2 = `http://127.0.0.1:${(srv2.address() as any).port}`;
+    try {
+      expect((await fetch(`${url2}/api/verify/0xabc`, { method: "POST" })).status).toBe(404);
+    } finally {
+      await new Promise<void>((r) => srv2.close(() => r()));
     }
   });
 });
