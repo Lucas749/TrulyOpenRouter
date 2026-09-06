@@ -10,16 +10,12 @@ import {
   type CheckReport,
 } from "../src/verify.js";
 
-function stubFetch(answers: Record<string, string>, failIds: string[] = []) {
-  return vi.fn(async (_url: unknown, init: any) => {
-    const body = JSON.parse(String(init?.body ?? "{}"));
+function stubSend(answers: Record<string, string>, failIds: string[] = []) {
+  return vi.fn(async (body: any) => {
     const prompt: string = body.messages?.[0]?.content ?? "";
     if (failIds.some((f) => prompt.includes(f))) throw new Error("boom");
     const key = Object.keys(answers).find((k) => prompt.includes(k)) ?? "";
-    return {
-      ok: true,
-      json: async () => ({ choices: [{ message: { content: answers[key] ?? "" } }] }),
-    };
+    return { choices: [{ message: { content: answers[key] ?? "" } }] };
   });
 }
 
@@ -46,29 +42,29 @@ describe("PROBES", () => {
 
 describe("spotCheck", () => {
   it("scores matches against references with deterministic params", async () => {
-    const fetchFn = stubFetch({ France: "Paris", "17 + 25": "42", "blue seven": "BLUE SEVEN QUIET" });
-    const report = await spotCheck(TARGET, PROBES.slice(0, 3), REFS, { fetchFn } as any);
+    const send = stubSend({ France: "Paris", "17 + 25": "42", "blue seven": "BLUE SEVEN QUIET" });
+    const report = await spotCheck(TARGET, send, PROBES.slice(0, 3), REFS);
     expect(report.total).toBe(3);
     expect(report.passed).toBe(3);
     expect(report.score).toBe(1);
     expect(report.inconclusive).toBe(false);
-    const sent = JSON.parse(String(fetchFn.mock.calls[0][1].body));
+    const sent = send.mock.calls[0][0] as any;
     expect(sent.temperature).toBe(0);
     expect(sent.seed).toBe(42);
     expect(sent.stream).toBe(false);
   });
 
   it("counts mismatches and skips probes without references", async () => {
-    const fetchFn = stubFetch({ France: "Lyon", "17 + 25": "42", "blue seven": "blue seven quiet" });
-    const report = await spotCheck(TARGET, PROBES, REFS, { fetchFn } as any);
+    const send = stubSend({ France: "Lyon", "17 + 25": "42", "blue seven": "blue seven quiet" });
+    const report = await spotCheck(TARGET, send, PROBES, REFS);
     expect(report.total).toBe(3); // backwards + month have no references
     expect(report.passed).toBe(2);
     expect(report.score).toBeCloseTo(2 / 3);
   });
 
   it("treats transport errors as inconclusive, never as failures", async () => {
-    const fetchFn = stubFetch({}, ["France", "17", "blue"]);
-    const report = await spotCheck(TARGET, PROBES.slice(0, 3), REFS, { fetchFn } as any);
+    const send = stubSend({}, ["France", "17", "blue"]);
+    const report = await spotCheck(TARGET, send, PROBES.slice(0, 3), REFS);
     expect(report.inconclusive).toBe(true);
     expect(report.score).toBeNull();
     expect(report.total).toBe(0);

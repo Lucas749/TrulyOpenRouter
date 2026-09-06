@@ -1,4 +1,24 @@
-import { chatUrl } from "./upstream.js";
+import { createRequire } from "module";
+
+/// @notice Reference outputs, captured from a trusted run of the serving stack
+/// (scripts/capture-references.mjs). Keyed by exact modelId string.
+export interface ReferenceSet {
+  stack: string;
+  capturedAt: string;
+  refs: Record<string, string>;
+}
+
+export function loadReferences(): Record<string, ReferenceSet> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const require = createRequire(import.meta.url);
+    return require("../references.json") as Record<string, ReferenceSet>;
+  } catch {
+    return {};
+  }
+}
+
+export { sha256hex } from "./receipts.js";
 
 /// @notice Model-identity spot checks: does the host actually serve the model it claims?
 /// Sends deterministic fingerprint probes (temperature 0, fixed seed) and compares against
@@ -88,15 +108,16 @@ function extractContent(out: unknown): string {
   return typeof c === "string" ? c : "";
 }
 
-/// @notice Run the battery against one host. References keyed by probeId; probes without a
-/// reference are skipped (never counted against the host).
+/// @notice Run the battery against one host via `send` — the gateway passes its PAID
+/// sender (proxyWithFallback path), so probes are paid calls like any other traffic:
+/// the host earns, receipts log, nothing is hidden. Tests pass a stub.
 export async function spotCheck(
   target: ProbeTarget,
+  send: (body: unknown) => Promise<unknown>,
   probes: Probe[],
   references: Record<string, string>,
-  opts: { model?: string; fetchFn?: typeof fetch; seed?: number } = {},
+  opts: { model?: string; seed?: number } = {},
 ): Promise<CheckReport> {
-  const fetchFn = opts.fetchFn ?? fetch;
   const model = opts.model ?? target.modelId;
   const seed = opts.seed ?? VERIFY_SEED;
   const results: ProbeResult[] = [];
@@ -104,20 +125,15 @@ export async function spotCheck(
     const expected = references[probe.id];
     if (expected === undefined) continue;
     try {
-      const res = await fetchFn(chatUrl(target.endpoint), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model,
-          messages: probe.messages,
-          temperature: 0,
-          seed,
-          max_tokens: probe.maxTokens,
-          stream: false,
-        }),
+      const out = await send({
+        model,
+        messages: probe.messages,
+        temperature: 0,
+        seed,
+        max_tokens: probe.maxTokens,
+        stream: false,
       });
-      if (!res.ok) throw new Error(`upstream ${res.status}`);
-      const got = extractContent(await res.json());
+      const got = extractContent(out);
       results.push({ probeId: probe.id, match: scoreProbe(got, expected), expected, got });
     } catch (e) {
       results.push({ probeId: probe.id, match: false, expected, got: "", error: String(e) });
