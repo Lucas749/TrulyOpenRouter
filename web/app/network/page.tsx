@@ -26,6 +26,22 @@ interface Host {
   reliability: number | null;
   region: string | null;
   latencyMs: number | null;
+  verification: { lastCheck: number | null; checks: number; avgScore: number | null; failing: boolean } | null;
+}
+
+function VerifyCell({ v }: { v: Host["verification"] }) {
+  if (!v || v.checks === 0 || v.avgScore === null) return <span className="text-[#8F8F8F]">—</span>;
+  if (v.failing)
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-[#FDECEA] px-2 py-0.5 text-[#B3261E]">
+        failing · {(v.avgScore * 100).toFixed(0)}%
+      </span>
+    );
+  return (
+    <span className="inline-flex items-center gap-1 text-[#0B7A5D]">
+      ✓ {(v.avgScore * 100).toFixed(0)}% <span className="text-[#8F8F8F]">· {v.checks}</span>
+    </span>
+  );
 }
 
 interface Receipt {
@@ -156,6 +172,7 @@ export default function NetworkPage() {
                   <th className="px-4 py-3 font-medium">Price/req</th>
                   <th className="px-4 py-3 font-medium">24h calls</th>
                   <th className="px-4 py-3 font-medium">Reliability</th>
+                  <th className="px-4 py-3 font-medium">Model check</th>
                   <th className="px-4 py-3 font-medium">Region</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                 </tr>
@@ -169,12 +186,13 @@ export default function NetworkPage() {
                       <td className="px-4 py-3 font-mono text-xs">{h.pricePerReq}</td>
                       <td className="px-4 py-3 font-mono text-xs"><Activity className="mr-1 inline h-3.5 w-3.5" />{h.calls24h ?? "—"}</td>
                       <td className="px-4 py-3 font-mono text-xs">{h.reliability === null || h.reliability === undefined ? "—" : `${(h.reliability * 100).toFixed(1)}%`}</td>
+                      <td className="px-4 py-3 font-mono text-xs"><VerifyCell v={h.verification ?? null} /></td>
                       <td className="px-4 py-3 font-mono text-xs">{h.region ?? "—"}</td>
                       <td className="px-4 py-3"><StatusDot active={h.active} /></td>
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-[#8F8F8F]">no hosts registered yet — <Link href="/host" className="text-[#2563EB] underline">be the first to serve</Link></td></tr>
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-[#8F8F8F]">no hosts registered yet — <Link href="/host" className="text-[#2563EB] underline">be the first to serve</Link></td></tr>
                 )}
               </tbody>
             </table>
