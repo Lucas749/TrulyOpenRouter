@@ -33,7 +33,7 @@ services:
   gateway:
     build: ./gateway
     ports:
-      - "127.0.0.1:4121:4121" # localhost only: operator via `ssh -L 4121:localhost:4121`
+      - "4121:4121" # public for the Vercel frontend (chat key-gated, admin token-gated)
     environment:
       - PORT=4121
       - DATABASE_URL=postgresql://${POSTGRES_USER:-tor}:${POSTGRES_PASSWORD:?set in .env.prod}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:-tor}?sslmode=no-verify
