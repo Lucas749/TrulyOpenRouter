@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
+import LoginButton from "../components/login-button";
 
 const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
 
@@ -59,9 +61,20 @@ export default function ChatPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col p-6">
-      <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">TrulyOpenRouter</h1>
+    <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
+      <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
+        <div className="mx-auto flex h-16 w-full max-w-2xl items-center justify-between px-6">
+          <Link href="/" className="text-[18px] font-semibold">Truly<span className="text-[15px] font-normal text-[#8F8F8F]">OpenRouter</span></Link>
+          <nav className="flex items-center gap-5 text-sm font-medium text-[#6E6E73]">
+            <span className="text-black">Chat</span>
+            <Link href="/network" className="hover:text-black">Network</Link>
+            <Link href="/host" className="hover:text-black">Serve</Link>
+          </nav>
+          <LoginButton />
+        </div>
+      </header>
+    <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-2xl flex-col p-6">
+      <div className="mb-4 flex items-center justify-end">
         <select
           value={model}
           onChange={(e) => setModel(e.target.value)}
@@ -72,7 +85,7 @@ export default function ChatPage() {
             <option key={m.id} value={m.id}>{m.id}</option>
           ))}
         </select>
-      </header>
+      </div>
       <div className="flex flex-1 flex-col gap-3">
         {msgs.map((m, i) => (
           <div key={i} className={m.role === "user" ? "self-end rounded-2xl bg-black px-4 py-2 text-white" : "self-start rounded-2xl bg-black/5 px-4 py-2"}>
@@ -98,5 +111,6 @@ export default function ChatPage() {
         </button>
       </div>
     </main>
+    </div>
   );
 }
