@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
 import { loadConfig } from "./config.js";
 import { banner, box, ok, warn } from "./ui.js";
+import { formatVerification } from "./verify.js";
 
 function sh(cmd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   return new Promise((resolve) => {
@@ -23,6 +24,7 @@ export async function status(): Promise<void> {
       if (cfg.hostAddress) {
         const h: any = await (await fetch(`${cfg.gateway}/api/hosts/${cfg.hostAddress}`)).json();
         lines.push(`my host:  ${h.active ? "serving" : "offline"} · ${h.calls24h ?? 0} calls/24h · earnings ${h.earningsWei ?? "—"}`);
+        lines.push(`${formatVerification(h.verification)}${h.challenged ? " · CHALLENGED — under review" : ""}`);
       }
     } catch {
       lines.push("network:  gateway unreachable");
