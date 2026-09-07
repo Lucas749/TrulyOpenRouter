@@ -20,6 +20,8 @@ services:
 
   guard:
     build: ./host-runner/guard
+    ports:
+      - "127.0.0.1:4122:4122" # localhost only, same as gateway
     environment:
       - HOST_WALLET=${HOST_WALLET:-}
       - UPSTREAM_URL=http://ollama:11434
