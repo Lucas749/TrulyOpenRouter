@@ -5,65 +5,101 @@ import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createApp } from "../src/index.js";
-import { actionHash, tapCommand, tapMemo, TapStore, verifyTapMemo } from "../src/taps.js";
+import {
+  actionHash,
+  approveAmountTinybar,
+  formatHbar,
+  tapInstruction,
+  tapMemo,
+  TapStore,
+  verifyTapTransfer,
+} from "../src/taps.js";
 
-const SIGNER = "So11111111111111111111111111111111111111112";
+const LEDGER = "0.0.10378181";
 
-function stubSolana(memo: string, payer: string) {
+// Stub mirror node: one cryptotransfer tx for the ledger account.
+function stubMirror(opts: { amount: number; toSelf: boolean; memo?: string; old?: boolean }) {
   const app = express();
-  app.use(express.json());
-  app.post("/", (req, res) => {
-    if (req.body?.method === "getSignaturesForAddress") return res.json({ jsonrpc: "2.0", id: 1, result: [{ signature: "sig-match" }] });
-    if (req.body?.method === "getTransaction") {
-      return res.json({
-        jsonrpc: "2.0",
-        id: 1,
-        result: {
-          transaction: { message: { accountKeys: [payer, "other"] }, signatures: ["sig-match"] },
-          meta: { logMessages: ["Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr invoke [1]", `Program log: Memo (len ${memo.length}): "${memo}"`, "Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr success"] },
+  app.get("/api/v1/transactions", (_req, res) => {
+    const transfers = opts.toSelf
+      ? [
+          { account: LEDGER, amount: -opts.amount },
+          { account: LEDGER, amount: opts.amount },
+        ]
+      : [
+          { account: LEDGER, amount: -opts.amount },
+          { account: "0.0.999", amount: opts.amount },
+        ];
+    const ts = opts.old ? "1000000000.000000000" : `${Math.floor(Date.now() / 1000)}.000000000`;
+    res.json({
+      transactions: [
+        {
+          transaction_id: "0.0.10378181@1788782000.000000000",
+          consensus_timestamp: ts,
+          transfers,
+          memo_base64: opts.memo ? Buffer.from(opts.memo).toString("base64") : "",
         },
-      });
-    }
-    return res.json({ jsonrpc: "2.0", id: 1, result: null });
+      ],
+    });
   });
   const srv: Server = app.listen(0);
   return { srv, url: `http://127.0.0.1:${(srv.address() as any).port}` };
 }
 
 afterEach(() => {
-  delete process.env.SOLANA_RPC_URL;
-  delete process.env.TAP_SIGNER;
+  delete process.env.MIRROR_URL;
+  delete process.env.TAP_HEDERA_ACCOUNT;
 });
 
 describe("tap store", () => {
-  it("queues with bound memo, rejects unknown kinds, blocks double-approve", () => {
+  it("queues with bound amount+memo, rejects unknown kinds, blocks double-approve", () => {
     const store = new TapStore(mkdtempSync(join(tmpdir(), "tor-taps-")));
     const t = store.queue("heartbeat", {});
     expect(t.status).toBe("pending");
+    expect(t.approveAmountTinybar).toBe(approveAmountTinybar(t.id));
+    expect(t.approveAmountTinybar).toBeGreaterThanOrEqual(10000);
     expect(t.approveMemo).toBe(tapMemo(t.id, t.actionHash));
-    expect(tapCommand(t, SIGNER)).toContain(t.approveMemo);
+    expect(tapInstruction(t, LEDGER)).toContain(formatHbar(t.approveAmountTinybar));
+    expect(tapInstruction(t, LEDGER)).toContain(LEDGER);
     expect(() => store.queue("nuke", {})).toThrow("unknown tap kind");
-    store.markApproved(t.id, "sig1", SIGNER);
-    expect(() => store.markApproved(t.id, "sig2", SIGNER)).toThrow("already approved");
+    store.markApproved(t.id, "0.0.1@1.000000000", LEDGER);
+    expect(() => store.markApproved(t.id, "0.0.1@2.000000000", LEDGER)).toThrow("already approved");
     expect(actionHash("heartbeat", {})).toBe(t.actionHash);
+    expect(formatHbar(15000)).toBe("0.00015");
   });
 });
 
-describe("solana memo verification", () => {
-  it("accepts fee-payer + exact memo, rejects impostors", async () => {
+describe("mirror-node approval verification", () => {
+  it("accepts exact self-transfer, rejects everything else", async () => {
     const store = new TapStore(mkdtempSync(join(tmpdir(), "tor-taps-")));
     const t = store.queue("heartbeat", {});
-    const { srv, url } = stubSolana(t.approveMemo, SIGNER);
+    const good = stubMirror({ amount: t.approveAmountTinybar, toSelf: true });
     try {
-      const sig = await verifyTapMemo(t, SIGNER, { url, fetchFn: fetch });
-      expect(sig).toBe("sig-match");
-      // Wrong memo onchain -> no match.
-      const evil = { ...t, approveMemo: "tor-approve:evil" };
-      await expect(verifyTapMemo(evil, SIGNER, { url, fetchFn: fetch })).rejects.toThrow("no matching");
-      // Wrong payer -> no match.
-      await expect(verifyTapMemo(t, "Attacker111111111111111111111111111111111", { url, fetchFn: fetch })).rejects.toThrow("no matching");
+      const txId = await verifyTapTransfer(t, LEDGER, { url: good.url, fetchFn: fetch });
+      expect(txId).toContain("0.0.10378181@");
+      // Wrong amount -> no match.
+      const wrongAmt = stubMirror({ amount: t.approveAmountTinybar + 1, toSelf: true });
+      try {
+        await expect(verifyTapTransfer(t, LEDGER, { url: wrongAmt.url, fetchFn: fetch })).rejects.toThrow("no matching");
+      } finally {
+        wrongAmt.srv.close();
+      }
+      // Not to self -> no match.
+      const away = stubMirror({ amount: t.approveAmountTinybar, toSelf: false });
+      try {
+        await expect(verifyTapTransfer(t, LEDGER, { url: away.url, fetchFn: fetch })).rejects.toThrow("no matching");
+      } finally {
+        away.srv.close();
+      }
+      // Too old -> no match.
+      const old = stubMirror({ amount: t.approveAmountTinybar, toSelf: true, old: true });
+      try {
+        await expect(verifyTapTransfer(t, LEDGER, { url: old.url, fetchFn: fetch })).rejects.toThrow("no matching");
+      } finally {
+        old.srv.close();
+      }
     } finally {
-      srv.close();
+      good.srv.close();
     }
   });
 });
@@ -76,32 +112,29 @@ describe("tap admin routes", () => {
     const base = `http://127.0.0.1:${(srv.address() as any).port}`;
     const auth = { Authorization: "Bearer tok", "Content-Type": "application/json" };
     try {
-      // No token -> 401.
       expect(await (await fetch(`${base}/api/admin/taps`)).status).toBe(401);
       const queued: any = await (
         await fetch(`${base}/api/admin/taps`, { method: "POST", headers: auth, body: JSON.stringify({ kind: "heartbeat" }) })
       ).json();
       expect(queued.tap.status).toBe("pending");
-      expect(queued.deviceCommand).toBeNull(); // TAP_SIGNER unset
-      // Execute before approval -> 409, nothing ran.
+      expect(queued.deviceInstruction).toBeNull(); // TAP_HEDERA_ACCOUNT unset
       expect(await (await fetch(`${base}/api/admin/taps/${queued.tap.id}/execute`, { method: "POST", headers: auth })).status).toBe(409);
-      // Point RPC at stub, approve, execute.
-      const { srv: sol, url } = stubSolana(queued.tap.approveMemo, SIGNER);
-      process.env.SOLANA_RPC_URL = url;
-      process.env.TAP_SIGNER = SIGNER;
+      const { srv: mirror, url } = stubMirror({ amount: queued.tap.approveAmountTinybar, toSelf: true });
+      process.env.MIRROR_URL = url;
+      process.env.TAP_HEDERA_ACCOUNT = LEDGER;
       try {
         const verified: any = await (
           await fetch(`${base}/api/admin/taps/${queued.tap.id}/verify`, { method: "POST", headers: auth })
         ).json();
         expect(verified.tap.status).toBe("approved");
-        expect(verified.tap.tapTx).toBe("sig-match");
+        expect(verified.tap.tapSigner).toBe(LEDGER);
         const done: any = await (
           await fetch(`${base}/api/admin/taps/${queued.tap.id}/execute`, { method: "POST", headers: auth })
         ).json();
         expect(done.tap.status).toBe("executed");
         expect(done.tap.execTx).toBe("0xexec");
       } finally {
-        sol.close();
+        mirror.close();
       }
     } finally {
       srv.close();

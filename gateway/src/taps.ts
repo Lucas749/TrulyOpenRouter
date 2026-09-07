@@ -1,17 +1,22 @@
 import { randomBytes } from "crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { sha256hex } from "./receipts.js";
 
-// PENDING_TAP queue (L4: device-gated execution).
+// PENDING_TAP queue (L4: device-gated execution) — HEDERA ONLY.
 //
 // High-risk server actions (stake release, heartbeat-as-host, …) NEVER execute
-// directly. They queue as PENDING_TAP; the operator approves on the Ledger by
-// sending a dust Solana memo tx (fractions of a cent, device reviews memo +
-// amount). The backend verifies the memo onchain (fee payer == recorded Ledger
-// Solana address, memo == expected) and only then executes the Hedera call with
-// the ring-held host key. Proof chain: Solana txSig → Hedera txHash, both on
-// the tap record. No trusted clicks anywhere.
+// directly. They queue as PENDING_TAP; the operator approves with their LEDGER
+// by sending an exact dust amount of HBAR to THEMSELF on Hedera (testnet =
+// faucet money, Ledger Live HBAR app, no other network involved). The backend
+// verifies the self-transfer on the public mirror node (sender == receiver ==
+// recorded Ledger account, exact amount, inside the tap window, optional memo
+// match) and only then executes the Hedera call with the ring-held host key.
+// Proof chain: approval transfer → execution tx, both HashScan-linkable, both
+// on the tap record. No trusted clicks anywhere.
+//
+// Why amount-binding, not memo: Ledger Live's HBAR send may not expose a memo
+// field; an exact dust amount to self always works and is unambiguous.
 
 export type TapKind = "heartbeat" | "stake-release";
 export type TapStatus = "pending" | "approved" | "executed" | "failed";
@@ -21,16 +26,24 @@ export interface Tap {
   kind: TapKind;
   params: Record<string, string>;
   actionHash: string;
-  approveMemo: string;
+  approveMemo: string; // recorded intent; matched opportunistically, not required
+  approveAmountTinybar: number; // exact dust the Ledger must send to itself
   status: TapStatus;
   createdAt: number;
-  tapTx?: string; // Solana approval tx signature
-  tapSigner?: string; // verified fee payer
+  tapTx?: string; // Hedera approval transfer id (e.g. 0.0.x@sec.nanos)
+  tapSigner?: string; // verified sender account
   execTx?: string; // Hedera execution tx hash
   execError?: string;
 }
 
 const KINDS: TapKind[] = ["heartbeat", "stake-release"];
+
+/// @notice Deterministic dust per tap: 10000 + hash slice, i.e. 0.0001–0.00019
+/// HBAR. Unique per tap id, unguessable, unambiguous on the mirror node.
+export function approveAmountTinybar(id: string): number {
+  const h = sha256hex(`tor-tap:${id}`);
+  return 10000 + (parseInt(h.slice(0, 8), 16) % 9000);
+}
 
 export function tapMemo(id: string, actionHash: string): string {
   return `tor-approve:${id}:${actionHash}`;
@@ -74,7 +87,16 @@ export class TapStore {
     const s = this.read();
     const id = `tap_${Date.now().toString(36)}_${randomBytes(3).toString("hex")}`;
     const hash = actionHash(kind, params);
-    const tap: Tap = { id, kind: kind as TapKind, params, actionHash: hash, approveMemo: tapMemo(id, hash), status: "pending", createdAt: Date.now() };
+    const tap: Tap = {
+      id,
+      kind: kind as TapKind,
+      params,
+      actionHash: hash,
+      approveMemo: tapMemo(id, hash),
+      approveAmountTinybar: approveAmountTinybar(id),
+      status: "pending",
+      createdAt: Date.now(),
+    };
     s.taps[id] = tap;
     this.write(s);
     return tap;
@@ -123,47 +145,51 @@ export class TapStore {
   }
 }
 
-interface SolanaRpc {
+export function formatHbar(tinybar: number): string {
+  return (tinybar / 1e8).toFixed(8).replace(/0+$/, "").replace(/\.$/, ".0");
+}
+
+interface MirrorRpc {
   fetchFn?: typeof fetch;
   url?: string;
 }
 
-async function rpcCall(rpc: Required<SolanaRpc>, method: string, params: unknown[]): Promise<any> {
-  const res = await rpc.fetchFn(rpc.url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  const d = (await res.json()) as any;
-  if (d.error) throw new Error(`solana ${method}: ${d.error.message ?? "unknown"}`);
-  return d.result;
+async function mirrorGet(mirror: Required<MirrorRpc>, path: string): Promise<any> {
+  const res = await mirror.fetchFn(`${mirror.url}${path}`, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`mirror ${res.status} on ${path}`);
+  return res.json();
 }
 
-/// @notice Verify a tap approval: scan the authorized signer's recent Solana
-/// signatures for a tx whose fee payer is the signer AND whose memo program
-/// logged exactly the expected approveMemo. Returns the tx signature.
-export async function verifyTapMemo(
-  tap: Tap,
-  authorizedSigner: string,
-  rpc: SolanaRpc = {},
-): Promise<string> {
+/// @notice Verify a tap approval on the Hedera mirror node: a cryptotransfer
+/// AFTER the tap was queued where sender == receiver == the recorded Ledger
+/// account AND the exact dust amount moved. Memo match is a bonus signal, not
+/// required (Ledger Live may not expose memo). Returns the transaction id.
+export async function verifyTapTransfer(tap: Tap, ledgerAccount: string, mirror: MirrorRpc = {}): Promise<string> {
   if (tap.status !== "pending") throw new Error(`tap already ${tap.status}`);
-  const full: Required<SolanaRpc> = { fetchFn: rpc.fetchFn ?? fetch, url: rpc.url ?? process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com" };
-  const sigs: Array<{ signature: string }> = await rpcCall(full, "getSignaturesForAddress", [authorizedSigner, { limit: 20 }]);
-  for (const { signature } of sigs ?? []) {
-    const tx: any = await rpcCall(full, "getTransaction", [signature, { maxSupportedTransactionVersion: 0 }]);
-    const keys: string[] = tx?.transaction?.message?.accountKeys?.map((k: any) => (typeof k === "string" ? k : k.pubkey)) ?? [];
-    if (keys[0] !== authorizedSigner) continue; // fee payer must be the Ledger address
-    const logs: string[] = tx?.meta?.logMessages ?? [];
-    // Exact memo in quotes required — prefix games ("...:evil") don't pass.
-    if (!logs.some((l) => l.includes(`"${tap.approveMemo}"`))) continue;
-    return signature;
+  const full: Required<MirrorRpc> = {
+    fetchFn: mirror.fetchFn ?? fetch,
+    url: mirror.url ?? process.env.MIRROR_URL ?? "https://testnet.mirrornode.hedera.com",
+  };
+  const createdSec = Math.floor(tap.createdAt / 1000) - 30; // clock skew grace
+  const data: any = await mirrorGet(full, `/api/v1/transactions?account.id=${ledgerAccount}&transactiontype=cryptotransfer&limit=25&order=desc`);
+  for (const tx of data?.transactions ?? []) {
+    if (Number(String(tx.consensus_timestamp ?? "0").split(".")[0]) < createdSec) continue;
+    const transfers: any[] = tx?.transfers ?? [];
+    // Self-transfer of exactly the dust amount: sender==receiver==ledger account.
+    const self = transfers.filter((t) => t.account === ledgerAccount);
+    if (self.length === 0) continue;
+    const net = self.reduce((sum, t) => sum + Number(t.amount ?? 0), 0);
+    if (net !== 0) continue; // must net to zero = to self
+    const moved = self.reduce((sum, t) => sum + Math.abs(Number(t.amount ?? 0)), 0) / 2;
+    if (moved !== tap.approveAmountTinybar) continue;
+    return String(tx.transaction_id);
   }
-  throw new Error("no matching Solana approval found (send the memo tx, then retry)");
+  throw new Error("no matching Ledger approval found (send the exact HBAR amount to yourself, then retry)");
 }
 
-/// @notice The exact device command the UI shows per tap. Amount is dust to
-/// self; the memo binds tap id + action hash. Device reviews both on screen.
-export function tapCommand(tap: Tap, signer: string): string {
-  return `wallet-cli send solana-1 --to ${signer} --amount '0.00001 SOL' --memo '${tap.approveMemo}'`;
+/// @notice The exact instruction the UI shows per tap. One network, testnet
+/// faucet money, Ledger Live HBAR app.
+export function tapInstruction(tap: Tap, ledgerAccount: string): string {
+  return `In Ledger Live (HBAR app): send exactly ${formatHbar(tap.approveAmountTinybar)} HBAR from ${ledgerAccount} to ${ledgerAccount} (yourself), then come back and hit Verify`;
 }
+

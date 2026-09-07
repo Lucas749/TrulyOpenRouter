@@ -16,7 +16,7 @@ import { proxyChat, proxyWithFallback, selectUpstream, type X402Creds } from "./
 import { loadReferences, MemoryVerifier, PROBES, spotCheck, type CheckReport } from "./verify.js";
 import { createPaidFetch } from "./payer.js";
 import { settleCall, type DebitFn } from "./settle.js";
-import { tapCommand, TapStore, type TapKind, type TapStatus, verifyTapMemo } from "./taps.js";
+import { tapInstruction, TapStore, type TapKind, type TapStatus, verifyTapTransfer } from "./taps.js";
 import { createTapExecutor } from "./tap-exec.js";
 
 export interface GatewayOptions {
@@ -742,9 +742,10 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json({ prefix: req.params.prefix, removed: opts.spendCaps.removeCap(req.params.prefix) });
   });
 
-  // PENDING_TAP queue (L4). Trust chain: web (wallet-signed owner) -> admin
-  // token here -> device-signed Solana memo -> Hedera execution with the
-  // ring-held host key. Every step recorded on the tap; nothing executes early.
+  // PENDING_TAP queue (L4, Hedera-only). Trust chain: web (wallet-signed
+  // owner) -> admin token here -> Ledger-signed HBAR self-transfer (exact dust,
+  // verified on the mirror node) -> Hedera execution with the ring-held host
+  // key. Every step recorded on the tap; nothing executes early.
   const needTaps = (res: any): TapStore | null => {
     if (!opts.taps) {
       res.status(501).json({ error: { message: "tap queue not configured", type: "unavailable" } });
@@ -767,8 +768,12 @@ export function createApp(opts: GatewayOptions = {}) {
     try {
       const { kind, params } = req.body ?? {};
       const tap = taps.queue(String(kind), (params ?? {}) as Record<string, string>);
-      const signer = process.env.TAP_SIGNER ?? "";
-      res.json({ tap, deviceCommand: signer ? tapCommand(tap, signer) : null, tapSignerConfigured: !!signer });
+      const ledgerAccount = process.env.TAP_HEDERA_ACCOUNT ?? "";
+      res.json({
+        tap,
+        deviceInstruction: ledgerAccount ? tapInstruction(tap, ledgerAccount) : null,
+        tapAccountConfigured: !!ledgerAccount,
+      });
     } catch (e: any) {
       res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "invalid_request" } });
     }
@@ -781,10 +786,12 @@ export function createApp(opts: GatewayOptions = {}) {
     try {
       const tap = taps.get(req.params.id);
       if (!tap) return res.status(404).json({ error: { message: "tap not found", type: "not_found" } });
-      const signer = process.env.TAP_SIGNER ?? "";
-      if (!signer) return res.status(501).json({ error: { message: "TAP_SIGNER not configured", type: "unavailable" } });
-      const sig = await verifyTapMemo(tap, signer);
-      res.json({ tap: taps.markApproved(tap.id, sig, signer) });
+      const ledgerAccount = process.env.TAP_HEDERA_ACCOUNT ?? "";
+      if (!ledgerAccount) {
+        return res.status(501).json({ error: { message: "TAP_HEDERA_ACCOUNT not configured", type: "unavailable" } });
+      }
+      const txId = await verifyTapTransfer(tap, ledgerAccount);
+      res.json({ tap: taps.markApproved(tap.id, txId, ledgerAccount) });
     } catch (e: any) {
       res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 200), type: "tap_unapproved" } });
     }

@@ -18,7 +18,7 @@ beforeEach(() => {
       if (u.endsWith("/api/admin/taps") && init?.method === "POST") {
         const body = JSON.parse(init.body);
         if (body.kind !== "heartbeat") return { ok: false, status: 400, json: async () => ({ error: "bad kind" }) } as any;
-        return { ok: true, status: 200, json: async () => ({ tap: { id: "tap_9", status: "pending" }, deviceCommand: "wallet-cli send ..." }) } as any;
+        return { ok: true, status: 200, json: async () => ({ tap: { id: "tap_9", status: "pending" }, deviceInstruction: "In Ledger Live (HBAR app): send exactly ..." }) } as any;
       }
       if (u.includes("/verify")) return { ok: true, status: 200, json: async () => ({ tap: { id: "tap_9", status: "approved" } }) } as any;
       if (u.includes("/execute")) return { ok: true, status: 200, json: async () => ({ tap: { id: "tap_9", status: "executed", execTx: "0xabc" } }) } as any;
@@ -35,7 +35,7 @@ describe("security taps routes", () => {
 
     const queued = await queueTap(new Request("http://x", { method: "POST", body: JSON.stringify({ kind: "heartbeat" }) }));
     expect(queued.status).toBe(200);
-    expect(((await queued.json()) as any).deviceCommand).toContain("wallet-cli");
+    expect(((await queued.json()) as any).deviceInstruction).toContain("Ledger Live");
 
     const badKind = await queueTap(new Request("http://x", { method: "POST", body: JSON.stringify({ kind: "nuke" }) }));
     expect(badKind.status).toBe(400);
