@@ -59,10 +59,11 @@ export default function HostSetupPage() {
         </div>
       </header>
       <main className="mx-auto flex max-w-[920px] flex-col gap-6 px-6 py-10">
-        <p className="m-0 rounded-xl border border-dashed border-black/15 bg-[#F7F7F5] px-4 py-3 font-mono text-xs text-[#5D5D5D]">
-          Lazy? One command does all of below (pull → stack → digest → register → heartbeat cron):{" "}
-          <span className="text-black">sh host-runner/setup.sh</span> — key never leaves your machine.
-        </p>
+        <div className="flex flex-col gap-2 rounded-[14px] bg-[#0D0D0D] p-5">
+          <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#8F8F8F]">Fastest path — one command, key stays on your machine</div>
+          <p className="m-0 font-mono text-sm text-[#EDEDED]">sh host-runner/setup.sh</p>
+          <p className="m-0 text-[13px] text-[#8F8F8F]">Pulls the model, computes its digest, starts the stack, registers onchain, installs the heartbeat cron. Manual form below if you want each step.</p>
+        </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <label className={field}><span className="text-[#6E6E73]">Public endpoint (your Ollama/guard URL)</span><input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} className={input} /></label>
           <label className={field}><span className="text-[#6E6E73]">Model ID</span><input value={modelId} onChange={(e) => setModelId(e.target.value)} className={input} /></label>

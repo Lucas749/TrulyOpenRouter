@@ -4,10 +4,25 @@ Run your own host and serve models for USDC. ~20 minutes, most of it model downl
 
 ## Prereqs
 
-- Docker Desktop, Node 22+, a Ledger (for paid mode at the end)
+- Docker Desktop, Node 22+, `cast` (foundry), a Ledger (for paid mode at the end)
 - A Hedera testnet account with a little HBAR (faucet.hedera.com)
 
-## 1. Clone + stack
+## Easy path: one script
+
+```sh
+git clone https://github.com/Lucas749/TrulyOpenRouter && cd TrulyOpenRouter
+sh host-runner/setup.sh
+```
+
+It prompts for your host key (hidden input, stays on your machine) and public
+endpoint, then pulls the model, computes its digest, starts the stack,
+registers onchain (stakes 10 HBAR), verifies, and offers the heartbeat cron.
+`--dry-run` prints every step without touching anything. Your endpoint must be
+publicly reachable — LAN IPs won't route.
+
+## Manual path (same steps, by hand)
+
+### 1. Clone + stack
 
 ```sh
 git clone https://github.com/Lucas749/TrulyOpenRouter && cd TrulyOpenRouter
@@ -17,15 +32,25 @@ docker exec $(docker ps -q --filter ancestor=ollama/ollama) ollama pull qwen2.5:
 
 Guard is on `:4122`. In dev it serves open (no paywall) until you set `HOST_WALLET`.
 
-## 2. Register onchain (stakes real testnet HBAR)
+### 2. Model digest (proves what you serve — the network spot-checks it)
 
 ```sh
-cd host-runner/cli
-tor-host run --model qwen2.5:0.5b --stake-hbar 10 --endpoint http://YOUR_IP:4122
+docker exec $(docker ps -q --filter ancestor=ollama/ollama) ollama show --modelfile qwen2.5:0.5b | sha256sum
 ```
 
-This registers you in `HostRegistry`, sets pricing, and starts heartbeats.
-Check yourself on `/network`.
+Prefix with `0x`. A host serving anything else gets drained out of rotation.
+
+### 3. Register onchain (stakes real testnet HBAR)
+
+```sh
+export REGISTRY=0xa45461bdefef422a81b22f36ebfd0995c7642dc3 RPC_URL=https://testnet.hashio.io/api
+export HOST_KEY=<your-key> ENDPOINT=https://your-public-url MODEL_ID=qwen2.5:0.5b MODEL_DIGEST=0x…
+export PRICE_PER_REQ_WEI=100000 PRICE_PER_1K_WEI=100000 STAKE_WEI=10000000000000000000
+sh host-runner/register.sh
+```
+
+Units are delivered tinybars (relay sends value/1e10): 100000 ≈ 1 credit,
+1e19 = 10 HBAR. Check yourself on `/network`.
 
 ## 3. Get paid
 
