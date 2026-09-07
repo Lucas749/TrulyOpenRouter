@@ -758,7 +758,13 @@ export function createApp(opts: GatewayOptions = {}) {
     if (!requireAdmin(req, res)) return;
     const taps = needTaps(res);
     if (!taps) return;
-    res.json({ taps: taps.list((req.query.status as TapStatus | undefined) ?? undefined) });
+    // Hero status for /security: ring backend + whether a Ledger tap account
+    // is recorded. Read live from env (set at boot, never secret values).
+    res.json({
+      taps: taps.list((req.query.status as TapStatus | undefined) ?? undefined),
+      ringBackend: process.env.SECRETS_BACKEND === "ring" ? "ring" : "env",
+      tapAccount: process.env.TAP_HEDERA_ACCOUNT ?? null,
+    });
   });
 
   app.post("/api/admin/taps", (req, res) => {

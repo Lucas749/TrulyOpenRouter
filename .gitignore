@@ -11,5 +11,6 @@ contracts/cache/
 contracts/broadcast/
 
 web/.data/
+gateway/.data/
 
 .vite/

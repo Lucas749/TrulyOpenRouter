@@ -116,3 +116,47 @@ export const MOCK_TEAM_REQUESTS: MockIncreaseRequest[] = [
   { id: "req_mock_1", orgId: "org_mock_acme", memberDid: "did:privy:ana7", amountCredits: 450, status: "pending", createdAt: 1756694400000, decidedByDid: null, ownerWallet: null, decision: null, signature: null },
   { id: "req_mock_0", orgId: "org_mock_acme", memberDid: "did:privy:ben3", amountCredits: 200, status: "approved", createdAt: 1756689000000, decidedByDid: "did:privy:owner1", ownerWallet: "0xAbC0000000000000000000000000000000000001", decision: "approve", signature: "0xmock" },
 ];
+
+// Security tap fixtures: shapes mirror GET /api/security/taps exactly.
+export interface MockTap {
+  id: string;
+  kind: "heartbeat" | "stake-release";
+  params: Record<string, string>;
+  actionHash: string;
+  approveMemo: string;
+  approveAmountTinybar: number;
+  status: "pending" | "approved" | "executed" | "failed";
+  createdAt: number;
+  tapTx?: string;
+  tapSigner?: string;
+  execTx?: string;
+  execError?: string;
+}
+
+export const MOCK_TAPS_META = { ringBackend: "ring", tapAccount: "0.0.10378181" };
+
+export const MOCK_TAPS: MockTap[] = [
+  {
+    id: "tap_mock_1",
+    kind: "heartbeat",
+    params: {},
+    actionHash: "0x9f2c4b8e11a0d7c3e10a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6",
+    approveMemo: "tor-approve:tap_mock_1:0x9f2c4b8e11a0d7c3e10a",
+    approveAmountTinybar: 15177,
+    status: "pending",
+    createdAt: 1756687200000,
+  },
+  {
+    id: "tap_mock_0",
+    kind: "stake-release",
+    params: {},
+    actionHash: "0x4a71d0b39cc081ae5d220f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6e5f4",
+    approveMemo: "tor-approve:tap_mock_0:0x4a71d0b39cc081ae5d22",
+    approveAmountTinybar: 18432,
+    status: "executed",
+    createdAt: 1756676400000,
+    tapTx: "0.0.10378181@1756676460.123456789",
+    tapSigner: "0.0.10378181",
+    execTx: "0x8ad14c02e7bb41d9c03f5a6e82910c4d7b3e5f6a81920b3c4d5e6f708192a3b4",
+  },
+];
