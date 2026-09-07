@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { usePrivy } from "@privy-io/react-auth";
 
 const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
 const CLAIM_KEY = "tor-my-hosts";
@@ -22,6 +23,8 @@ export function saveClaimed(list: string[]) {
 }
 
 export default function HostDashboardPage() {
+  const { user } = usePrivy();
+  const userId = user?.id ?? null;
   const [addrs, setAddrs] = useState<string[] | null>(null);
   const [detail, setDetail] = useState<any[]>([]);
   const [lookup, setLookup] = useState("");
@@ -39,9 +42,24 @@ export default function HostDashboardPage() {
   }
 
   useEffect(() => {
-    refresh(loadClaimed());
+    (async () => {
+      // Logged-in hosts (claimed via `tor-host login` + `tor-host link`,
+      // visible in any browser) merged over this-browser bookmarks.
+      const local = loadClaimed();
+      if (userId) {
+        try {
+          const d: any = await (await fetch(`${GATEWAY}/api/owners/${encodeURIComponent(userId)}/hosts`)).json();
+          const owned: string[] = Array.isArray(d.data) ? d.data : [];
+          const merged = [...owned, ...local.filter((a) => !owned.includes(a))];
+          if (merged.length !== local.length) saveClaimed(merged);
+          await refresh(merged);
+          return;
+        } catch {}
+      }
+      await refresh(local);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userId]);
 
   async function track() {
     const addr = lookup.trim();
@@ -84,9 +102,11 @@ export default function HostDashboardPage() {
         ) : !addrs.length ? (
           <div className="flex flex-col items-center gap-3 rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-14 text-center">
             <p className="m-0 max-w-md text-sm leading-relaxed text-[#6E6E73]">
-              This list lives in <span className="font-mono">this browser only</span> — no login needed to serve,
-              and serving needs no account at all. Your host is already public on <Link href="/network" className="text-[#2563EB] underline">/network</Link> the
-              moment it registers; paste its address to track it here.
+              {userId ? (
+                <>No hosts linked to this account yet — on your host machine run <span className="font-mono text-black">tor-host login</span> then <span className="font-mono text-black">tor-host link</span>, and they appear here in any browser.</>
+              ) : (
+                <>Log in to see your linked hosts anywhere, or paste an address to track it in this browser. Serving itself needs no account — every host is already public on <Link href="/network" className="text-[#2563EB] underline">/network</Link>.</>
+              )}
             </p>
             <div className="flex w-full max-w-md gap-2">
               <input
