@@ -2,6 +2,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 ARG NEXT_PUBLIC_PRIVY_APP_ID=""
 ENV NEXT_PUBLIC_PRIVY_APP_ID=$NEXT_PUBLIC_PRIVY_APP_ID
+ENV DOCKER_BUILD=1
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . ./
