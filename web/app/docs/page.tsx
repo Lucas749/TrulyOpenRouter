@@ -39,6 +39,10 @@ export default function DocsPage() {
           <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">API docs</h1>
           <p className="mb-0 mt-2 text-[#5D5D5D]">OpenAI-compatible. Two env vars and any harness works — opencode, Cursor, Cline, or plain curl. Testnet gateway: <span className="font-mono text-sm text-black">http://127.0.0.1:4121</span> (local) · contracts on Hedera testnet.</p>
         </div>
+        <Snippet title="Run everything locally (CLI, stack, Ledger, Privy)" code={`git clone https://github.com/Lucas749/TrulyOpenRouter && cd TrulyOpenRouter
+sh quickstart.sh   # ~15 min, testnet only, nothing costs money`} />
+        <Snippet title="Serve a model (one command, key stays on your machine)" code={`sh host-runner/setup.sh   # pull → stack → digest → register → heartbeat cron
+# manual form + verify: /host/setup`} />
         <Snippet title="Python (openai SDK)" code={`from openai import OpenAI
 
 client = OpenAI(
