@@ -73,6 +73,30 @@ describe("members routes", () => {
     expect(m1.spentCredits).toBe(30);
   });
 
+  it("sets the org default (owner-signed)", async () => {
+    ensureOrg(ORG);
+    const first = await signedAdd("did:owner", OWNER.address, "owner");
+    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
+
+    const expires = Date.now() + 300_000;
+    const msg = memberActionMessage("org-set-default", { orgId: ORG, default: "500" }, expires);
+    const sig = await OWNER.signMessage({ message: msg });
+    const ok = await addMemberRoute(
+      new Request("http://x", { method: "POST", body: JSON.stringify({ setDefault: 500, signature: sig, message: msg, signerWallet: OWNER.address }) }),
+      { params: Promise.resolve({ orgId: ORG }) },
+    );
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as any).defaultAllowanceCredits).toBe(500);
+
+    const rogueMsg = memberActionMessage("org-set-default", { orgId: ORG, default: "1" }, expires);
+    const rogue = await MEMBER.signMessage({ message: rogueMsg });
+    const denied = await addMemberRoute(
+      new Request("http://x", { method: "POST", body: JSON.stringify({ setDefault: 1, signature: rogue, message: rogueMsg, signerWallet: MEMBER.address }) }),
+      { params: Promise.resolve({ orgId: ORG }) },
+    );
+    expect(denied.status).toBe(403);
+  });
+
   it("edits allowance (sync-first) and removes members", async () => {
     ensureOrg(ORG);
     const first = await signedAdd("did:owner", OWNER.address, "owner");

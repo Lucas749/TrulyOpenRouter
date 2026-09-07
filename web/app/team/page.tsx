@@ -1,5 +1,6 @@
 "use client";
 
+import { apiError } from "../../lib/api-error";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
@@ -38,7 +39,7 @@ export default function TeamPage() {
     try {
       const r = await fetch(`/api/team/wallets/${walletId}/intents`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       const d: any = await r.json();
-      if (!r.ok) throw new Error(d.error ?? r.status);
+      if (!r.ok) throw new Error(apiError(d, r.status));
       setIntents((m) => ({ ...m, [walletId]: { intent_id: d.intent_id, status: d.status } }));
       poll(d.intent_id, walletId);
     } catch (e: any) {
@@ -65,7 +66,7 @@ export default function TeamPage() {
         body: JSON.stringify({ quorumId }),
       });
       const d: any = await r.json();
-      if (!r.ok) throw new Error(d.error ?? r.status);
+      if (!r.ok) throw new Error(apiError(d, r.status));
       setIntents((m) => ({ ...m, [walletId]: { intent_id: cur.intent_id, status: d.status } }));
     } catch (e: any) {
       setIntents((m) => ({ ...m, [walletId]: { ...cur, status: "approve-failed", error: String(e?.message ?? e).slice(0, 200) } }));
@@ -106,7 +107,7 @@ export default function TeamPage() {
         body: JSON.stringify({ name: name.trim(), ...(capWei ? { capWei } : {}) }),
       });
       const d: any = await r.json();
-      if (!r.ok) throw new Error(d.error ?? r.status);
+      if (!r.ok) throw new Error(apiError(d, r.status));
       setCreated(d);
       setName("");
       await load();

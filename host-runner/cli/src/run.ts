@@ -1,4 +1,4 @@
-import { execFile } from "child_process";
+import { api, sh } from "./util.js";
 import { createHash } from "crypto";
 import { chmodSync, existsSync } from "fs";
 import { join } from "path";
@@ -37,19 +37,6 @@ export function lanIp(): string {
   return "127.0.0.1";
 }
 
-function sh(cmd: string, args: string[], opts?: { timeoutMs?: number }): Promise<{ ok: boolean; out: string }> {
-  return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: opts?.timeoutMs ?? 30000 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, out: String(stdout || stderr).slice(0, 2000) });
-    });
-  });
-}
-
-async function api(gateway: string, path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(`${gateway}${path}`, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });
-  if (!res.ok) throw new Error(`${path} -> ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return res.json();
-}
 
 export function digestModelfile(modelfile: string): `0x${string}` {
   return `0x${createHash("sha256").update(modelfile).digest("hex")}`;

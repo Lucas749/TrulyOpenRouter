@@ -37,8 +37,6 @@ function deriveBudgetKey(masterHex, prefix) {
 }
 
 function evmAddressOf(privHex) {
-  const ecdh = createHash("sha256"); // placeholder replaced below
-  void ecdh;
   // secp256k1 pubkey -> keccak160 via SDK key objects
   const key = PrivateKey.fromStringECDSA("0x" + privHex);
   return key.publicKey.toEvmAddress();

@@ -12,7 +12,7 @@ import { MemoryHostMeta, validRegion } from "./hostmeta.js";
 import { logReceiptHcs, type HcsConfig } from "./hcs.js";
 import { deriveBudgetAddress } from "./budget.js";
 import { MemoryDeviceFlow } from "./device.js";
-import { proxyChat, proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
+import { proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
 import { loadReferences, MemoryVerifier, PROBES, spotCheck, type CheckReport } from "./verify.js";
 import { createPaidFetch } from "./payer.js";
 import { settleCall, type DebitFn } from "./settle.js";
@@ -320,7 +320,6 @@ export function createApp(opts: GatewayOptions = {}) {
           amountCredits: String(settled.amountCredits),
           ...(settled.txHash ? { debitTx: settled.txHash } : {}),
         });
-        if (settled.txHash) opts.receipts.annotate(receipt, { debitTx: settled.txHash });
       }
       if (opts.hcs && receipt) {
         const hcs = opts.hcs;

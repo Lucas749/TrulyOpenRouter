@@ -10,7 +10,13 @@ export function useMock(): [boolean, () => void] {
   const [mock, setMock] = useState(false);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("mock") === "1") {
+    // Explicit ?mock=0 clears the persisted flag; bare navigation keeps it.
+    if (params.get("mock") === "0") {
+      setMock(false);
+      try {
+        window.localStorage.removeItem(KEY);
+      } catch {}
+    } else if (params.get("mock") === "1") {
       setMock(true);
       try {
         window.localStorage.setItem(KEY, "1");

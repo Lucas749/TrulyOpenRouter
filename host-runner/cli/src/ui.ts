@@ -1,5 +1,5 @@
 // Minimal ANSI UI kit: spinners, step lists, boxes. Zero deps, OpenCode/Claude-Code flavor.
-// All renderers are pure (return strings) except Spinner/confirm, so they stay unit-tested.
+// All renderers are pure (return strings) except Spinner, so they stay unit-tested.
 
 const C = {
   reset: "\x1b[0m",
@@ -11,8 +11,6 @@ const C = {
   cyan: "\x1b[36m",
   gray: "\x1b[90m",
 };
-
-export const paint = C;
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -103,22 +101,4 @@ export class Spinner {
   }
 }
 
-export async function confirm(prompt: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
-  process.stdout.write(`${prompt} ${C.dim}[y/N]${C.reset} `);
-  const line = await new Promise<string>((resolve) => {
-    let buf = "";
-    process.stdin.resume();
-    process.stdin.setEncoding("utf8");
-    const onData = (d: string) => {
-      buf += d;
-      if (buf.includes("\n")) {
-        process.stdin.pause();
-        process.stdin.off("data", onData);
-        resolve(buf.trim());
-      }
-    };
-    process.stdin.on("data", onData);
-  });
-  return /^(y|yes)$/i.test(line);
-}
+

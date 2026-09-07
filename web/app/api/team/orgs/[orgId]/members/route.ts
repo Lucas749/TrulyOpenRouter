@@ -6,6 +6,7 @@ import {
   getOrgMeta,
   periodStartFor,
   removeMember,
+  setOrgDefault,
   verifyActionMessage,
 } from "../../../../../../lib/members";
 import { clearCap, syncCap } from "../../../../../../lib/gateway-admin";
@@ -63,10 +64,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     const { orgId } = await params;
     const body = (await req.json().catch(() => ({}))) as {
       member?: { did?: string; email?: string; walletAddress?: string; role?: string; keyPrefix?: string; allowanceCredits?: number };
+      setDefault?: number;
       signature?: string;
       message?: string;
       signerWallet?: string;
     };
+    // Org-default update: owner-signed, no member payload. The client signs
+    // action "org-set-default" binding {orgId, default}.
+    if (body.setDefault !== undefined && !body.member) {
+      if (!body.signature || !body.message || !body.signerWallet) {
+        return NextResponse.json({ error: "signature + message + signerWallet required" }, { status: 400 });
+      }
+      let signer: string;
+      try {
+        signer = await verifyActionMessage(body.message, body.signature, "org-set-default", {
+          orgId,
+          default: String(Number(body.setDefault)),
+        });
+      } catch (e: any) {
+        return NextResponse.json({ error: `bad signature: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 401 });
+      }
+      const meta = getOrgMeta(orgId);
+      const owner = meta?.members.find((m) => m.role === "owner" && m.status === "active" && m.walletAddress.toLowerCase() === signer.toLowerCase());
+      if (!owner) return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
+      const updated = setOrgDefault(orgId, Number(body.setDefault));
+      return NextResponse.json({ defaultAllowanceCredits: updated.defaultAllowanceCredits ?? null });
+    }
     if (!body.member?.did || !body.member?.walletAddress || !body.signature || !body.message || !body.signerWallet) {
       return NextResponse.json({ error: "member {did, walletAddress} + signature + message + signerWallet required" }, { status: 400 });
     }

@@ -1,4 +1,4 @@
-import { execFile } from "child_process";
+import { sh } from "./util.js";
 import { createPublicClient, createWalletClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { loadConfig } from "./config.js";
@@ -12,13 +12,6 @@ const REGISTRY_ABI = parseAbi([
 const VAULT_ABI = parseAbi(["function withdraw()"]);
 const COMPOSE_FILE = new URL("../../docker-compose.yml", import.meta.url).pathname;
 
-function sh(cmd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
-  return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 30000 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, out: String(stdout || stderr).slice(0, 500) });
-    });
-  });
-}
 
 export interface LeaveOptions {
   gateway: string;

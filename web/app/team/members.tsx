@@ -1,5 +1,6 @@
 "use client";
 
+import { apiError } from "../../lib/api-error";
 import { useCallback, useEffect, useState } from "react";
 import { useSignMessage } from "@privy-io/react-auth";
 import { approvalMessage, memberActionMessage, shortId, spendBarState } from "../../lib/member-messages";
@@ -28,6 +29,7 @@ function toSpend(m: Member): { used: number; cap: number | null } | null {
   return { used: m.spentCredits, cap: m.effectiveCredits };
 }
 
+// Mirrors lib/members.ts IncreaseRequest (server shape — no invented fields).
 interface IncreaseRequest {
   id: string;
   orgId: string;
@@ -35,9 +37,8 @@ interface IncreaseRequest {
   amountCredits: number;
   status: "pending" | "approved" | "denied";
   createdAt: number;
-  decidedByDid: string | null;
-  ownerWallet: string | null;
-  decision: "approve" | "deny" | null;
+  decidedByDid?: string;
+  decisionSigner?: string;
 }
 
 function age(ts: number): string {
@@ -147,7 +148,7 @@ export default function OrgMembers({
     try {
       const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d: any = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error ?? r.status);
+      if (!r.ok) throw new Error(apiError(d, r.status));
       await load();
       return d;
     } catch (e: any) {
@@ -203,7 +204,7 @@ export default function OrgMembers({
       body: JSON.stringify({ allowanceCredits: editCap.trim() === "" ? null : Number(editCap), signature, message, signerWallet: myWallet }),
     });
     const d: any = await r.json().catch(() => ({}));
-    if (!r.ok) setErr(String(d.error ?? r.status).slice(0, 200));
+    if (!r.ok) setErr(apiError(d, r.status).slice(0, 200));
     else {
       setEditDid(null);
       await load();
@@ -227,7 +228,7 @@ export default function OrgMembers({
       body: JSON.stringify({ signature, message, signerWallet: myWallet }),
     });
     const d: any = await r.json().catch(() => ({}));
-    if (!r.ok) setErr(String(d.error ?? r.status).slice(0, 200));
+    if (!r.ok) setErr(apiError(d, r.status).slice(0, 200));
     else {
       setConfirmRm(null);
       await load();
@@ -420,7 +421,7 @@ export default function OrgMembers({
             <div key={r.id} className="flex flex-wrap items-center gap-x-3 font-mono text-[11px] text-[#6E6E73]">
               <span>{shortId(r.memberDid, 16)}</span>
               <span className={r.status === "approved" ? "text-[#0B7A5D]" : "text-[#B3261E]"}>{r.status} → {r.amountCredits}</span>
-              {r.ownerWallet && <span>signed {shortId(r.ownerWallet, 8)}</span>}
+              {r.decisionSigner && <span>signed {shortId(r.decisionSigner, 8)}</span>}
             </div>
           ))}
         </div>

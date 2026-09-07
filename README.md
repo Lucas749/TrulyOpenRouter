@@ -39,6 +39,19 @@ npm run dev --prefix web                                            # :3002
 Then open `/onboarding`: login → subscribe → chat. Full operator guide in
 `SELF-HOST.md`.
 
+## Operator env (all optional in dev, fail-closed when needed)
+
+| Var | What | Default |
+|---|---|---|
+| `SECRETS_BACKEND=ring` | Decrypt `gateway/secrets/*.enc` at boot (needs `WALLET_PASS` in env) | env vars |
+| `TAP_HEDERA_ACCOUNT` | Recorded Ledger Hedera account tap approvals must come from | unset = taps 501 |
+| `TAPS_DIR` / `MIRROR_URL` | Tap store dir / mirror node for approval checks | `./.data`, testnet mirror |
+| `GATEWAY_ADMIN_TOKEN` | Authorizes `/api/admin/*` (web is the only caller) | unset = 501 |
+| `HEDERA_SERVICE_ACCOUNT_ID` | Gateway's own x402 payee (gateway charging for its endpoint) | unset = open endpoint |
+| `DEFAULT_PAYER` | Fallback payer when a key has no budget account | unset = fail closed |
+| `HOSTS_JSON` | Static hosts, no chain (`[{endpoint,modelId,…}]`) | onchain registry |
+| `GATEWAY_CREDIT_UNITS` | Units per credit (money rule: 1e5) | `100000` |
+
 ## Payment flow (for the Hedera judges)
 
 We settled x402 **through the Blocky402 facilitator**

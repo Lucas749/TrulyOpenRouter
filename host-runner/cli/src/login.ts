@@ -1,14 +1,7 @@
-import { loadConfig, saveConfig } from "./config.js";
+import { saveConfig } from "./config.js";
+import { api } from "./util.js";
 import { banner, box, ok, Spinner } from "./ui.js";
 
-async function api(gateway: string, path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(`${gateway}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
-  return res.json();
-}
 
 /// @notice Device-code login: prints code, polls until the user approves on the web.
 export async function login(gateway: string, opts?: { pollMs?: number; timeoutMs?: number; onCode?: (code: string) => void }): Promise<void> {
@@ -39,7 +32,4 @@ export async function login(gateway: string, opts?: { pollMs?: number; timeoutMs
   }
 }
 
-export function loggedIn(): boolean {
-  const cfg = loadConfig();
-  return !!(cfg.token && cfg.userId);
-}
+

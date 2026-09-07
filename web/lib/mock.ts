@@ -97,10 +97,8 @@ export interface MockIncreaseRequest {
   amountCredits: number;
   status: "pending" | "approved" | "denied";
   createdAt: number;
-  decidedByDid: string | null;
-  ownerWallet: string | null;
-  decision: "approve" | "deny" | null;
-  signature: string | null;
+  decidedByDid?: string;
+  decisionSigner?: string;
 }
 
 export const MOCK_TEAM_ORG = { id: "org_mock_acme", defaultAllowanceCredits: 300 };
@@ -113,8 +111,8 @@ export const MOCK_TEAM_MEMBERS: MockTeamMember[] = [
 ];
 
 export const MOCK_TEAM_REQUESTS: MockIncreaseRequest[] = [
-  { id: "req_mock_1", orgId: "org_mock_acme", memberDid: "did:privy:ana7", amountCredits: 450, status: "pending", createdAt: 1756694400000, decidedByDid: null, ownerWallet: null, decision: null, signature: null },
-  { id: "req_mock_0", orgId: "org_mock_acme", memberDid: "did:privy:ben3", amountCredits: 200, status: "approved", createdAt: 1756689000000, decidedByDid: "did:privy:owner1", ownerWallet: "0xAbC0000000000000000000000000000000000001", decision: "approve", signature: "0xmock" },
+  { id: "req_mock_1", orgId: "org_mock_acme", memberDid: "did:privy:ana7", amountCredits: 450, status: "pending", createdAt: 1756694400000 },
+  { id: "req_mock_0", orgId: "org_mock_acme", memberDid: "did:privy:ben3", amountCredits: 200, status: "approved", createdAt: 1756689000000, decidedByDid: "did:privy:owner1", decisionSigner: "0xAbC0000000000000000000000000000000000001" },
 ];
 
 // Security tap fixtures: shapes mirror GET /api/security/taps exactly.

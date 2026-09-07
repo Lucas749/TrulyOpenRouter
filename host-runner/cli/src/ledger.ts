@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
 import { loadConfig } from "./config.js";
 import { banner, box, ok, warn } from "./ui.js";
+import { flag as flagArg } from "./util.js";
 
 // Ledger operator surface (L1–L4 visibility in the terminal).
 // Read-only unless you run `init`: no seeds, no passwords, no plaintext —
@@ -127,13 +128,7 @@ export async function ledgerTaps(gateway: string, token: string): Promise<void> 
 }
 
 export async function ledgerCmd(sub: string | undefined, rest: string[]): Promise<void> {
-  const flag = (name: string, def?: string) => {
-    const eq = rest.find((a) => a.startsWith(`--${name}=`))?.split("=")[1];
-    if (eq !== undefined) return eq;
-    const i = rest.indexOf(`--${name}`);
-    if (i >= 0 && i + 1 < rest.length && !rest[i + 1].startsWith("--")) return rest[i + 1];
-    return def;
-  };
+  const flag = (name: string, def?: string) => flagArg(rest, name, def);
   if (sub === "init") return ledgerInit();
   if (sub === "taps") {
     const gw = flag("gateway") ?? loadConfig().gateway ?? "http://127.0.0.1:4121";

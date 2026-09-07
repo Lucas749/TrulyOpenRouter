@@ -18,8 +18,6 @@ export function loadReferences(): Record<string, ReferenceSet> {
   }
 }
 
-export { sha256hex } from "./receipts.js";
-
 /// @notice Model-identity spot checks: does the host actually serve the model it claims?
 /// Sends deterministic fingerprint probes (temperature 0, fixed seed) and compares against
 /// reference outputs captured from a trusted run of the same serving stack.

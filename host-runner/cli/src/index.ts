@@ -6,16 +6,11 @@ import { run } from "./run.js";
 import { leave } from "./leave.js";
 import { status } from "./status.js";
 import { ledgerCmd } from "./ledger.js";
+import { flag as flagArg } from "./util.js";
 import { myHostAddress, verifyHost } from "./verify.js";
 
 const [, , cmd, ...rest] = process.argv;
-const flag = (name: string, def?: string) => {
-  const eq = rest.find((a) => a.startsWith(`--${name}=`))?.split("=")[1];
-  if (eq !== undefined) return eq;
-  const i = rest.indexOf(`--${name}`);
-  if (i >= 0 && i + 1 < rest.length && !rest[i + 1].startsWith("--")) return rest[i + 1];
-  return def;
-};
+const flag = (name: string, def?: string) => flagArg(rest, name, def);
 const gateway = () => {
   const g = flag("gateway") ?? loadConfig().gateway ?? "";
   if (!g) throw new Error("no gateway — run: tor-host login --gateway=http://HOST:4121");

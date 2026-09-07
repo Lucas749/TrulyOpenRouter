@@ -38,7 +38,9 @@ export default function Landing() {
   const [receipts, setReceipts] = useState<ReceiptView[] | null>(null);
   const [hero, setHero] = useState<{ hosts: number; settled: string } | null>(null);
   const [medianWei, setMedianWei] = useState<string | null>(null);
-  const [reqDay, setReqDay] = useState(MOCK_HOST_MATH.defaultReqDay);
+  // Protocol constant (mirrors gateway settle.ts 9/10 split) — NOT mock data.
+  const HOST_SHARE_PCT = 90;
+  const [reqDay, setReqDay] = useState(4000);
   const subPrice = useCycle(SUB_PRICES, 2600, mock);
 
   useEffect(() => {
@@ -92,7 +94,7 @@ export default function Landing() {
   const settledLine = mock ? MOCK_HERO.settledToday : (hero?.settled ?? "—");
   const pricePerReq = mock ? MOCK_HOST_MATH.pricePerReq : medianWei ? Number(medianWei) / 1e18 : null;
   const gross = pricePerReq === null ? null : reqDay * pricePerReq * 30;
-  const take = gross === null ? null : (gross * MOCK_HOST_MATH.hostShare) / 100;
+  const take = gross === null ? null : (gross * HOST_SHARE_PCT) / 100;
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]" style={{ letterSpacing: "-0.011em" }}>
@@ -152,16 +154,22 @@ export default function Landing() {
             <div className="flex items-center justify-between border-b border-[#E5E5E0] px-4 py-3">
               <div className="flex items-center gap-2">
                 <span className="inline-flex h-6 items-center rounded-full border border-[#E5E5E0] bg-[#F7F7F5] px-2.5 text-xs text-[#424242]">▦ Llama-3.1-8B</span>
-                <span className="font-mono text-xs text-[#6E6E73]">$0.0015/req · 310ms</span>
+                <span className="font-mono text-xs text-[#6E6E73]">{mock ? "$0.0015/req · 310ms" : "illustration — live prices on /network"}</span>
               </div>
               <span className="text-xs text-[#8F8F8F]">host h-0f4c…</span>
             </div>
             <div className="flex flex-1 flex-col gap-4 p-4 pt-5">
               <div className="max-w-[78%] self-end rounded-[18px_18px_4px_18px] bg-[#F4F4F4] px-3.5 py-2.5 text-sm">Summarise this contract clause in two sentences.</div>
               <p className="text-sm leading-relaxed">The clause caps liability at fees paid in the prior twelve months and excludes indirect damages. Termination for convenience requires thirty days&apos; written notice.</p>
-              <div className="inline-flex items-center gap-2 self-start rounded-full bg-[#E7F5EE] px-2.5 font-mono text-xs text-[#0B7A5D]">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#10A37F]" /> ✓ settled $0.0012 · 9f2c… <span className="inline-flex">↗</span>
-              </div>
+              {mock ? (
+                <div className="inline-flex items-center gap-2 self-start rounded-full bg-[#E7F5EE] px-2.5 font-mono text-xs text-[#0B7A5D]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#10A37F]" /> ✓ settled $0.0012 · 9f2c… <span className="inline-flex">↗</span>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-2 self-start rounded-full bg-[#F4F4F4] px-2.5 font-mono text-xs text-[#6E6E73]">
+                  illustration — real receipts settle onchain
+                </div>
+              )}
               <div className="mt-auto flex items-center gap-2.5 rounded-[28px] border border-[#E5E5E0] py-2.5 pl-4 pr-3 shadow-sm">
                 <span className="flex-1 text-sm text-[#8F8F8F]">Message any open model</span>
                 <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[#0D0D0D] text-white">↑</span>
@@ -219,8 +227,8 @@ export default function Landing() {
           <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
             {[
               { n: "01 · Pool", t: "Ten dollars in, credits out", d: "Your subscription funds a shared pool held by the vault contract. No per-token invoices, no card on file with a dozen providers.", f: "$10.00/mo = 10,000 credits" },
-              { n: "02 · Route", t: "Cheapest healthy host wins", d: "The router scores price, latency and stake, then pays the winner with an x402 micropayment. A host that stops answering drops out mid-flight.", f: "median $0.0013/req · 310ms" },
-              { n: "03 · Prove", t: "Every call leaves a receipt", d: "Price, host, model digest and prompt hashes settle onchain. Prompt and completion bodies never do — only their hashes.", f: "hash 9f2c4b…e10a on HashScan" },
+              { n: "02 · Route", t: "Cheapest healthy host wins", d: "The router scores price, latency and stake, then pays the winner with an x402 micropayment. A host that stops answering drops out mid-flight.", f: "price scored live, per request" },
+              { n: "03 · Prove", t: "Every call leaves a receipt", d: "Price, host, model digest and prompt hashes settle onchain. Prompt and completion bodies never do — only their hashes.", f: "receipts verifiable on HashScan" },
             ].map((c) => (
               <div key={c.n} className="flex flex-col gap-3 rounded-[14px] border border-[#E5E5E0] p-[26px]">
                 <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">{c.n}</div>
@@ -268,7 +276,7 @@ export default function Landing() {
         <div className="mx-auto grid max-w-[920px] grid-cols-1 items-center gap-10 rounded-[14px] border border-[#E5E5E0] p-8 md:grid-cols-2">
           <div className="flex flex-col gap-3.5">
             <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">▦ Host math</div>
-            <h2 className="m-0 text-[28px] font-normal tracking-[-0.025em]">Bring your own GPU, keep {MOCK_HOST_MATH.hostShare}%</h2>
+            <h2 className="m-0 text-[28px] font-normal tracking-[-0.025em]">Bring your own GPU, keep {HOST_SHARE_PCT}%</h2>
             <p className="m-0 text-sm leading-relaxed text-[#5D5D5D]">Serving Llama-3.1-8B at the network median. Drag to see what your throughput is worth at today&apos;s prices.</p>
             <label className="flex flex-col gap-2 text-[13px] text-[#6E6E73]">
               <span className="flex items-baseline justify-between"><span>Requests per day</span><span className="font-mono text-sm text-black">{reqDay.toLocaleString("en-US")} req/day</span></span>
@@ -282,7 +290,7 @@ export default function Landing() {
             </div>
             <div className="flex flex-col gap-2 font-mono text-xs text-[#6E6E73]">
               <div className="flex justify-between"><span>gross</span><span>{gross === null ? "—" : `$${gross.toLocaleString("en-US", { maximumFractionDigits: 2 })}`}</span></div>
-              <div className="flex justify-between"><span>protocol fee ({100 - MOCK_HOST_MATH.hostShare}%)</span><span>{gross === null || take === null ? "—" : `$${(gross - take).toLocaleString("en-US", { maximumFractionDigits: 2 })}`}</span></div>
+              <div className="flex justify-between"><span>protocol fee ({100 - HOST_SHARE_PCT}%)</span><span>{gross === null || take === null ? "—" : `$${(gross - take).toLocaleString("en-US", { maximumFractionDigits: 2 })}`}</span></div>
               <div className="flex justify-between border-t border-[#E5E5E0] pt-2 text-black"><span>price/req</span><span>{pricePerReq === null ? "—" : mock ? `$${pricePerReq.toFixed(4)}/req` : `${medianWei} wei/req`}</span></div>
             </div>
             <Link href="/host" className="flex h-10 items-center justify-center rounded-full border border-black/10 text-sm hover:bg-black/5">Serve a model</Link>

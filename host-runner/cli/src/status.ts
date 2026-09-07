@@ -1,15 +1,8 @@
-import { execFile } from "child_process";
+import { sh } from "./util.js";
 import { loadConfig } from "./config.js";
 import { banner, box, ok, warn } from "./ui.js";
 import { formatVerification } from "./verify.js";
 
-function sh(cmd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
-  return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 15000 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, out: String(stdout || stderr).trim().slice(0, 120) });
-    });
-  });
-}
 
 export async function status(): Promise<void> {
   console.log(banner());

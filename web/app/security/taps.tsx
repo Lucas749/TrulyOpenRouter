@@ -1,5 +1,6 @@
 "use client";
 
+import { apiError } from "../../lib/api-error";
 import { useCallback, useEffect, useState } from "react";
 import { Activity, Banknote, Check, Copy, ExternalLink, ShieldCheck } from "lucide-react";
 import { MOCK_TAPS, MOCK_TAPS_META } from "../../lib/mock";
@@ -117,7 +118,7 @@ export default function TapQueue({ mock }: { mock: boolean }) {
         body: JSON.stringify({ action }),
       });
       const d: any = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error ?? r.status);
+      if (!r.ok) throw new Error(apiError(d, r.status));
       setConfirmExec(null);
       await load();
     } catch (e: any) {
@@ -137,7 +138,7 @@ export default function TapQueue({ mock }: { mock: boolean }) {
         body: JSON.stringify({ kind }),
       });
       const d: any = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error ?? r.status);
+      if (!r.ok) throw new Error(apiError(d, r.status));
       await load();
     } catch (e: any) {
       setErr(String(e?.message ?? e).slice(0, 200));
