@@ -1,7 +1,7 @@
 variable "region" {
-  description = "AWS region (pick one near you)"
+  description = "AWS region (sandbox: us-west-2 only)"
   type        = string
-  default     = "eu-west-1"
+  default     = "us-west-2"
 }
 
 variable "instance_type" {
