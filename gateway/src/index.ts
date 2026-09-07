@@ -747,6 +747,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // Standalone server defaults: fresh key store + receipt log (tests inject their own).
   // Live legs (all env-driven, all optional in dev):
   //   REGISTRY (HostRegistry) + RPC_URL + MODELS + VAULT_ADDRESS + OPERATOR_KEY (vault debit)
+  // Secrets: SECRETS_BACKEND=ring decrypts gateway/secrets/*.enc (Ledger Key Ring)
+  // into memory first — ciphertext in repo, keys in trustchain. Env is the fallback.
+  const { loadRingSecrets } = await import("./ring.js");
+  if (process.env.SECRETS_BACKEND === "ring") {
+    const { loaded, fallback } = await loadRingSecrets({ strict: true });
+    console.log(`ring secrets: ${loaded.join(",")} (device-backed, never on disk)`);
+    if (fallback.length) console.log(`env fallback: ${fallback.join(",")}`);
+  }
   const rpcUrl = process.env.RPC_URL ?? "";
   const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog(), devices: new MemoryDeviceFlow(), meta: new MemoryHostMeta(), health: new MemoryHealth(), verifier: new MemoryVerifier(), spendCaps: new SpendCapStore() };
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
