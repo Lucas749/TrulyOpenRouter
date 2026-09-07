@@ -20,6 +20,8 @@ services:
 
   guard:
     build: ./host-runner/guard
+    ports:
+      - "127.0.0.1:4122:4122" # localhost only, same as gateway
     environment:
       - HOST_WALLET=${HOST_WALLET:-}
       - UPSTREAM_URL=http://ollama:11434
@@ -30,9 +32,11 @@ services:
 
   gateway:
     build: ./gateway
+    ports:
+      - "4121:4121" # public for the Vercel frontend (chat key-gated, admin token-gated)
     environment:
       - PORT=4121
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-tor}:${POSTGRES_PASSWORD:?set in .env.prod}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:-tor}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-tor}:${POSTGRES_PASSWORD:?set in .env.prod}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:-tor}?sslmode=no-verify
       - UPSTREAM_URL=http://ollama:11434
       - HOSTS_JSON=${HOSTS_JSON:-}
       - REGISTRY=${REGISTRY:-}
@@ -65,7 +69,7 @@ services:
       args:
         NEXT_PUBLIC_PRIVY_APP_ID: ${NEXT_PUBLIC_PRIVY_APP_ID:?set in .env.prod}
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-tor}:${POSTGRES_PASSWORD:?set in .env.prod}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:-tor}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-tor}:${POSTGRES_PASSWORD:?set in .env.prod}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:-tor}?sslmode=no-verify
       - GATEWAY_URL=http://gateway:4121
       - GATEWAY_ADMIN_TOKEN=${GATEWAY_ADMIN_TOKEN:?set in .env.prod}
       - NEXT_PUBLIC_PRIVY_APP_ID=${NEXT_PUBLIC_PRIVY_APP_ID:?set in .env.prod}

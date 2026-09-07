@@ -1,6 +1,6 @@
 FROM node:22-alpine AS build
 WORKDIR /app
-COPY package.json package-lock.json tsconfig.json ./
+COPY package.json package-lock.json tsconfig.json schema.sql ./
 COPY src ./src
 COPY secrets ./secrets
 RUN npm ci --no-audit --no-fund && npm run build && npm prune --omit=dev
@@ -12,5 +12,6 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/secrets ./secrets
+COPY --from=build /app/schema.sql ./schema.sql
 EXPOSE 4121
 CMD ["node", "dist/index.js"]

@@ -1,6 +1,7 @@
 .local/
 .DS_Store
 node_modules/
+.vercel/
 infra/.terraform/
 infra/*.tfstate
 infra/*.tfstate.backup

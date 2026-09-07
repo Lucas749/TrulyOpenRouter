@@ -7,6 +7,13 @@ terraform {
 
 provider "aws" {
   region = var.region
+
+  # Sandbox account stamps Owner=vps-sandbox on everything (API rejects untagged).
+  default_tags {
+    tags = {
+      Owner = "vps-sandbox"
+    }
+  }
 }
 
 # Default VPC keeps this small (hackathon infra, not a bank).
@@ -50,6 +57,14 @@ resource "aws_security_group" "tor" {
   ingress {
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  // Gateway for the Vercel frontend (server-to-server). Chat is key-gated,
+  // admin endpoints are token-gated; keys are revocable. Testnet only.
+  ingress {
+    from_port   = 4121
+    to_port     = 4121
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -100,6 +115,7 @@ resource "aws_instance" "tor" {
     volume_size = 40
     encrypted   = true
   }
+  volume_tags = { Owner = "vps-sandbox" }
 
   user_data = <<-EOF
     #!/bin/bash

@@ -60,6 +60,24 @@ curl -sf http://localhost:4121/health && curl -sf http://localhost:3002/ -o /dev
 Then in the **Privy dashboard** (your app → Settings → Allowed origins) add
 `https://YOUR_DOMAIN`. Fund the host + agent accounts from the testnet faucets.
 
+## Learned the hard way (2026-09-07 sandbox deploy)
+
+- **Private repo**: the box can't `git clone` (auth). Ship a tarball instead:
+  `git archive -o /tmp/tor-app.tgz HEAD` → `scp` → `tar -xzf`.
+- **Docker on Ubuntu 24.04 EC2**: `docker-compose-plugin` isn't in the default
+  repos — install via `curl -fsSL https://get.docker.com | sudo sh`.
+- **RDS Postgres**: rejects plaintext connections (`no pg_hba.conf entry … no
+  encryption`) and node distrusts its chain — compose URLs carry
+  `?sslmode=no-verify` (encrypted, unverified; fine for testnet demo).
+- **Compose bakes env at create time**: after editing `.env.prod`, recreate
+  (`up -d --force-recreate`), don't just `restart`.
+- **No domain yet**: Caddyfile `:80` serves plain HTTP on the box IP; swap back
+  to the domain block before pointing DNS (HTTPS + Privy need it).
+- **Gateway/guard ports** bind `127.0.0.1` only — public surface is web:80.
+  Operator: `ssh -L 4121:localhost:4121 user@host`.
+- **Box smoke test**: `sh ~/box-smoke.sh` (key → chat → receipt assert).
+  If chat 502s, the gateway has no local host: check `HOSTS_JSON` in `.env.prod`.
+
 ## Notes
 
 - Public surface is only 80/443 → web. Gateway/guard/ollama stay internal;
