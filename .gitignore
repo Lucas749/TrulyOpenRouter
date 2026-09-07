@@ -1,6 +1,9 @@
 .local/
 .DS_Store
 node_modules/
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
 .env
 .env.local
 dist/

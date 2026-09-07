@@ -10,11 +10,37 @@ persistent disk, Caddy for HTTPS. Revisit after judging.
 
 ## What you need
 
-1. **VPS** — 2 vCPU / 4 GB minimum (CPU inference for the 0.5b model + gateway
-   + web). Any provider, Ubuntu 24.04. ~$6/mo tier is enough.
-2. **Domain** — an A record pointing at the VPS (e.g. `app.yourdomain.com`).
+1. **VPS or AWS** — 2 vCPU / 4 GB minimum (CPU inference for the 0.5b model +
+   gateway + web). Any provider, Ubuntu 24.04. ~$6/mo tier is enough.
+   AWS path: `infra/` (Terraform) provisions EC2 + RDS Postgres; you apply it
+   (see "AWS" below) — I can't reach your account from here.
+2. **Domain** — an A record pointing at the box (e.g. `app.yourdomain.com`).
    Needed for HTTPS (Caddy provisions it) and Privy allowed origins.
 3. **SSH access** for the ~10 commands below.
+
+## Data (Postgres)
+
+Gateway + web use Postgres when `DATABASE_URL` is set, local files/memory
+otherwise. Compose ships a `db` container; on AWS point `POSTGRES_HOST` at RDS.
+Schema auto-applies at boot (`gateway/schema.sql`, `web/schema.sql`).
+Local proof: `docker run -d --name tor-pg -e POSTGRES_PASSWORD=tor
+-e POSTGRES_DB=tor -p 5433:5432 postgres:16-alpine`, then
+`DATABASE_URL=postgresql://postgres:tor@127.0.0.1:5433/tor npx vitest run
+--fileParallelism=false` (web; PG tests share one DB, so files run serially).
+
+## AWS (Terraform)
+
+```sh
+cd infra
+terraform init
+terraform apply -var key_name=YOUR_EC2_KEY -var allowed_ssh_cidr=YOUR_IP/32 \
+  -var db_password=$(openssl rand -hex 24)
+# note the outputs: ec2_public_ip, rds_endpoint, next_env
+```
+
+Then SSH in, `scp .env.prod` over (with `POSTGRES_HOST` = rds endpoint),
+follow "Deploy" below. ~$25/mo (t3.medium + db.t3.micro). Destroy after
+judging if you don't need it: `terraform destroy`.
 
 ## Deploy (on the VPS)
 

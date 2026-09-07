@@ -2,6 +2,15 @@
 # Public surface is only 80/443 via caddy -> web. Gateway/guard/ollama stay
 # on the internal network; the operator reaches the gateway over SSH tunnel.
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-tor}
+      - POSTGRES_USER=${POSTGRES_USER:-tor}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set in .env.prod}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
   ollama:
     image: ollama/ollama:latest
     volumes:
@@ -23,6 +32,7 @@ services:
     build: ./gateway
     environment:
       - PORT=4121
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-tor}:${POSTGRES_PASSWORD:?set in .env.prod}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:-tor}
       - UPSTREAM_URL=http://ollama:11434
       - HOSTS_JSON=${HOSTS_JSON:-}
       - REGISTRY=${REGISTRY:-}
@@ -47,10 +57,12 @@ services:
       - gateway-data:/app/.data
     depends_on:
       - guard
+      - db
 
   web:
     build: ./web
     environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-tor}:${POSTGRES_PASSWORD:?set in .env.prod}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:-tor}
       - GATEWAY_URL=http://gateway:4121
       - GATEWAY_ADMIN_TOKEN=${GATEWAY_ADMIN_TOKEN:?set in .env.prod}
       - PRIVY_APP_ID=${PRIVY_APP_ID:?set in .env.prod}
@@ -59,6 +71,7 @@ services:
       - web-data:/app/.data
     depends_on:
       - gateway
+      - db
 
   caddy:
     image: caddy:2-alpine
@@ -72,6 +85,7 @@ services:
       - web
 
 volumes:
+  pg-data:
   ollama-data:
   gateway-data:
   web-data:
