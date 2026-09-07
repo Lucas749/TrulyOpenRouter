@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import LoginButton from "../components/login-button";
+
+const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What can you run on a laptop GPU?", "How do host payouts work?"];
 
 const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
 
@@ -19,6 +21,11 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [busy, setBusy] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [msgs, busy]);
 
   useEffect(() => {
     fetch(`${GATEWAY}/v1/models`)
@@ -32,8 +39,8 @@ export default function ChatPage() {
       .catch(() => {});
   }, []);
 
-  async function send() {
-    const text = input.trim();
+  async function send(prefill?: string) {
+    const text = (prefill ?? input).trim();
     if (!text || busy) return;
     setBusy(true);
     setMsgs((m) => [...m, { role: "user", content: text }]);
@@ -73,12 +80,13 @@ export default function ChatPage() {
           <LoginButton />
         </div>
       </header>
-    <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-2xl flex-col p-6">
-      <div className="mb-4 flex items-center justify-end">
+    <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-2xl flex-col px-6">
+      <div className="flex items-center justify-end py-3">
         <select
           value={model}
           onChange={(e) => setModel(e.target.value)}
           className="rounded-full border border-black/10 px-3 py-1 text-sm"
+          aria-label="Model"
         >
           <option value={model}>{model}</option>
           {models.filter((m) => m.id !== model).map((m) => (
@@ -86,29 +94,56 @@ export default function ChatPage() {
           ))}
         </select>
       </div>
-      <div className="flex flex-1 flex-col gap-3">
-        {msgs.map((m, i) => (
-          <div key={i} className={m.role === "user" ? "self-end rounded-2xl bg-black px-4 py-2 text-white" : "self-start rounded-2xl bg-black/5 px-4 py-2"}>
-            <p className="whitespace-pre-wrap text-sm">{m.content}</p>
-            {m.receipt && (
-              <p className="mt-1 font-mono text-[11px] text-emerald-700">
-                ✓ {m.receipt.slice(0, 12)}… · settled={String(m.settled)}
-              </p>
-            )}
+      {msgs.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-6 pb-16 text-center">
+          <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">What can I help with?</h1>
+          <div className="flex max-w-xl flex-wrap justify-center gap-2">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                onClick={() => send(s)}
+                disabled={busy}
+                className="rounded-full border border-black/10 px-4 py-2 text-[13px] text-[#424242] hover:bg-black/5 disabled:opacity-40"
+              >
+                {s}
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
-      <div className="mt-4 flex gap-2">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-          placeholder="Ask anything…"
-          className="h-11 flex-1 rounded-full border border-black/10 px-4 text-sm outline-none focus:border-black/30"
-        />
-        <button onClick={send} disabled={busy} className="h-11 rounded-full bg-black px-5 text-sm text-white disabled:opacity-50">
-          {busy ? "…" : "Send"}
-        </button>
+          <p className="m-0 max-w-md text-xs leading-relaxed text-[#8F8F8F]">
+            Every answer settles onchain — receipt hash below each reply. Prompts and completions stay off-chain.
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-1 flex-col divide-y divide-black/5 rounded-[14px] border border-[#E5E5E0] bg-white px-5">
+          {msgs.map((m, i) => (
+            <div key={i} className={`flex flex-col gap-1 py-4 ${m.role === "user" ? "items-end" : "items-start"}`}>
+              <div className={m.role === "user" ? "max-w-[85%] rounded-2xl bg-black px-4 py-2 text-white" : "w-full"}>
+                <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed">{m.content}</p>
+              </div>
+              {m.receipt && (
+                <p className="m-0 font-mono text-[11px] text-emerald-700">
+                  ✓ {m.receipt.slice(0, 12)}… · settled={String(m.settled)}
+                </p>
+              )}
+            </div>
+          ))}
+          {busy && <div className="flex items-center gap-1 py-4 text-[#8F8F8F]"><span className="animate-pulse text-sm">thinking…</span></div>}
+          <div ref={bottomRef} />
+        </div>
+      )}
+      <div className="sticky bottom-0 border-t border-[#E5E5E0] bg-white/95 py-4 backdrop-blur">
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && send()}
+            placeholder="Ask anything…"
+            className="h-11 flex-1 rounded-full border border-black/10 px-4 text-sm outline-none focus:border-black/30"
+          />
+          <button onClick={() => send()} disabled={busy} className="h-11 rounded-full bg-black px-5 text-sm text-white disabled:opacity-50">
+            {busy ? "…" : "Send"}
+          </button>
+        </div>
       </div>
     </main>
     </div>
