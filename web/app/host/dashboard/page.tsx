@@ -4,27 +4,68 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const CLAIM_KEY = "tor-my-hosts";
+
+export function loadClaimed(): string[] {
+  try {
+    const list = JSON.parse(window.localStorage.getItem(CLAIM_KEY) ?? "[]");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveClaimed(list: string[]) {
+  try {
+    window.localStorage.setItem(CLAIM_KEY, JSON.stringify(list));
+  } catch {}
+}
 
 export default function HostDashboardPage() {
   const [addrs, setAddrs] = useState<string[] | null>(null);
   const [detail, setDetail] = useState<any[]>([]);
+  const [lookup, setLookup] = useState("");
+  const [lookupMsg, setLookupMsg] = useState<string | null>(null);
+
+  async function refresh(list: string[]) {
+    setAddrs(list);
+    const out: any[] = [];
+    for (const a of list) {
+      try {
+        out.push(await (await fetch(`${GATEWAY}/api/hosts/${a}`)).json());
+      } catch {}
+    }
+    setDetail(out);
+  }
 
   useEffect(() => {
-    let list: string[] = [];
-    try {
-      list = JSON.parse(window.localStorage.getItem("tor-my-hosts") ?? "[]");
-    } catch {}
-    setAddrs(list);
-    (async () => {
-      const out: any[] = [];
-      for (const a of list) {
-        try {
-          out.push(await (await fetch(`${GATEWAY}/api/hosts/${a}`)).json());
-        } catch {}
-      }
-      setDetail(out);
-    })();
+    refresh(loadClaimed());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function track() {
+    const addr = lookup.trim();
+    setLookupMsg(null);
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+      setLookupMsg("that doesn't look like a host address (0x + 40 hex)");
+      return;
+    }
+    try {
+      const d: any = await (await fetch(`${GATEWAY}/api/hosts/${addr}`)).json();
+      if (d.error || d.registeredAt === 0) throw new Error();
+    } catch {
+      setLookupMsg("no registered host at that address — check /network");
+      return;
+    }
+    const list = loadClaimed();
+    if (!list.includes(addr)) {
+      const next = [...list, addr];
+      saveClaimed(next);
+      await refresh(next);
+    }
+    setLookup("");
+    setLookupMsg("tracking ✓");
+  }
 
   const totalEarned = detail.reduce((a, d) => a + BigInt(d.earningsWei ?? 0), BigInt(0));
 
@@ -42,8 +83,27 @@ export default function HostDashboardPage() {
           <div className="h-24 animate-pulse rounded-[14px] bg-[#F4F4F4]" />
         ) : !addrs.length ? (
           <div className="flex flex-col items-center gap-3 rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-14 text-center">
-            <p className="m-0 text-sm text-[#6E6E73]">no hosts claimed in this browser yet</p>
-            <Link href="/host/setup" className="flex h-10 items-center rounded-full bg-black px-5 text-sm text-white">Register your first host</Link>
+            <p className="m-0 max-w-md text-sm leading-relaxed text-[#6E6E73]">
+              This list lives in <span className="font-mono">this browser only</span> — no login needed to serve,
+              and serving needs no account at all. Your host is already public on <Link href="/network" className="text-[#2563EB] underline">/network</Link> the
+              moment it registers; paste its address to track it here.
+            </p>
+            <div className="flex w-full max-w-md gap-2">
+              <input
+                value={lookup}
+                onChange={(e) => setLookup(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && track()}
+                placeholder="0x host address"
+                className="h-10 flex-1 rounded-lg border border-black/10 bg-white px-3 font-mono text-[13px]"
+                spellCheck={false}
+              />
+              <button onClick={track} className="h-10 rounded-full bg-black px-5 text-sm text-white">Track</button>
+            </div>
+            {lookupMsg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{lookupMsg}</p>}
+            <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-[13px]">
+              <Link href="/host/setup" className="rounded-full bg-black px-5 py-2.5 text-sm text-white">Register your first host</Link>
+              <Link href="/host/link" className="self-center text-[#2563EB] underline">or claim via CLI code →</Link>
+            </div>
           </div>
         ) : (
           <>
