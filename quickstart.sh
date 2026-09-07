@@ -24,10 +24,16 @@ if have tor-host; then echo "  ok: tor-host already on PATH"; else
   echo "  linking tor-host (may ask for sudo)…"
   (cd host-runner/cli && (npm link 2>/dev/null || sudo npm link)) || echo "  link failed — use: npx --prefix host-runner/cli tsx src/index.ts"
 fi
-tor-host --help >/dev/null 2>&1 && echo "  ok: tor-host responds" || echo "  (tor-host not on PATH yet — open a new terminal)"
+command -v tor-host >/dev/null && echo "  ok: tor-host on PATH" || echo "  (tor-host not on PATH yet — open a new terminal)"
 
 echo ""
 echo "=== 2/6 stack (ollama + guard) ==="
+for p in 11434 4122; do
+  if curl -sf -o /dev/null "http://127.0.0.1:$p/" 2>/dev/null || (echo > "/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
+    echo "port $p is busy — stop whatever holds it first (try: lsof -i :$p), then re-run"
+    exit 1
+  fi
+done
 docker compose -f host-runner/docker-compose.yml up -d ollama guard
 docker exec "$(docker ps -q --filter ancestor=ollama/ollama | head -1)" ollama pull qwen2.5:0.5b
 echo "  ok: guard :4122, model pulled"

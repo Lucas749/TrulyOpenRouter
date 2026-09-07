@@ -299,6 +299,14 @@ export default function Landing() {
         </div>
       </section>
 
+      <section className="px-6 pb-[88px]">
+        <div className="mx-auto flex max-w-[920px] flex-col gap-3 rounded-[14px] bg-[#0D0D0D] p-8">
+          <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#8F8F8F]">Run it locally</div>
+          <p className="m-0 font-mono text-sm text-[#EDEDED]">git clone https://github.com/Lucas749/TrulyOpenRouter && sh quickstart.sh</p>
+          <p className="m-0 text-[13px] text-[#8F8F8F]">CLI, stack, Ledger walkthrough, Privy onboarding — 15 minutes, testnet only, nothing costs money.</p>
+        </div>
+      </section>
+
       <footer className="border-t border-[#E5E5E0] bg-[#F7F7F5] px-6 pb-16 pt-14">
         <div className="mx-auto flex max-w-[1200px] flex-col gap-10">
           <div className="grid grid-cols-2 gap-8 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
