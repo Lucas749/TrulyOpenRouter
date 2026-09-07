@@ -214,6 +214,43 @@ describe("routes", () => {
     }
   });
 
+  it("never asks upstream to stream (SSE is the gateway's own envelope)", async () => {
+    // Regression: req.body (stream:true) was forwarded verbatim; the host's
+    // SSE frames then died in res.json() with "not valid JSON" → event:error.
+    const stub = express();
+    stub.use(express.json());
+    stub.post("/v1/chat/completions", (req, res) => {
+      if (req.body?.stream) {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.end(`data: {"not":"json-envelope"}\n\n`);
+        return;
+      }
+      res.json({ choices: [{ message: { content: "buffered" } }] });
+    });
+    const ss: Server = stub.listen(0);
+    const sport = (ss.address() as any).port;
+    const app = createApp({ fallbackUpstream: `http://127.0.0.1:${sport}`, receipts: new MemoryReceiptLog() });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({ model: "llama-3.1-8b", messages: [], stream: true }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const text = await res.text();
+      for (const ev of ["routed", "submitted", "running", "settled"]) {
+        expect(text).toContain(`event: ${ev}`);
+      }
+      expect(text).toContain("tor_receipt");
+      expect(text).not.toContain("event: error");
+    } finally {
+      srv.close();
+      ss.close();
+    }
+  });
+
   it("routes to the cheapest HOSTS_JSON host", async () => {
     const mkStub = async (tag: string) => {
       const stub = express();

@@ -269,7 +269,11 @@ export function createApp(opts: GatewayOptions = {}) {
       selectedHost = host;
       emit("submitted", { endpoint });
       const paidFetch = opts.x402 ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }) : undefined;
-      const { out, paid } = await proxyWithFallback(endpoint, req.body, opts.x402, paidFetch, () => emit("paying", {}));
+      // The gateway buffers the completion and replays its own SSE envelope —
+      // upstream always gets a plain request, never a stream (its SSE frames
+      // are not JSON and would die in res.json()).
+      const upstreamBody = { ...((req.body ?? {}) as object), stream: false };
+      const { out, paid } = await proxyWithFallback(endpoint, upstreamBody, opts.x402, paidFetch, () => emit("paying", {}));
       if (paid) emit("paid-host", {});
       if (host && opts.health) opts.health.recordLatency(host.address, Date.now() - t0);
       emit("running", {});
