@@ -6,6 +6,7 @@ infra/*.tfstate
 infra/*.tfstate.backup
 .env
 .env.local
+.env.prod
 dist/
 build/
 *.log
