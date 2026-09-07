@@ -132,6 +132,20 @@ export function setMemberAllowance(orgId: string, did: string, allowanceCredits:
   return m;
 }
 
+export function setMemberRole(orgId: string, did: string, role: MemberRole): Member {
+  const s = read();
+  const meta = s.orgs[orgId];
+  const m = meta?.members.find((x) => x.did === did && x.status === "active");
+  if (!m) throw new Error("active member not found");
+  if (m.role === "owner" && role === "member") {
+    const otherOwners = meta.members.filter((x) => x.role === "owner" && x.did !== did && x.status === "active");
+    if (otherOwners.length === 0) throw new Error("cannot demote the last owner");
+  }
+  m.role = role;
+  write(s);
+  return m;
+}
+
 export function removeMember(orgId: string, did: string): Member {
   const s = read();
   const m = s.orgs[orgId]?.members.find((x) => x.did === did && x.status === "active");
@@ -161,6 +175,57 @@ export function periodStartFor(meta: OrgMeta, did: string, now = Date.now()): nu
   if (!m) return now;
   const periodMs = meta.periodDays * 86_400_000;
   return now - m.periodStart >= periodMs ? now : m.periodStart;
+}
+
+// --- Member-management action messages ---------------------------------------
+// Every member mutation is authorized by a Privy embedded-wallet personal_sign
+// (useSignMessage) over one of these canonical messages, verified server-side
+// with viem recoverMessageAddress. Sorted fields = canonical form; the route
+// must additionally check each bound value appears (see verifyActionMessage).
+
+export function memberActionMessage(action: string, fields: Record<string, string>, expires: number): string {
+  const lines = [`tor-team:${action}`];
+  for (const k of Object.keys(fields).sort()) lines.push(`${k}: ${fields[k]}`);
+  lines.push(`expires: ${expires}`);
+  return lines.join("\n");
+}
+
+export function parseActionMessage(message: string): { action: string; fields: Record<string, string>; expires: number } | null {
+  const lines = message.split("\n");
+  const head = lines.shift() ?? "";
+  if (!head.startsWith("tor-team:")) return null;
+  const fields: Record<string, string> = {};
+  let expires = NaN;
+  for (const line of lines) {
+    const i = line.indexOf(": ");
+    if (i < 0) return null;
+    const k = line.slice(0, i);
+    const v = line.slice(i + 2);
+    if (k === "expires") expires = Number(v);
+    else fields[k] = v;
+  }
+  if (!Number.isFinite(expires)) return null;
+  return { action: head.slice("tor-team:".length), fields, expires };
+}
+
+/// @notice Verifies signer + expiry + that every expected binding is present.
+/// Returns the recovered address on success, throws otherwise.
+export async function verifyActionMessage(
+  message: string,
+  signature: string,
+  expectedAction: string,
+  expected: Record<string, string>,
+  now = Date.now(),
+): Promise<string> {
+  const parsed = parseActionMessage(message);
+  if (!parsed || parsed.action !== expectedAction) throw new Error("wrong action");
+  for (const [k, v] of Object.entries(expected)) {
+    if (parsed.fields[k] !== v) throw new Error(`message does not bind ${k}`);
+  }
+  if (now > parsed.expires) throw new Error("approval expired — sign again");
+  // EIP-191, same envelope Privy useSignMessage produces (viem roundtrip covers
+  // CI; live embedded-wallet check is a manual TEST-LIST item).
+  return recoverMessageAddress({ message, signature: signature as `0x${string}` });
 }
 
 // --- Increase requests -------------------------------------------------------
