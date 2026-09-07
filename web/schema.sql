@@ -1,0 +1,43 @@
+-- Web schema. Applied at boot with CREATE TABLE IF NOT EXISTS.
+CREATE TABLE IF NOT EXISTS schema_version (v int PRIMARY KEY, applied_at timestamptz DEFAULT now());
+INSERT INTO schema_version (v) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- Team orgs (spend management; Privy orgs stay in Privy).
+CREATE TABLE IF NOT EXISTS team_orgs (
+  id text PRIMARY KEY,
+  default_allowance_credits double precision,
+  period_days int NOT NULL DEFAULT 30
+);
+
+-- Team members (allowance null = inherit org default).
+CREATE TABLE IF NOT EXISTS team_members (
+  org_id text NOT NULL REFERENCES team_orgs (id) ON DELETE CASCADE,
+  did text NOT NULL,
+  email text,
+  wallet_address text NOT NULL,
+  role text NOT NULL DEFAULT 'member',
+  status text NOT NULL DEFAULT 'active',
+  allowance_credits double precision,
+  default_at_add double precision,
+  key_prefix text,
+  period_start bigint NOT NULL DEFAULT 0,
+  added_at bigint NOT NULL,
+  PRIMARY KEY (org_id, did)
+);
+
+-- Allowance increase requests + wallet-signature audit trail.
+CREATE TABLE IF NOT EXISTS increase_requests (
+  id text PRIMARY KEY,
+  org_id text NOT NULL,
+  member_did text NOT NULL,
+  amount_credits double precision NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  created_at bigint NOT NULL,
+  decided_at bigint,
+  decided_by_did text,
+  decision_signature text,
+  decision_signer text,
+  decision_message text,
+  decision_expires bigint
+);
+CREATE INDEX IF NOT EXISTS increase_requests_org_idx ON increase_requests (org_id, created_at DESC);

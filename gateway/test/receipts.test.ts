@@ -16,13 +16,13 @@ describe("receipts", () => {
     expect(a.id).toHaveLength(64);
   });
 
-  it("logs list/get in reverse-chronological order", () => {
+  it("logs list/get in reverse-chronological order", async () => {
     const log = new MemoryReceiptLog();
     const r1 = buildReceipt({ promptHash: "p1", completionHash: "c1", modelDigest: "m", host: "h", priceWei: "1", latencyMs: 1 }, 1);
     const r2 = buildReceipt({ promptHash: "p2", completionHash: "c2", modelDigest: "m", host: "h", priceWei: "1", latencyMs: 1 }, 2);
-    log.append(r1);
-    log.append(r2);
-    expect(log.list().map((r) => r.id)).toEqual([r2.id, r1.id]);
-    expect(log.get(r1.id)?.promptHash).toBe("p1");
+    await log.append(r1);
+    await log.append(r2);
+    expect((await log.list()).map((r) => r.id)).toEqual([r2.id, r1.id]);
+    expect((await log.get(r1.id))?.promptHash).toBe("p1");
   });
 });

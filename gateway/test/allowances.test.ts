@@ -9,17 +9,17 @@ function receipt(user: string, amountCredits: string | undefined, ts: number) {
 }
 
 describe("SpendCapStore", () => {
-  it("sets, reads, and removes caps", () => {
+  it("sets, reads, and removes caps", async () => {
     const s = new SpendCapStore();
-    expect(s.getCap("abc")).toBeNull();
-    const rec = s.setCap("abc", 100, 1000);
+    expect(await s.getCap("abc")).toBeNull();
+    const rec = await s.setCap("abc", 100, 1000);
     expect(rec).toMatchObject({ cap: 100, periodStart: 1000 });
-    expect(s.getCap("abc")?.cap).toBe(100);
-    expect(s.removeCap("abc")).toBe(true);
-    expect(s.removeCap("abc")).toBe(false);
-    expect(() => s.setCap("", 1)).toThrow("prefix required");
-    expect(() => s.setCap("x", -1)).toThrow("non-negative");
-    expect(() => s.setCap("x", NaN)).toThrow("non-negative");
+    expect((await s.getCap("abc"))?.cap).toBe(100);
+    expect(await s.removeCap("abc")).toBe(true);
+    expect(await s.removeCap("abc")).toBe(false);
+    await expect(s.setCap("", 1)).rejects.toThrow("prefix required");
+    await expect(s.setCap("x", -1)).rejects.toThrow("non-negative");
+    await expect(s.setCap("x", NaN)).rejects.toThrow("non-negative");
   });
 });
 
@@ -80,9 +80,9 @@ describe("allowance enforcement in chat flow", () => {
     // find (or force) a key record with a known prefix
     const issued = issueKey();
     const prefix = issued.record.prefix;
-    keys.save(issued.record);
-    spendCaps.setCap(prefix, 20, 0);
-    for (let i = 0; i < 2; i++) receipts.append(spentReceipt(`key:${prefix}`, "10", Date.now()));
+    await keys.save(issued.record);
+    await spendCaps.setCap(prefix, 20, 0);
+    for (let i = 0; i < 2; i++) await receipts.append(spentReceipt(`key:${prefix}`, "10", Date.now()));
     const app = createApp({ keys, receipts, spendCaps, adminToken: "t", fallbackUpstream: "http://127.0.0.1:1" });
     const srv = app.listen(0);
     const port = (srv.address() as any).port;

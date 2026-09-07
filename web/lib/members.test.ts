@@ -24,69 +24,71 @@ const MEMBER_KEY = generatePrivateKey();
 const MEMBER = privateKeyToAccount(MEMBER_KEY);
 const MEMBER_WALLET = MEMBER.address;
 
-beforeEach(() => {
+beforeEach(async () => {
   process.env.TOR_MEMBERS_DIR = mkdtempSync(join(tmpdir(), "tor-members-"));
+  const { resetMembersDb } = await import("./db-test");
+  await resetMembersDb(["org1"]);
 });
 
 describe("members store", () => {
-  it("adds members, prevents dupes and last-owner removal", () => {
-    ensureOrg("org1");
-    addMember("org1", { did: "did:o1", walletAddress: OWNER.address, role: "owner" });
-    addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member", allowanceCredits: 100 });
-    expect(() => addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member" })).toThrow("already active");
-    expect(() => removeMember("org1", "did:o1")).toThrow("last owner");
-    const m = removeMember("org1", "did:m1");
+  it("adds members, prevents dupes and last-owner removal", async () => {
+    await ensureOrg("org1");
+    await addMember("org1", { did: "did:o1", walletAddress: OWNER.address, role: "owner" });
+    await addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member", allowanceCredits: 100 });
+    await expect(addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member" })).rejects.toThrow("already active");
+    await expect(removeMember("org1", "did:o1")).rejects.toThrow("last owner");
+    const m = await removeMember("org1", "did:m1");
     expect(m.status).toBe("removed");
     // re-invite revives
-    const m2 = addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member" });
+    const m2 = await addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member" });
     expect(m2.status).toBe("active");
   });
 
-  it("resolves the Anthropic-style fallback chain", () => {
-    ensureOrg("org1");
+  it("resolves the Anthropic-style fallback chain", async () => {
+    await ensureOrg("org1");
     expect(effectiveAllowance({ orgId: "org1", periodDays: 30, members: [] }, "did:ghost")).toBe(0); // unknown = deny
-    addMember("org1", { did: "did:o1", walletAddress: OWNER.address, role: "owner" });
-    addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member" });
-    const meta = ensureOrg("org1");
+    await addMember("org1", { did: "did:o1", walletAddress: OWNER.address, role: "owner" });
+    await addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member" });
+    const meta = await ensureOrg("org1");
     expect(effectiveAllowance(meta, "did:m1")).toBe(Infinity); // no default = unlimited
-    setOrgDefault("org1", 500);
-    expect(effectiveAllowance(ensureOrg("org1"), "did:m1")).toBe(500); // inherits org default
-    setMemberAllowance("org1", "did:m1", 100);
-    expect(effectiveAllowance(ensureOrg("org1"), "did:m1")).toBe(100); // override wins
-    setMemberAllowance("org1", "did:m1", undefined);
-    expect(effectiveAllowance(ensureOrg("org1"), "did:m1")).toBe(500); // back to default
-    removeMember("org1", "did:m1");
-    expect(effectiveAllowance(ensureOrg("org1"), "did:m1")).toBe(0); // removed = deny
+    await setOrgDefault("org1", 500);
+    expect(effectiveAllowance(await ensureOrg("org1"), "did:m1")).toBe(500); // inherits org default
+    await setMemberAllowance("org1", "did:m1", 100);
+    expect(effectiveAllowance(await ensureOrg("org1"), "did:m1")).toBe(100); // override wins
+    await setMemberAllowance("org1", "did:m1", undefined);
+    expect(effectiveAllowance(await ensureOrg("org1"), "did:m1")).toBe(500); // back to default
+    await removeMember("org1", "did:m1");
+    expect(effectiveAllowance(await ensureOrg("org1"), "did:m1")).toBe(0); // removed = deny
   });
 
-  it("rolls allowance periods", () => {
-    const meta = ensureOrg("org1");
+  it("rolls allowance periods", async () => {
+    const meta = await ensureOrg("org1");
     meta.periodDays = 30;
-    addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member", periodStart: Date.now() - 31 * 86_400_000 });
-    const rolled = periodStartFor(ensureOrg("org1"), "did:m1", Date.now());
+    await addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member", periodStart: Date.now() - 31 * 86_400_000 });
+    const rolled = periodStartFor(await ensureOrg("org1"), "did:m1", Date.now());
     expect(rolled).toBeGreaterThan(Date.now() - 1000); // new period starts now
   });
 });
 
 describe("increase requests + wallet-signed decisions", () => {
   async function setup() {
-    ensureOrg("org1");
-    addMember("org1", { did: "did:o1", walletAddress: OWNER.address, role: "owner" });
-    addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member", allowanceCredits: 100 });
-    return createIncreaseRequest("org1", "did:m1", 400);
+    await ensureOrg("org1");
+    await addMember("org1", { did: "did:o1", walletAddress: OWNER.address, role: "owner" });
+    await addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member", allowanceCredits: 100 });
+    return await createIncreaseRequest("org1", "did:m1", 400);
   }
 
   it("approves with the owner wallet signature and applies the cap", async () => {
     const r = await setup();
-    expect(getRequest(r.id)?.status).toBe("pending");
-    expect(listRequests("org1", "pending")).toHaveLength(1);
+    expect((await getRequest(r.id))?.status).toBe("pending");
+    expect(await listRequests("org1", "pending")).toHaveLength(1);
     const expires = Date.now() + 300_000;
     const message = approvalMessage(r, "approve", expires);
     const signature = await OWNER.signMessage({ message });
     const decided = await decideRequest(r.id, "approve", "did:o1", OWNER.address, signature, message);
     expect(decided.status).toBe("approved");
     expect(decided.decisionSigner).toBe(OWNER.address);
-    expect(effectiveAllowance(ensureOrg("org1"), "did:m1")).toBe(400);
+    expect(effectiveAllowance(await ensureOrg("org1"), "did:m1")).toBe(400);
   });
 
   it("rejects wrong-wallet, mismatched, and expired signatures", async () => {
@@ -107,7 +109,7 @@ describe("increase requests + wallet-signed decisions", () => {
     const denyMsg = approvalMessage(r, "deny", expires);
     const denied = await decideRequest(r.id, "deny", "did:o1", OWNER.address, await OWNER.signMessage({ message: denyMsg }), denyMsg);
     expect(denied.status).toBe("denied");
-    expect(effectiveAllowance(ensureOrg("org1"), "did:m1")).toBe(100);
+    expect(effectiveAllowance(await ensureOrg("org1"), "did:m1")).toBe(100);
   });
 
   it("verifyApprovalSignature roundtrips EIP-191", async () => {

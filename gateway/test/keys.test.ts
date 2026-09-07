@@ -9,13 +9,13 @@ describe("api keys", () => {
     expect(verifyKey(key + "x", record)).toBe(false);
   });
 
-  it("rejects revoked and expired keys", () => {
+  it("rejects revoked and expired keys", async () => {
     const store = new MemoryKeyStore();
     const { key, record } = issueKey();
-    store.save(record);
-    expect(verifyKey(key, store.find(key)!)).toBe(true);
-    expect(store.revoke(record.prefix)).toBe(true);
-    expect(verifyKey(key, store.find(key)!)).toBe(false);
+    await store.save(record);
+    expect(verifyKey(key, (await store.find(key))!)).toBe(true);
+    expect(await store.revoke(record.prefix)).toBe(true);
+    expect(verifyKey(key, (await store.find(key))!)).toBe(false);
 
     const exp = issueKey({ expiresAt: Date.now() - 1 });
     expect(verifyKey(exp.key, exp.record)).toBe(false);

@@ -3,9 +3,10 @@ import { createPublicClient, http, parseAbi, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, fileChallenge, type HostInfo } from "./registry.js";
-import { issueKey, MemoryKeyStore, verifyKey, type KeyScopes } from "./keys.js";
-import { allowanceExceeded, SpendCapStore, sumSpent } from "./allowances.js";
-import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
+import { issueKey, type KeyStore, MemoryKeyStore, PgKeyStore, verifyKey, type KeyScopes } from "./keys.js";
+import { allowanceExceeded, type CapStore, PgCapStore, SpendCapStore, sumSpent } from "./allowances.js";
+import { buildReceipt, MemoryReceiptLog, PgReceiptLog, type ReceiptLog, sha256hex } from "./receipts.js";
+import { dbEnabled, ensureSchema } from "./db.js";
 import { MemoryHealth } from "./health.js";
 import { createVaultDebit } from "./vault.js";
 import { MemoryHostMeta, validRegion } from "./hostmeta.js";
@@ -16,7 +17,7 @@ import { proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js
 import { loadReferences, MemoryVerifier, PROBES, spotCheck, type CheckReport } from "./verify.js";
 import { createPaidFetch } from "./payer.js";
 import { settleCall, type DebitFn } from "./settle.js";
-import { tapInstruction, TapStore, type TapKind, type TapStatus, verifyTapTransfer } from "./taps.js";
+import { FileTapStore, PgTapStore, tapInstruction, type TapKind, type TapStatus, type TapStore, verifyTapTransfer } from "./taps.js";
 import { createTapExecutor } from "./tap-exec.js";
 
 export interface GatewayOptions {
@@ -27,8 +28,8 @@ export interface GatewayOptions {
   vaultAddress?: Address; // pool balance source; absent = omitted (frontend shows —)
   fallbackUpstream?: string; // e.g. http://localhost:11434
   fetchHosts?: (modelId: string) => Promise<HostInfo[]>;
-  keys?: MemoryKeyStore;
-  receipts?: MemoryReceiptLog;
+  keys?: KeyStore;
+  receipts?: ReceiptLog;
   x402?: X402Creds; // gateway payer for gated hosts (Key Ring in prod, env in dev)
   // key prefix -> vault account. Production derives a budget account per key at issuance (SPEC §4).
   payerAccounts?: Record<string, string>;
@@ -37,7 +38,7 @@ export interface GatewayOptions {
   devices?: MemoryDeviceFlow; // CLI device-code login; absent = endpoint 501
   health?: MemoryHealth; // upstream failure window; absent = collection off
   verifier?: MemoryVerifier; // model-identity spot checks; absent = collection off
-  spendCaps?: SpendCapStore; // member allowances; absent = no cap enforcement
+  spendCaps?: CapStore; // member allowances; absent = no cap enforcement
   taps?: TapStore; // PENDING_TAP queue; absent = tap endpoints 501
   tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
   adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
@@ -188,7 +189,7 @@ export function createApp(opts: GatewayOptions = {}) {
   app.get("/v1/models", async (_req, res) => {
     const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
     const now = Date.now();
-    const all = opts.receipts?.list(10_000) ?? [];
+    const all = (await opts.receipts?.list(10_000)) ?? [];
     const day = 86_400_000;
     const data = [];
     for (const id of models) {
@@ -223,7 +224,7 @@ export function createApp(opts: GatewayOptions = {}) {
       let keyPrefix: string | undefined;
       if (auth.startsWith("Bearer ") && opts.keys) {
         const presented = auth.slice("Bearer ".length);
-        const record = opts.keys.find(presented);
+        const record = await opts.keys.find(presented);
         if (!record || !verifyKey(presented, record)) {
           res.status(401).json({ error: { message: "invalid api key", type: "invalid_api_key" } });
           return;
@@ -237,9 +238,9 @@ export function createApp(opts: GatewayOptions = {}) {
         // overshoot slightly since true cost is known post-generation. The onchain
         // vault debit is the final backstop; this gate gives the clean 429 UX.
         if (opts.spendCaps) {
-          const cap = opts.spendCaps.getCap(keyPrefix);
+          const cap = await opts.spendCaps.getCap(keyPrefix);
           if (cap) {
-            const spent = sumSpent(opts.receipts?.list(10_000) ?? [], `key:${keyPrefix}`, cap.periodStart);
+            const spent = sumSpent((await opts.receipts?.list(10_000)) ?? [], `key:${keyPrefix}`, cap.periodStart);
             if (allowanceExceeded(spent, cap.cap)) {
               res.status(429).json({
                 error: {
@@ -296,8 +297,8 @@ export function createApp(opts: GatewayOptions = {}) {
         modelId: model,
         user: keyPrefix ? `key:${keyPrefix}` : "dev",
       };
-      if (opts.receipts) opts.receipts.append(buildReceipt(receiptInput));
-      const receipt = opts.receipts?.list(1)[0]?.id;
+      if (opts.receipts) await opts.receipts.append(buildReceipt(receiptInput));
+      const receipt = (await opts.receipts?.list(1))?.[0]?.id;
       // Vault needs a real account, not the "key:<prefix>" handle: explicit per-key
       // mapping, else DEFAULT_PAYER (dev/test), else "dev" (fails closed on vault debit).
       const payer =
@@ -316,7 +317,7 @@ export function createApp(opts: GatewayOptions = {}) {
           )
         : { settled: false, amountCredits: 0n, hostShare: 0n };
       if (opts.receipts && receipt) {
-        opts.receipts.annotate(receipt, {
+        await opts.receipts.annotate(receipt, {
           amountCredits: String(settled.amountCredits),
           ...(settled.txHash ? { debitTx: settled.txHash } : {}),
         });
@@ -324,10 +325,10 @@ export function createApp(opts: GatewayOptions = {}) {
       if (opts.hcs && receipt) {
         const hcs = opts.hcs;
         const id = receipt;
-        logReceiptHcs(hcs, id).then((seq) => {
+        logReceiptHcs(hcs, id).then(async (seq) => {
           if (seq) {
             console.log(`hcs audit ✓ seq ${seq} <- ${id.slice(0, 12)}…`);
-            opts.receipts?.annotate(id, { hcsSeq: seq });
+            await opts.receipts?.annotate(id, { hcsSeq: seq });
           }
         });
       }
@@ -356,13 +357,13 @@ export function createApp(opts: GatewayOptions = {}) {
     }
   });
 
-  app.get("/api/receipts", (req, res) => {
+  app.get("/api/receipts", async (req, res) => {
     const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
-    res.json({ data: opts.receipts?.list(limit) ?? [] });
+    res.json({ data: (await opts.receipts?.list(limit)) ?? [] });
   });
 
-  app.get("/api/receipts/:id", (req, res) => {
-    const r = opts.receipts?.get(req.params.id);
+  app.get("/api/receipts/:id", async (req, res) => {
+    const r = await opts.receipts?.get(req.params.id);
     if (!r) {
       res.status(404).json({ error: { message: "unknown receipt", type: "not_found" } });
       return;
@@ -378,7 +379,7 @@ export function createApp(opts: GatewayOptions = {}) {
       for (const h of await resolveHosts(opts, id)) seen.set(h.address, h);
     }
     const now = Date.now();
-    const all = opts.receipts?.list(10_000) ?? [];
+    const all = (await opts.receipts?.list(10_000)) ?? [];
     const day = 86_400_000;
     res.json({
       data: [...seen.values()].map((h) => {
@@ -522,7 +523,7 @@ export function createApp(opts: GatewayOptions = {}) {
       return;
     }
     const now = Date.now();
-    const mine = (opts.receipts?.list(10_000) ?? []).filter((r) => r.host === found!.address);
+    const mine = ((await opts.receipts?.list(10_000)) ?? []).filter((r) => r.host === found!.address);
     const success24h = mine.filter((r) => now - r.ts < 86_400_000).length;
     let earningsWei: string | null = null;
     if (opts.vaultAddress && opts.rpcUrl) {
@@ -564,8 +565,8 @@ export function createApp(opts: GatewayOptions = {}) {
 
   // Usage slice backend: vault credit balance + this payer's receipt history.
   // :id is the payer handle ("key:<prefix>" or wallet address once web sessions map to keys).
-  app.get("/api/users/:id/receipts", (req, res) => {
-    const mine = (opts.receipts?.list(10_000) ?? []).filter((r) => r.user === req.params.id);
+  app.get("/api/users/:id/receipts", async (req, res) => {
+    const mine = ((await opts.receipts?.list(10_000)) ?? []).filter((r) => r.user === req.params.id);
     res.json({ data: mine.slice(0, 100) });
   });
 
@@ -601,7 +602,7 @@ export function createApp(opts: GatewayOptions = {}) {
     const hosts = [...seen.values()];
     const now = Date.now();
     const day = 86_400_000;
-    const all = opts.receipts?.list(10_000) ?? [];
+    const all = (await opts.receipts?.list(10_000)) ?? [];
     const last24h = all.filter((r) => now - r.ts < day);
     const midnight = new Date();
     midnight.setUTCHours(0, 0, 0, 0);
@@ -643,14 +644,14 @@ export function createApp(opts: GatewayOptions = {}) {
   });
 
   // Dev key management. Production issues keys from the web app (Privy session) instead.
-  app.post("/api/keys", (req, res) => {
+  app.post("/api/keys", async (req, res) => {
     if (!opts.keys) {
       res.status(501).json({ error: { message: "key store not configured", type: "unavailable" } });
       return;
     }
     const scopes = (req.body?.scopes ?? {}) as KeyScopes;
     const { key, record } = issueKey(scopes);
-    opts.keys.save(record);
+    await opts.keys.save(record);
     // Proper per-key budget account: deterministic derivation from the single master
     // (env in dev, Key Ring in prod). Funding stays an explicit operator step.
     let budget: string | null = null;
@@ -666,8 +667,8 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json({ key, prefix: record.prefix, budget }); // key shown ONCE
   });
 
-  app.delete("/api/keys/:prefix", (req, res) => {
-    if (!opts.keys || !opts.keys.revoke(req.params.prefix)) {
+  app.delete("/api/keys/:prefix", async (req, res) => {
+    if (!opts.keys || !(await opts.keys.revoke(req.params.prefix))) {
       res.status(404).json({ error: { message: "unknown key", type: "invalid_api_key" } });
       return;
     }
@@ -691,11 +692,11 @@ export function createApp(opts: GatewayOptions = {}) {
 
   // Spend readout for a user handle (`key:<prefix>` or wallet address).
   // Public — receipts are already public; this just aggregates them.
-  app.get("/api/usage/:handle", (req, res) => {
+  app.get("/api/usage/:handle", async (req, res) => {
     const handle = req.params.handle;
-    const cap = handle.startsWith("key:") ? opts.spendCaps?.getCap(handle.slice(4)) ?? null : null;
+    const cap = handle.startsWith("key:") ? (await opts.spendCaps?.getCap(handle.slice(4))) ?? null : null;
     const since = cap?.periodStart ?? 0;
-    const spent = sumSpent(opts.receipts?.list(10_000) ?? [], handle, since);
+    const spent = sumSpent((await opts.receipts?.list(10_000)) ?? [], handle, since);
     res.json({ handle, spent, cap: cap?.cap ?? null, periodStart: cap?.periodStart ?? null });
   });
 
@@ -717,7 +718,7 @@ export function createApp(opts: GatewayOptions = {}) {
     return true;
   }
 
-  app.post("/api/admin/caps", (req, res) => {
+  app.post("/api/admin/caps", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     if (!opts.spendCaps) {
       res.status(501).json({ error: { message: "spend caps not configured", type: "unavailable" } });
@@ -725,20 +726,20 @@ export function createApp(opts: GatewayOptions = {}) {
     }
     try {
       const { prefix, cap, periodStart } = req.body ?? {};
-      const rec = opts.spendCaps.setCap(String(prefix), Number(cap), periodStart === undefined ? undefined : Number(periodStart));
+      const rec = await opts.spendCaps.setCap(String(prefix), Number(cap), periodStart === undefined ? undefined : Number(periodStart));
       res.json({ prefix: String(prefix), ...rec });
     } catch (e: any) {
       res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "invalid_request" } });
     }
   });
 
-  app.delete("/api/admin/caps/:prefix", (req, res) => {
+  app.delete("/api/admin/caps/:prefix", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     if (!opts.spendCaps) {
       res.status(501).json({ error: { message: "spend caps not configured", type: "unavailable" } });
       return;
     }
-    res.json({ prefix: req.params.prefix, removed: opts.spendCaps.removeCap(req.params.prefix) });
+    res.json({ prefix: req.params.prefix, removed: await opts.spendCaps.removeCap(req.params.prefix) });
   });
 
   // PENDING_TAP queue (L4, Hedera-only). Trust chain: web (wallet-signed
@@ -753,26 +754,26 @@ export function createApp(opts: GatewayOptions = {}) {
     return opts.taps;
   };
 
-  app.get("/api/admin/taps", (req, res) => {
+  app.get("/api/admin/taps", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const taps = needTaps(res);
     if (!taps) return;
     // Hero status for /security: ring backend + whether a Ledger tap account
     // is recorded. Read live from env (set at boot, never secret values).
     res.json({
-      taps: taps.list((req.query.status as TapStatus | undefined) ?? undefined),
+      taps: await taps.list((req.query.status as TapStatus | undefined) ?? undefined),
       ringBackend: process.env.SECRETS_BACKEND === "ring" ? "ring" : "env",
       tapAccount: process.env.TAP_HEDERA_ACCOUNT ?? null,
     });
   });
 
-  app.post("/api/admin/taps", (req, res) => {
+  app.post("/api/admin/taps", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const taps = needTaps(res);
     if (!taps) return;
     try {
       const { kind, params } = req.body ?? {};
-      const tap = taps.queue(String(kind), (params ?? {}) as Record<string, string>);
+      const tap = await taps.queue(String(kind), (params ?? {}) as Record<string, string>);
       const ledgerAccount = process.env.TAP_HEDERA_ACCOUNT ?? "";
       res.json({
         tap,
@@ -789,14 +790,14 @@ export function createApp(opts: GatewayOptions = {}) {
     const taps = needTaps(res);
     if (!taps) return;
     try {
-      const tap = taps.get(req.params.id);
+      const tap = await taps.get(req.params.id);
       if (!tap) return res.status(404).json({ error: { message: "tap not found", type: "not_found" } });
       const ledgerAccount = process.env.TAP_HEDERA_ACCOUNT ?? "";
       if (!ledgerAccount) {
         return res.status(501).json({ error: { message: "TAP_HEDERA_ACCOUNT not configured", type: "unavailable" } });
       }
       const txId = await verifyTapTransfer(tap, ledgerAccount);
-      res.json({ tap: taps.markApproved(tap.id, txId, ledgerAccount) });
+      res.json({ tap: await taps.markApproved(tap.id, txId, ledgerAccount) });
     } catch (e: any) {
       res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 200), type: "tap_unapproved" } });
     }
@@ -807,7 +808,7 @@ export function createApp(opts: GatewayOptions = {}) {
     const taps = needTaps(res);
     if (!taps) return;
     try {
-      const tap = taps.get(req.params.id);
+      const tap = await taps.get(req.params.id);
       if (!tap) return res.status(404).json({ error: { message: "tap not found", type: "not_found" } });
       if (tap.status !== "approved") {
         return res.status(409).json({ error: { message: `tap is ${tap.status}, needs device approval first`, type: "tap_unapproved" } });
@@ -823,9 +824,9 @@ export function createApp(opts: GatewayOptions = {}) {
         createTapExecutor({ rpcUrl, registry: registry as `0x${string}`, hostKey: hostKey as `0x${string}` });
       try {
         const execTx = await execute(tap.kind);
-        res.json({ tap: taps.markExecuted(tap.id, execTx) });
+        res.json({ tap: await taps.markExecuted(tap.id, execTx) });
       } catch (e: any) {
-        res.json({ tap: taps.markFailed(tap.id, String(e?.message ?? e)) });
+        res.json({ tap: await taps.markFailed(tap.id, String(e?.message ?? e)) });
       }
     } catch (e: any) {
       res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 200), type: "invalid_request" } });
@@ -850,7 +851,25 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (fallback.length) console.log(`env fallback: ${fallback.join(",")}`);
   }
   const rpcUrl = process.env.RPC_URL ?? "";
-  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog(), devices: new MemoryDeviceFlow(), meta: new MemoryHostMeta(), health: new MemoryHealth(), verifier: new MemoryVerifier(), spendCaps: new SpendCapStore(), taps: new TapStore() };
+  // Storage: Postgres when DATABASE_URL is set (RDS in prod), otherwise the
+  // in-memory/file backends (dev + tests). Same interfaces either way.
+  if (dbEnabled()) {
+    await ensureSchema();
+    console.log("storage: postgres");
+  } else {
+    console.log("storage: memory/files (set DATABASE_URL for postgres)");
+  }
+  const pg = dbEnabled();
+  const opts: GatewayOptions = {
+    keys: pg ? new PgKeyStore() : new MemoryKeyStore(),
+    receipts: pg ? new PgReceiptLog() : new MemoryReceiptLog(),
+    devices: new MemoryDeviceFlow(),
+    meta: new MemoryHostMeta(),
+    health: new MemoryHealth(),
+    verifier: new MemoryVerifier(),
+    spendCaps: pg ? new PgCapStore() : new SpendCapStore(),
+    taps: pg ? new PgTapStore() : new FileTapStore(),
+  };
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
   if (rpcUrl) opts.rpcUrl = rpcUrl;
   if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;

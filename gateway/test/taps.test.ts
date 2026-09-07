@@ -8,10 +8,10 @@ import { createApp } from "../src/index.js";
 import {
   actionHash,
   approveAmountTinybar,
+  FileTapStore,
   formatHbar,
   tapInstruction,
   tapMemo,
-  TapStore,
   verifyTapTransfer,
 } from "../src/taps.js";
 
@@ -52,18 +52,18 @@ afterEach(() => {
 });
 
 describe("tap store", () => {
-  it("queues with bound amount+memo, rejects unknown kinds, blocks double-approve", () => {
-    const store = new TapStore(mkdtempSync(join(tmpdir(), "tor-taps-")));
-    const t = store.queue("heartbeat", {});
+  it("queues with bound amount+memo, rejects unknown kinds, blocks double-approve", async () => {
+    const store = new FileTapStore(mkdtempSync(join(tmpdir(), "tor-taps-")));
+    const t = await store.queue("heartbeat", {});
     expect(t.status).toBe("pending");
     expect(t.approveAmountTinybar).toBe(approveAmountTinybar(t.id));
     expect(t.approveAmountTinybar).toBeGreaterThanOrEqual(10000);
     expect(t.approveMemo).toBe(tapMemo(t.id, t.actionHash));
     expect(tapInstruction(t, LEDGER)).toContain(formatHbar(t.approveAmountTinybar));
     expect(tapInstruction(t, LEDGER)).toContain(LEDGER);
-    expect(() => store.queue("nuke", {})).toThrow("unknown tap kind");
-    store.markApproved(t.id, "0.0.1@1.000000000", LEDGER);
-    expect(() => store.markApproved(t.id, "0.0.1@2.000000000", LEDGER)).toThrow("already approved");
+    await expect(store.queue("nuke", {})).rejects.toThrow("unknown tap kind");
+    await store.markApproved(t.id, "0.0.1@1.000000000", LEDGER);
+    await expect(store.markApproved(t.id, "0.0.1@2.000000000", LEDGER)).rejects.toThrow("already approved");
     expect(actionHash("heartbeat", {})).toBe(t.actionHash);
     expect(formatHbar(15000)).toBe("0.00015");
   });
@@ -71,8 +71,8 @@ describe("tap store", () => {
 
 describe("mirror-node approval verification", () => {
   it("accepts exact self-transfer, rejects everything else", async () => {
-    const store = new TapStore(mkdtempSync(join(tmpdir(), "tor-taps-")));
-    const t = store.queue("heartbeat", {});
+    const store = new FileTapStore(mkdtempSync(join(tmpdir(), "tor-taps-")));
+    const t = await store.queue("heartbeat", {});
     const good = stubMirror({ amount: t.approveAmountTinybar, toSelf: true });
     try {
       const txId = await verifyTapTransfer(t, LEDGER, { url: good.url, fetchFn: fetch });
@@ -106,7 +106,7 @@ describe("mirror-node approval verification", () => {
 
 describe("tap admin routes", () => {
   it("queue -> verify -> execute, with 409 before approval", async () => {
-    const store = new TapStore(mkdtempSync(join(tmpdir(), "tor-taps-")));
+    const store = new FileTapStore(mkdtempSync(join(tmpdir(), "tor-taps-")));
     const app = createApp({ taps: store, adminToken: "tok", tapExecutor: async () => "0xexec" });
     const srv: Server = app.listen(0);
     const base = `http://127.0.0.1:${(srv.address() as any).port}`;

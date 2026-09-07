@@ -1,4 +1,5 @@
 import type { Receipt } from "./receipts.js";
+import { db } from "./db.js";
 
 // Member spend allowances, enforced pre-flight in the chat flow.
 // Identity (who is in which org, roles, increase requests) lives in web/lib/members.ts;
@@ -12,23 +13,64 @@ export interface SpendCap {
   updatedAt: number;
 }
 
-export class SpendCapStore {
+export interface CapStore {
+  setCap(prefix: string, cap: number, periodStart?: number): Promise<SpendCap>;
+  removeCap(prefix: string): Promise<boolean>;
+  getCap(prefix: string): Promise<SpendCap | null>;
+}
+
+function checkCap(prefix: string, cap: number): void {
+  if (!prefix) throw new Error("prefix required");
+  if (!Number.isFinite(cap) || cap < 0) throw new Error("cap must be a non-negative number");
+}
+
+export class SpendCapStore implements CapStore {
   private caps = new Map<string, SpendCap>();
 
-  setCap(prefix: string, cap: number, periodStart = Date.now()): SpendCap {
-    if (!prefix) throw new Error("prefix required");
-    if (!Number.isFinite(cap) || cap < 0) throw new Error("cap must be a non-negative number");
+  async setCap(prefix: string, cap: number, periodStart = Date.now()): Promise<SpendCap> {
+    checkCap(prefix, cap);
     const rec = { cap, periodStart, updatedAt: Date.now() };
     this.caps.set(prefix, rec);
     return rec;
   }
 
-  removeCap(prefix: string): boolean {
+  async removeCap(prefix: string): Promise<boolean> {
     return this.caps.delete(prefix);
   }
 
-  getCap(prefix: string): SpendCap | null {
+  async getCap(prefix: string): Promise<SpendCap | null> {
     return this.caps.get(prefix) ?? null;
+  }
+}
+
+/// @notice Postgres caps (DATABASE_URL set). Same interface as memory.
+export class PgCapStore implements CapStore {
+  constructor(private pool?: { query: (t: string, p?: unknown[]) => Promise<{ rows: any[] }> }) {}
+
+  private q() {
+    return this.pool ?? db();
+  }
+
+  async setCap(prefix: string, cap: number, periodStart = Date.now()): Promise<SpendCap> {
+    checkCap(prefix, cap);
+    const rec = { cap, periodStart, updatedAt: Date.now() };
+    await this.q().query(
+      `INSERT INTO spend_caps (prefix, cap, period_start) VALUES ($1,$2,$3)
+       ON CONFLICT (prefix) DO UPDATE SET cap = EXCLUDED.cap, period_start = EXCLUDED.period_start`,
+      [prefix, cap, periodStart],
+    );
+    return rec;
+  }
+
+  async removeCap(prefix: string): Promise<boolean> {
+    const { rows } = await this.q().query(`DELETE FROM spend_caps WHERE prefix = $1 RETURNING prefix`, [prefix]);
+    return rows.length > 0;
+  }
+
+  async getCap(prefix: string): Promise<SpendCap | null> {
+    const { rows } = await this.q().query(`SELECT cap, period_start FROM spend_caps WHERE prefix = $1`, [prefix]);
+    if (!rows[0]) return null;
+    return { cap: Number(rows[0].cap), periodStart: Number(rows[0].period_start), updatedAt: 0 };
   }
 }
 

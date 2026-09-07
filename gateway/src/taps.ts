@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import { db } from "./db.js";
 import { sha256hex } from "./receipts.js";
 
 // PENDING_TAP queue (L4: device-gated execution) — HEDERA ONLY.
@@ -58,7 +59,37 @@ interface TapFile {
   taps: Record<string, Tap>;
 }
 
-export class TapStore {
+export interface TapStore {
+  queue(kind: string, params?: Record<string, string>): Promise<Tap>;
+  get(id: string): Promise<Tap | null>;
+  list(status?: TapStatus): Promise<Tap[]>;
+  markApproved(id: string, tapTx: string, tapSigner: string): Promise<Tap>;
+  markExecuted(id: string, execTx: string): Promise<Tap>;
+  markFailed(id: string, execError: string): Promise<Tap>;
+}
+
+/// @notice Mint + validate a tap (no persistence). Shared by file and pg stores
+/// so both backends bind id/hash/amount identically.
+export function mintTap(kind: string, params: Record<string, string> = {}): Tap {
+  if (!(KINDS as string[]).includes(kind)) throw new Error(`unknown tap kind (want ${KINDS.join("|")})`);
+  for (const [k, v] of Object.entries(params)) {
+    if (typeof v !== "string" || !v) throw new Error(`param ${k} must be a non-empty string`);
+  }
+  const id = `tap_${Date.now().toString(36)}_${randomBytes(3).toString("hex")}`;
+  const hash = actionHash(kind, params);
+  return {
+    id,
+    kind: kind as TapKind,
+    params,
+    actionHash: hash,
+    approveMemo: tapMemo(id, hash),
+    approveAmountTinybar: approveAmountTinybar(id),
+    status: "pending",
+    createdAt: Date.now(),
+  };
+}
+
+export class FileTapStore implements TapStore {
   private file: string;
 
   constructor(dir?: string) {
@@ -79,40 +110,25 @@ export class TapStore {
     writeFileSync(this.file, JSON.stringify(s, null, 2));
   }
 
-  queue(kind: string, params: Record<string, string> = {}): Tap {
-    if (!(KINDS as string[]).includes(kind)) throw new Error(`unknown tap kind (want ${KINDS.join("|")})`);
-    for (const [k, v] of Object.entries(params)) {
-      if (typeof v !== "string" || !v) throw new Error(`param ${k} must be a non-empty string`);
-    }
+  async queue(kind: string, params: Record<string, string> = {}): Promise<Tap> {
+    const tap = mintTap(kind, params);
     const s = this.read();
-    const id = `tap_${Date.now().toString(36)}_${randomBytes(3).toString("hex")}`;
-    const hash = actionHash(kind, params);
-    const tap: Tap = {
-      id,
-      kind: kind as TapKind,
-      params,
-      actionHash: hash,
-      approveMemo: tapMemo(id, hash),
-      approveAmountTinybar: approveAmountTinybar(id),
-      status: "pending",
-      createdAt: Date.now(),
-    };
-    s.taps[id] = tap;
+    s.taps[tap.id] = tap;
     this.write(s);
     return tap;
   }
 
-  get(id: string): Tap | null {
+  async get(id: string): Promise<Tap | null> {
     return this.read().taps[id] ?? null;
   }
 
-  list(status?: TapStatus): Tap[] {
+  async list(status?: TapStatus): Promise<Tap[]> {
     return Object.values(this.read().taps)
       .filter((t) => !status || t.status === status)
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
-  markApproved(id: string, tapTx: string, tapSigner: string): Tap {
+  async markApproved(id: string, tapTx: string, tapSigner: string): Promise<Tap> {
     const s = this.read();
     const t = s.taps[id];
     if (!t) throw new Error("tap not found");
@@ -124,7 +140,7 @@ export class TapStore {
     return t;
   }
 
-  markExecuted(id: string, execTx: string): Tap {
+  async markExecuted(id: string, execTx: string): Promise<Tap> {
     const s = this.read();
     const t = s.taps[id];
     if (!t) throw new Error("tap not found");
@@ -134,7 +150,7 @@ export class TapStore {
     return t;
   }
 
-  markFailed(id: string, execError: string): Tap {
+  async markFailed(id: string, execError: string): Promise<Tap> {
     const s = this.read();
     const t = s.taps[id];
     if (!t) throw new Error("tap not found");
@@ -193,3 +209,82 @@ export function tapInstruction(tap: Tap, ledgerAccount: string): string {
   return `In Ledger Live (HBAR app): send exactly ${formatHbar(tap.approveAmountTinybar)} HBAR from ${ledgerAccount} to ${ledgerAccount} (yourself), then come back and hit Verify`;
 }
 
+
+/// @notice Postgres taps (DATABASE_URL set). Same interface as file store.
+export class PgTapStore implements TapStore {
+  constructor(private pool?: { query: (t: string, p?: unknown[]) => Promise<{ rows: any[] }> }) {}
+
+  private q() {
+    return this.pool ?? db();
+  }
+
+  private static row(r: any): Tap {
+    return {
+      id: r.id,
+      kind: r.kind,
+      params: typeof r.params === "string" ? JSON.parse(r.params) : (r.params ?? {}),
+      actionHash: r.action_hash,
+      approveMemo: r.approve_memo,
+      approveAmountTinybar: Number(r.approve_amount_tinybar),
+      status: r.status,
+      createdAt: Number(r.created_at),
+      tapTx: r.tap_tx ?? undefined,
+      tapSigner: r.tap_signer ?? undefined,
+      execTx: r.exec_tx ?? undefined,
+      execError: r.exec_error ?? undefined,
+    };
+  }
+
+  async queue(kind: string, params: Record<string, string> = {}): Promise<Tap> {
+    const tap = mintTap(kind, params);
+    await this.q().query(
+      `INSERT INTO taps (id, kind, params, action_hash, approve_memo, approve_amount_tinybar, status, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7)`,
+      [tap.id, tap.kind, JSON.stringify(tap.params), tap.actionHash, tap.approveMemo, tap.approveAmountTinybar, tap.createdAt],
+    );
+    return tap;
+  }
+
+  async get(id: string): Promise<Tap | null> {
+    const { rows } = await this.q().query(`SELECT * FROM taps WHERE id = $1`, [id]);
+    return rows[0] ? PgTapStore.row(rows[0]) : null;
+  }
+
+  async list(status?: TapStatus): Promise<Tap[]> {
+    const { rows } = status
+      ? await this.q().query(`SELECT * FROM taps WHERE status = $1 ORDER BY created_at DESC`, [status])
+      : await this.q().query(`SELECT * FROM taps ORDER BY created_at DESC`);
+    return rows.map(PgTapStore.row);
+  }
+
+  private async transition(id: string, patch: Record<string, unknown>, onlyFrom = "pending"): Promise<Tap> {
+    const { rows } = await this.q().query(
+      `UPDATE taps SET status = $2, tap_tx = COALESCE($3, tap_tx), tap_signer = COALESCE($4, tap_signer),
+        exec_tx = COALESCE($5, exec_tx), exec_error = COALESCE($6, exec_error)
+       WHERE id = $1 AND status = $7 RETURNING *`,
+      [id, patch.status, (patch.tapTx as string) ?? null, (patch.tapSigner as string) ?? null, (patch.execTx as string) ?? null, (patch.execError as string) ?? null, onlyFrom],
+    );
+    if (!rows[0]) {
+      const cur = await this.get(id);
+      throw new Error(cur ? `tap already ${cur.status}` : "tap not found");
+    }
+    return PgTapStore.row(rows[0]);
+  }
+
+  async markApproved(id: string, tapTx: string, tapSigner: string): Promise<Tap> {
+    return this.transition(id, { status: "approved", tapTx, tapSigner });
+  }
+
+  async markExecuted(id: string, execTx: string): Promise<Tap> {
+    return this.transition(id, { status: "executed", execTx }, "approved");
+  }
+
+  async markFailed(id: string, execError: string): Promise<Tap> {
+    // Failure can land from approved (execution reverted) — report honestly.
+    try {
+      return await this.transition(id, { status: "failed", execError }, "approved");
+    } catch {
+      return this.transition(id, { status: "failed", execError });
+    }
+  }
+}
