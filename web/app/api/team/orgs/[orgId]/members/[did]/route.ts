@@ -18,7 +18,7 @@ async function requireOwner(
   } catch (e: any) {
     return { error: NextResponse.json({ error: `bad signature: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 401 }) };
   }
-  const meta = getOrgMeta(orgId);
+  const meta = await getOrgMeta(orgId);
   const owner = meta?.members.find((m) => m.role === "owner" && m.status === "active" && m.walletAddress.toLowerCase() === signer.toLowerCase());
   if (!owner) return { error: NextResponse.json({ error: "signer is not an active owner" }, { status: 403 }) };
   return { owner };
@@ -45,7 +45,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
     if (body.role !== undefined && body.role !== "owner" && body.role !== "member") {
       return NextResponse.json({ error: "role must be owner|member" }, { status: 400 });
     }
-    const target = getMember(orgId, targetDid);
+    const target = await getMember(orgId, targetDid);
     if (!target) return NextResponse.json({ error: "member not found" }, { status: 404 });
     const authed = await requireOwner(orgId, body, { orgId, did: targetDid }, "member-set");
     if ("error" in authed) return authed.error;
@@ -60,15 +60,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
         return NextResponse.json({ error: `gateway sync failed, nothing persisted: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 502 });
       }
     }
-    if (body.allowanceCredits !== undefined) setMemberAllowance(orgId, targetDid, body.allowanceCredits ?? undefined);
+    if (body.allowanceCredits !== undefined) await setMemberAllowance(orgId, targetDid, body.allowanceCredits ?? undefined);
     if (body.role) {
       try {
-        setMemberRole(orgId, targetDid, body.role as "owner" | "member");
+        await setMemberRole(orgId, targetDid, body.role as "owner" | "member");
       } catch (e: any) {
         return NextResponse.json({ error: String(e?.message ?? e).slice(0, 160) }, { status: 409 });
       }
     }
-    return NextResponse.json({ member: getMember(orgId, targetDid) });
+    return NextResponse.json({ member: await getMember(orgId, targetDid) });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }
@@ -80,7 +80,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ orgId
     const { orgId, did } = await params;
     const targetDid = decodeURIComponent(did);
     const body = (await req.json().catch(() => ({}))) as { signature?: string; message?: string; signerWallet?: string };
-    const target = getMember(orgId, targetDid);
+    const target = await getMember(orgId, targetDid);
     if (!target) return NextResponse.json({ error: "member not found" }, { status: 404 });
     const authed = await requireOwner(orgId, body, { orgId, did: targetDid }, "member-remove");
     if ("error" in authed) return authed.error;
@@ -91,7 +91,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ orgId
         return NextResponse.json({ error: `gateway sync failed, nothing persisted: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 502 });
       }
     }
-    return NextResponse.json({ member: removeMember(orgId, targetDid) });
+    return NextResponse.json({ member: await removeMember(orgId, targetDid) });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }

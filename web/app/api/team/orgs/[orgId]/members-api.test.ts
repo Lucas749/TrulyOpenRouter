@@ -26,8 +26,10 @@ async function signedAdd(did: string, wallet: string, role = "member", allowance
   return { member: { did, walletAddress: wallet, role, allowanceCredits: allowance }, signature, message, signerWallet: OWNER.address };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   process.env.TOR_MEMBERS_DIR = mkdtempSync(join(tmpdir(), "tor-route-"));
+  const { resetMembersDb } = await import("../../../../../lib/db-test");
+  await resetMembersDb(["org-test"]);
   process.env.GATEWAY_ADMIN_TOKEN = "route-test-token";
   vi.unstubAllGlobals();
   vi.stubGlobal(
@@ -43,7 +45,7 @@ beforeEach(() => {
 
 describe("members routes", () => {
   it("bootstraps the founding owner, then owner-gates further adds", async () => {
-    ensureOrg(ORG);
+    await ensureOrg(ORG);
     const first = await signedAdd("did:owner", OWNER.address, "owner"); // empty org -> founding owner flow
     const r1 = await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
     expect(r1.status).toBe(200);
@@ -74,7 +76,7 @@ describe("members routes", () => {
   });
 
   it("sets the org default (owner-signed)", async () => {
-    ensureOrg(ORG);
+    await ensureOrg(ORG);
     const first = await signedAdd("did:owner", OWNER.address, "owner");
     await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
 
@@ -98,7 +100,7 @@ describe("members routes", () => {
   });
 
   it("edits allowance (sync-first) and removes members", async () => {
-    ensureOrg(ORG);
+    await ensureOrg(ORG);
     const first = await signedAdd("did:owner", OWNER.address, "owner");
     await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
     const add = await signedAdd("did:m1", MEMBER.address, "member", 100);
@@ -128,7 +130,7 @@ describe("members routes", () => {
 
 describe("requests routes", () => {
   it("member requests, owner approves with wallet signature, cap applies", async () => {
-    ensureOrg(ORG);
+    await ensureOrg(ORG);
     const first = await signedAdd("did:owner", OWNER.address, "owner");
     await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
     const add = await signedAdd("did:m1", MEMBER.address, "member", 100);

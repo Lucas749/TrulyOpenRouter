@@ -17,9 +17,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     if ((body.decision !== "approve" && body.decision !== "deny") || !body.signature || !body.message || !body.signerWallet) {
       return NextResponse.json({ error: "decision approve|deny + signature + message + signerWallet required" }, { status: 400 });
     }
-    const r = getRequest(id);
+    const r = await getRequest(id);
     if (!r || r.orgId !== orgId) return NextResponse.json({ error: "request not found" }, { status: 404 });
-    const meta = getOrgMeta(orgId);
+    const meta = await getOrgMeta(orgId);
     const owner = meta?.members.find((m) => m.role === "owner" && m.status === "active" && m.walletAddress.toLowerCase() === String(body.signerWallet).toLowerCase());
     if (!owner) return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
     // Rebuild the expected message server-side: the signature must bind THIS decision.
@@ -34,8 +34,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 401 });
     }
     if (decided.status === "approved") {
-      const member = getMember(orgId, decided.memberDid)!;
-      if (member.keyPrefix) {
+      const member = await getMember(orgId, decided.memberDid);
+      if (member?.keyPrefix) {
         try {
           await syncCap(member.keyPrefix, decided.amountCredits);
         } catch (e: any) {

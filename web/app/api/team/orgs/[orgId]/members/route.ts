@@ -28,7 +28,7 @@ async function gatewaySpend(prefix: string | undefined): Promise<number | null> 
 export async function GET(_req: Request, { params }: { params: Promise<{ orgId: string }> }) {
   try {
     const { orgId } = await params;
-    const meta = getOrgMeta(orgId) ?? ensureOrg(orgId);
+    const meta = (await getOrgMeta(orgId)) ?? (await ensureOrg(orgId));
     const rows = await Promise.all(
       meta.members
         .filter((m) => m.status === "active")
@@ -84,24 +84,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       } catch (e: any) {
         return NextResponse.json({ error: `bad signature: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 401 });
       }
-      const meta = getOrgMeta(orgId);
+      const meta = await getOrgMeta(orgId);
       const owner = meta?.members.find((m) => m.role === "owner" && m.status === "active" && m.walletAddress.toLowerCase() === signer.toLowerCase());
       if (!owner) return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
-      const updated = setOrgDefault(orgId, Number(body.setDefault));
+      const updated = await setOrgDefault(orgId, Number(body.setDefault));
       return NextResponse.json({ defaultAllowanceCredits: updated.defaultAllowanceCredits ?? null });
     }
     if (!body.member?.did || !body.member?.walletAddress || !body.signature || !body.message || !body.signerWallet) {
       return NextResponse.json({ error: "member {did, walletAddress} + signature + message + signerWallet required" }, { status: 400 });
     }
-    const rollback = (did: string) => {
+    const rollback = async (did: string) => {
       try {
-        removeMember(orgId, did);
+        await removeMember(orgId, did);
       } catch {}
     };
     const failSync = (did: string, e: any) =>
       NextResponse.json({ error: `gateway sync failed, nothing persisted: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 502 });
 
-    const meta = ensureOrg(orgId);
+    const meta = await ensureOrg(orgId);
     const owners = meta.members.filter((m) => m.role === "owner" && m.status === "active");
     const bootstrapping = owners.length === 0;
     // Bootstrap: first member claims founding ownership (role forced, locked after).
@@ -128,7 +128,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     }
     let m;
     try {
-      m = addMember(orgId, {
+      m = await addMember(orgId, {
         did: body.member.did,
         email: body.member.email,
         walletAddress: body.member.walletAddress,
@@ -143,7 +143,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       try {
         await syncCap(m.keyPrefix, m.allowanceCredits);
       } catch (e: any) {
-        rollback(m.did);
+        await rollback(m.did);
         return failSync(m.did, e);
       }
     }

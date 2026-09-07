@@ -6,7 +6,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ orgId: s
   try {
     const { orgId } = await params;
     const status = new URL(req.url).searchParams.get("status") as "pending" | "approved" | "denied" | null;
-    return NextResponse.json({ data: listRequests(orgId, status ?? undefined) });
+    return NextResponse.json({ data: await listRequests(orgId, status ?? undefined) });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }
@@ -30,7 +30,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     if (!Number.isFinite(body.amountCredits) || body.amountCredits <= 0) {
       return NextResponse.json({ error: "amountCredits must be positive" }, { status: 400 });
     }
-    const member = getMember(orgId, body.memberDid);
+    const member = await getMember(orgId, body.memberDid);
     if (!member) return NextResponse.json({ error: "member not found" }, { status: 404 });
     let signer: string;
     try {
@@ -45,7 +45,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     if (signer.toLowerCase() !== member.walletAddress.toLowerCase()) {
       return NextResponse.json({ error: "signer must be the requesting member's wallet" }, { status: 403 });
     }
-    return NextResponse.json({ request: createIncreaseRequest(orgId, body.memberDid, body.amountCredits) });
+    return NextResponse.json({ request: await createIncreaseRequest(orgId, body.memberDid, body.amountCredits) });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }
