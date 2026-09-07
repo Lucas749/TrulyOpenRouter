@@ -6,8 +6,8 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { createPublicClient, createWalletClient, custom, http, parseAbi } from "viem";
 import { hederaTestnet } from "../../lib/hedera-chains";
 import LoginButton from "../components/login-button";
+import { contractUrl } from "../../lib/chain";
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:4021";
 const VAULT = "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576";
 const PLAN_ID = 0;
 const PLAN_PRICE_WEI = BigInt(10_000_000_000_000_000_000); // 10 HBAR sent
@@ -105,7 +105,7 @@ export default function OnboardingPage() {
             {credits !== null && <span className="font-mono text-sm">{credits} credits</span>}
           </div>
           {msg && <p className="mb-0 mt-3 font-mono text-xs text-[#6E6E73]">{msg}</p>}
-          <p className="mb-0 mt-2 font-mono text-[11px] text-[#8F8F8F]">vault {VAULT.slice(0, 10)}… · <a href={`${GATEWAY}/api/hosts`} className="underline">HashScan ↗</a></p>
+          <p className="mb-0 mt-2 font-mono text-[11px] text-[#8F8F8F]">vault {VAULT.slice(0, 10)}… · <a href={contractUrl(VAULT)} className="underline">HashScan ↗</a></p>
         </section>
 
         <section className={`rounded-[14px] border p-5 ${step === 3 ? "border-black" : "border-[#E5E5E0]"} ${step < 3 ? "opacity-50" : ""}`}>

@@ -11,7 +11,7 @@ const receiptUrl = (r: any): string => (r.debitTx ? txUrl(r.debitTx) : topicUrl(
 import { MockBanner, useMock } from "../components/mock";
 import { MOCK_HOSTS, type MockHost } from "../../lib/mock";
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:4021";
+const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
 
 interface Host {
   address: string;

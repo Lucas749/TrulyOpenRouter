@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:4021";
+const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
 
 interface Msg {
   role: string;

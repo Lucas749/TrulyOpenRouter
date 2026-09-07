@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:4021";
+const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
 const REGISTRY = "0xa45461bdefef422a81b22f36ebfd0995c7642dc3";
 
 export default function HostSetupPage() {

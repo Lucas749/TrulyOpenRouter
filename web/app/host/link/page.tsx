@@ -6,7 +6,7 @@ import { Suspense, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import LoginButton from "../../components/login-button";
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:4021";
+const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
 
 function LinkInner() {
   const params = useSearchParams();
