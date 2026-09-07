@@ -16,6 +16,8 @@ import { proxyChat, proxyWithFallback, selectUpstream, type X402Creds } from "./
 import { loadReferences, MemoryVerifier, PROBES, spotCheck, type CheckReport } from "./verify.js";
 import { createPaidFetch } from "./payer.js";
 import { settleCall, type DebitFn } from "./settle.js";
+import { tapCommand, TapStore, type TapKind, type TapStatus, verifyTapMemo } from "./taps.js";
+import { createTapExecutor } from "./tap-exec.js";
 
 export interface GatewayOptions {
   payTo?: string; // Hedera service account; empty = dev mode (x402 gate off)
@@ -36,6 +38,8 @@ export interface GatewayOptions {
   health?: MemoryHealth; // upstream failure window; absent = collection off
   verifier?: MemoryVerifier; // model-identity spot checks; absent = collection off
   spendCaps?: SpendCapStore; // member allowances; absent = no cap enforcement
+  taps?: TapStore; // PENDING_TAP queue; absent = tap endpoints 501
+  tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
   adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
   settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
 }
@@ -738,6 +742,84 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json({ prefix: req.params.prefix, removed: opts.spendCaps.removeCap(req.params.prefix) });
   });
 
+  // PENDING_TAP queue (L4). Trust chain: web (wallet-signed owner) -> admin
+  // token here -> device-signed Solana memo -> Hedera execution with the
+  // ring-held host key. Every step recorded on the tap; nothing executes early.
+  const needTaps = (res: any): TapStore | null => {
+    if (!opts.taps) {
+      res.status(501).json({ error: { message: "tap queue not configured", type: "unavailable" } });
+      return null;
+    }
+    return opts.taps;
+  };
+
+  app.get("/api/admin/taps", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const taps = needTaps(res);
+    if (!taps) return;
+    res.json({ taps: taps.list((req.query.status as TapStatus | undefined) ?? undefined) });
+  });
+
+  app.post("/api/admin/taps", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const taps = needTaps(res);
+    if (!taps) return;
+    try {
+      const { kind, params } = req.body ?? {};
+      const tap = taps.queue(String(kind), (params ?? {}) as Record<string, string>);
+      const signer = process.env.TAP_SIGNER ?? "";
+      res.json({ tap, deviceCommand: signer ? tapCommand(tap, signer) : null, tapSignerConfigured: !!signer });
+    } catch (e: any) {
+      res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "invalid_request" } });
+    }
+  });
+
+  app.post("/api/admin/taps/:id/verify", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const taps = needTaps(res);
+    if (!taps) return;
+    try {
+      const tap = taps.get(req.params.id);
+      if (!tap) return res.status(404).json({ error: { message: "tap not found", type: "not_found" } });
+      const signer = process.env.TAP_SIGNER ?? "";
+      if (!signer) return res.status(501).json({ error: { message: "TAP_SIGNER not configured", type: "unavailable" } });
+      const sig = await verifyTapMemo(tap, signer);
+      res.json({ tap: taps.markApproved(tap.id, sig, signer) });
+    } catch (e: any) {
+      res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 200), type: "tap_unapproved" } });
+    }
+  });
+
+  app.post("/api/admin/taps/:id/execute", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const taps = needTaps(res);
+    if (!taps) return;
+    try {
+      const tap = taps.get(req.params.id);
+      if (!tap) return res.status(404).json({ error: { message: "tap not found", type: "not_found" } });
+      if (tap.status !== "approved") {
+        return res.status(409).json({ error: { message: `tap is ${tap.status}, needs device approval first`, type: "tap_unapproved" } });
+      }
+      const rpcUrl = process.env.RPC_URL ?? "";
+      const registry = process.env.REGISTRY ?? "";
+      const hostKey = process.env.HOST_KEY ?? "";
+      if (!opts.tapExecutor && (!rpcUrl || !registry || !hostKey)) {
+        return res.status(501).json({ error: { message: "RPC_URL + REGISTRY + HOST_KEY required", type: "unavailable" } });
+      }
+      const execute =
+        opts.tapExecutor ??
+        createTapExecutor({ rpcUrl, registry: registry as `0x${string}`, hostKey: hostKey as `0x${string}` });
+      try {
+        const execTx = await execute(tap.kind);
+        res.json({ tap: taps.markExecuted(tap.id, execTx) });
+      } catch (e: any) {
+        res.json({ tap: taps.markFailed(tap.id, String(e?.message ?? e)) });
+      }
+    } catch (e: any) {
+      res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 200), type: "invalid_request" } });
+    }
+  });
+
   return app;
 }
 
@@ -756,7 +838,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (fallback.length) console.log(`env fallback: ${fallback.join(",")}`);
   }
   const rpcUrl = process.env.RPC_URL ?? "";
-  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog(), devices: new MemoryDeviceFlow(), meta: new MemoryHostMeta(), health: new MemoryHealth(), verifier: new MemoryVerifier(), spendCaps: new SpendCapStore() };
+  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog(), devices: new MemoryDeviceFlow(), meta: new MemoryHostMeta(), health: new MemoryHealth(), verifier: new MemoryVerifier(), spendCaps: new SpendCapStore(), taps: new TapStore() };
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
   if (rpcUrl) opts.rpcUrl = rpcUrl;
   if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;
