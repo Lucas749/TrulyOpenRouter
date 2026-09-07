@@ -57,6 +57,12 @@ export function createGuard(opts: GuardOptions) {
       res.status(upstreamRes.status);
       const ct = upstreamRes.headers.get("content-type");
       if (ct) res.setHeader("Content-Type", ct);
+      // SSE streams pipe through byte-for-byte; only buffered JSON gets parsed.
+      if (ct?.includes("text/event-stream") && upstreamRes.body) {
+        for await (const chunk of upstreamRes.body as any) res.write(chunk);
+        res.end();
+        return;
+      }
       res.json(await upstreamRes.json());
     } catch (e) {
       res.status(502).json({ error: { message: `upstream error: ${String(e)}`, type: "upstream_error" } });
