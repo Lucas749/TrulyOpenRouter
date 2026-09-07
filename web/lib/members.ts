@@ -178,35 +178,13 @@ export function periodStartFor(meta: OrgMeta, did: string, now = Date.now()): nu
 }
 
 // --- Member-management action messages ---------------------------------------
-// Every member mutation is authorized by a Privy embedded-wallet personal_sign
-// (useSignMessage) over one of these canonical messages, verified server-side
-// with viem recoverMessageAddress. Sorted fields = canonical form; the route
-// must additionally check each bound value appears (see verifyActionMessage).
+// Canonical forms live in member-messages.ts (client-safe); re-exported here so
+// routes keep one import. Every member mutation is authorized by a Privy
+// embedded-wallet personal_sign over these bytes, verified server-side below.
 
-export function memberActionMessage(action: string, fields: Record<string, string>, expires: number): string {
-  const lines = [`tor-team:${action}`];
-  for (const k of Object.keys(fields).sort()) lines.push(`${k}: ${fields[k]}`);
-  lines.push(`expires: ${expires}`);
-  return lines.join("\n");
-}
-
-export function parseActionMessage(message: string): { action: string; fields: Record<string, string>; expires: number } | null {
-  const lines = message.split("\n");
-  const head = lines.shift() ?? "";
-  if (!head.startsWith("tor-team:")) return null;
-  const fields: Record<string, string> = {};
-  let expires = NaN;
-  for (const line of lines) {
-    const i = line.indexOf(": ");
-    if (i < 0) return null;
-    const k = line.slice(0, i);
-    const v = line.slice(i + 2);
-    if (k === "expires") expires = Number(v);
-    else fields[k] = v;
-  }
-  if (!Number.isFinite(expires)) return null;
-  return { action: head.slice("tor-team:".length), fields, expires };
-}
+export { approvalMessage, memberActionMessage, parseActionMessage } from "./member-messages";
+export type { DecisionSubject } from "./member-messages";
+import { parseActionMessage } from "./member-messages";
 
 /// @notice Verifies signer + expiry + that every expected binding is present.
 /// Returns the recovered address on success, throws otherwise.
@@ -256,18 +234,6 @@ export function listRequests(orgId: string, status?: RequestStatus): IncreaseReq
 // Privy embedded wallet (useSignMessage). Server recovers the signer with viem
 // and requires it to equal the recorded owner wallet. Signature + signer are
 // stored on the request = the audit trail.
-
-export function approvalMessage(r: Pick<IncreaseRequest, "id" | "orgId" | "memberDid" | "amountCredits">, decision: "approve" | "deny", expires: number): string {
-  return [
-    "TrulyOpenRouter allowance decision",
-    `action: ${decision}`,
-    `request: ${r.id}`,
-    `org: ${r.orgId}`,
-    `member: ${r.memberDid}`,
-    `newCap: ${r.amountCredits}`,
-    `expires: ${expires}`,
-  ].join("\n");
-}
 
 export async function verifyApprovalSignature(message: string, signature: string, expectedWallet: string): Promise<boolean> {
   try {

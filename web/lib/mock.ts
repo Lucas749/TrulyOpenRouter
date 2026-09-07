@@ -76,3 +76,43 @@ export const MOCK_HOSTS: MockHost[] = [
   { address: "0xc94d", modelId: "Mistral-7B", pricePerReq: "1500", pricePer1kTokens: "900", stake: "8", active: false, calls24h: 0, fail24h: 210, reliability: 0, region: "ap-ne", latencyMs: null, verification: { lastCheck: null, checks: 3, avgScore: 1, failing: false } },
   { address: "0x1e73", modelId: "Llama-3.1-8B", pricePerReq: "1350", pricePer1kTokens: "850", stake: "5", active: true, calls24h: 915, fail24h: 44, reliability: 0.954, region: "ap-oce", latencyMs: 590, verification: { lastCheck: null, checks: 4, avgScore: 1, failing: false } },
 ];
+
+// Team spend fixtures: shapes mirror GET members + GET requests responses exactly.
+export interface MockTeamMember {
+  did: string;
+  email: string | null;
+  walletAddress: string | null;
+  role: "owner" | "member";
+  keyPrefix: string | null;
+  allowanceCredits: number | null;
+  effectiveCredits: number | null;
+  spentCredits: number | null;
+  createdAt: number;
+}
+
+export interface MockIncreaseRequest {
+  id: string;
+  orgId: string;
+  memberDid: string;
+  amountCredits: number;
+  status: "pending" | "approved" | "denied";
+  createdAt: number;
+  decidedByDid: string | null;
+  ownerWallet: string | null;
+  decision: "approve" | "deny" | null;
+  signature: string | null;
+}
+
+export const MOCK_TEAM_ORG = { id: "org_mock_acme", defaultAllowanceCredits: 300 };
+
+export const MOCK_TEAM_MEMBERS: MockTeamMember[] = [
+  { did: "did:privy:owner1", email: "founder@acme.test", walletAddress: "0xAbC0000000000000000000000000000000000001", role: "owner", keyPrefix: "deadbeef01", allowanceCredits: null, effectiveCredits: 300, spentCredits: 41, createdAt: 1756680000000 },
+  { did: "did:privy:ana7", email: "ana@acme.test", walletAddress: "0xAbC0000000000000000000000000000000000002", role: "member", keyPrefix: "deadbeef02", allowanceCredits: null, effectiveCredits: 300, spentCredits: 262, createdAt: 1756683600000 },
+  { did: "did:privy:ben3", email: "ben@acme.test", walletAddress: "0xAbC0000000000000000000000000000000000003", role: "member", keyPrefix: "deadbeef03", allowanceCredits: 120, effectiveCredits: 120, spentCredits: 120, createdAt: 1756687200000 },
+  { did: "did:privy:cat9", email: "cat@acme.test", walletAddress: null, role: "member", keyPrefix: null, allowanceCredits: null, effectiveCredits: 300, spentCredits: null, createdAt: 1756690800000 },
+];
+
+export const MOCK_TEAM_REQUESTS: MockIncreaseRequest[] = [
+  { id: "req_mock_1", orgId: "org_mock_acme", memberDid: "did:privy:ana7", amountCredits: 450, status: "pending", createdAt: 1756694400000, decidedByDid: null, ownerWallet: null, decision: null, signature: null },
+  { id: "req_mock_0", orgId: "org_mock_acme", memberDid: "did:privy:ben3", amountCredits: 200, status: "approved", createdAt: 1756689000000, decidedByDid: "did:privy:owner1", ownerWallet: "0xAbC0000000000000000000000000000000000001", decision: "approve", signature: "0xmock" },
+];

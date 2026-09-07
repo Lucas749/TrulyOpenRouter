@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { getMember, getOrgMeta, removeMember, setMemberAllowance, setMemberRole, verifyActionMessage } from "../../../../../../../lib/members";
+import type { Member } from "../../../../../../../lib/members";
 import { clearCap, syncCap } from "../../../../../../../lib/gateway-admin";
 
-async function requireOwner(orgId: string, body: { signature?: string; message?: string; signerWallet?: string }, bind: Record<string, string>, action: string) {
+async function requireOwner(
+  orgId: string,
+  body: { signature?: string; message?: string; signerWallet?: string },
+  bind: Record<string, string>,
+  action: string,
+): Promise<{ owner: Member } | { error: NextResponse }> {
   if (!body.signature || !body.message || !body.signerWallet) {
     return { error: NextResponse.json({ error: "signature + message + signerWallet required" }, { status: 400 }) };
   }
@@ -19,7 +25,7 @@ async function requireOwner(orgId: string, body: { signature?: string; message?:
 }
 
 // PATCH: owner sets allowance and/or role. Wallet-signed; synced to gateway enforcement.
-export async function PATCH(req: Request, { params }: { params: Promise<{ orgId: string; did: string }> }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ orgId: string; did: string }> }): Promise<Response> {
   try {
     const { orgId, did } = await params;
     const targetDid = decodeURIComponent(did);
@@ -69,7 +75,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
 }
 
 // DELETE: owner removes a member (history kept, spend denied). Clears gateway cap.
-export async function DELETE(req: Request, { params }: { params: Promise<{ orgId: string; did: string }> }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ orgId: string; did: string }> }): Promise<Response> {
   try {
     const { orgId, did } = await params;
     const targetDid = decodeURIComponent(did);

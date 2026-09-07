@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { MockBanner, useMock } from "../components/mock";
+import OrgMembers from "./members";
 
 interface Org {
   id: string;
@@ -17,6 +20,10 @@ interface IntentState {
 }
 
 export default function TeamPage() {
+  const { user } = usePrivy();
+  const { wallets } = useWallets();
+  const [mock, toggleMock] = useMock();
+  const me = user ? { did: user.id, wallet: wallets[0]?.address ?? user?.wallet?.address ?? null } : null;
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [name, setName] = useState("");
   const [cap, setCap] = useState("0.5");
@@ -67,6 +74,12 @@ export default function TeamPage() {
   }
 
   async function load() {
+    if (mock) {
+      // Mock swaps ENTIRELY to fixtures: one fixture org + fixture members.
+      const { MOCK_TEAM_ORG } = await import("../../lib/mock");
+      setOrgs([{ id: MOCK_TEAM_ORG.id, display_name: "Acme (mock)", default_key_quorum_id: "quorum_mock", wallets: [] }]);
+      return;
+    }
     try {
       const r: any = await (await fetch("/api/team/orgs")).json();
       setOrgs(r.data ?? []);
@@ -77,7 +90,8 @@ export default function TeamPage() {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mock]);
 
   async function create() {
     if (!name.trim()) return;
@@ -104,6 +118,7 @@ export default function TeamPage() {
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
+      {mock && <MockBanner onOff={toggleMock} />}
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[720px] items-center justify-between px-6">
           <Link href="/account" className="text-sm text-[#6E6E73] hover:text-black">← Account</Link>
@@ -135,6 +150,7 @@ export default function TeamPage() {
                 <span className="font-mono text-xs text-[#6E6E73]">{o.id}</span>
                 <span className="ml-auto font-mono text-[11px] text-[#8F8F8F]">quorum {o.default_key_quorum_id.slice(0, 10)}…</span>
               </div>
+              <OrgMembers orgId={o.id} me={me} mock={mock} />
               {(o.wallets ?? []).map((w) => {
                 const it = intents[w.id];
                 return (
