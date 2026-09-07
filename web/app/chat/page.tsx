@@ -15,17 +15,59 @@ interface Msg {
   settled?: boolean;
 }
 
+interface Thread {
+  id: string;
+  title: string;
+  updatedAt: number;
+  msgs: Msg[];
+}
+
+const THREADS_KEY = "tor-threads";
+
+function loadThreads(): Thread[] {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(THREADS_KEY) ?? "[]") as Thread[];
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function ChatPage() {
   const [models, setModels] = useState<{ id: string }[]>([]);
   const [model, setModel] = useState("qwen2.5:0.5b");
   const [input, setInput] = useState("");
-  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [currentId, setCurrentId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const msgs = threads.find((t) => t.id === currentId)?.msgs ?? [];
+
+  function persist(next: Thread[]) {
+    setThreads(next);
+    try {
+      window.localStorage.setItem(THREADS_KEY, JSON.stringify(next.slice(0, 30)));
+    } catch {}
+  }
+
+  function newChat() {
+    const t: Thread = { id: `t_${Date.now().toString(36)}`, title: "New chat", updatedAt: Date.now(), msgs: [] };
+    persist([t, ...threads]);
+    setCurrentId(t.id);
+    setInput("");
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [msgs, busy]);
+
+  useEffect(() => {
+    const existing = loadThreads();
+    setThreads(existing);
+    if (existing.length && !currentId) setCurrentId(existing[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     fetch(`${GATEWAY}/v1/models`)
@@ -42,8 +84,24 @@ export default function ChatPage() {
   async function send(prefill?: string) {
     const text = (prefill ?? input).trim();
     if (!text || busy) return;
+    let id = currentId;
+    let snapshot = threads;
+    if (!id) {
+      const t: Thread = { id: `t_${Date.now().toString(36)}`, title: "New chat", updatedAt: Date.now(), msgs: [] };
+      snapshot = [t, ...threads];
+      id = t.id;
+      setCurrentId(id);
+    }
+    const activeId = id;
+    const apply = (msg: Msg, title?: string) => {
+      snapshot = snapshot.map((t) =>
+        t.id === activeId ? { ...t, msgs: [...t.msgs, msg], updatedAt: Date.now(), title: title ?? t.title } : t,
+      );
+      persist(snapshot);
+    };
     setBusy(true);
-    setMsgs((m) => [...m, { role: "user", content: text }]);
+    const isFirst = (snapshot.find((t) => t.id === activeId)?.msgs.length ?? 0) === 0;
+    apply({ role: "user", content: text }, isFirst ? text.slice(0, 42) : undefined);
     setInput("");
     try {
       const r = await fetch(`${GATEWAY}/v1/chat/completions`, {
@@ -52,17 +110,14 @@ export default function ChatPage() {
         body: JSON.stringify({ model, messages: [{ role: "user", content: text }] }),
       });
       const d = await r.json();
-      setMsgs((m) => [
-        ...m,
-        {
-          role: "assistant",
-          content: r.ok ? String(d.choices?.[0]?.message?.content ?? "…") : `Error: ${d.error?.message}`,
-          receipt: d.tor_receipt,
-          settled: d.tor_settled,
-        },
-      ]);
+      apply({
+        role: "assistant",
+        content: r.ok ? String(d.choices?.[0]?.message?.content ?? "…") : `Error: ${d.error?.message}`,
+        receipt: d.tor_receipt,
+        settled: d.tor_settled,
+      });
     } catch (e) {
-      setMsgs((m) => [...m, { role: "assistant", content: `Gateway unreachable (${GATEWAY}). Is it running?` }]);
+      apply({ role: "assistant", content: `Gateway unreachable (${GATEWAY}). Is it running?` });
     }
     setBusy(false);
   }
@@ -80,7 +135,40 @@ export default function ChatPage() {
           <LoginButton />
         </div>
       </header>
-    <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-2xl flex-col px-6">
+    <div className="mx-auto flex w-full max-w-[1200px] items-stretch gap-0 px-6">
+      <aside className="hidden w-60 shrink-0 flex-col gap-4 border-r border-[#E5E5E0] py-6 pr-4 md:flex">
+        <button onClick={newChat} className="h-9 rounded-full border border-black/10 text-sm hover:bg-black/5">
+          + New chat
+        </button>
+        <div className="flex flex-col gap-4 overflow-y-auto">
+          {[
+            { label: "Today", items: threads.filter((t) => Date.now() - t.updatedAt < 86_400_000) },
+            { label: "Previous", items: threads.filter((t) => Date.now() - t.updatedAt >= 86_400_000) },
+          ].map(
+            (g) =>
+              g.items.length > 0 && (
+                <div key={g.label} className="flex flex-col gap-1">
+                  <span className="px-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[#8F8F8F]">{g.label}</span>
+                  {g.items.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        setCurrentId(t.id);
+                        setInput("");
+                      }}
+                      className={`truncate rounded-lg px-2 py-1.5 text-left text-[13px] hover:bg-black/5 ${t.id === currentId ? "bg-black/5 font-medium" : "text-[#424242]"}`}
+                      title={t.title}
+                    >
+                      {t.title}
+                    </button>
+                  ))}
+                </div>
+              ),
+          )}
+        </div>
+        <p className="mt-auto px-2 font-mono text-[10px] leading-relaxed text-[#8F8F8F]">history lives in this browser only</p>
+      </aside>
+    <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-2xl flex-1 flex-col px-6">
       <div className="flex items-center justify-end py-3">
         <select
           value={model}
@@ -146,6 +234,7 @@ export default function ChatPage() {
         </div>
       </div>
     </main>
+    </div>
     </div>
   );
 }
