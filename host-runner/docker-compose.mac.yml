@@ -1,0 +1,22 @@
+# macOS / native-upstream override: the model runs NATIVELY on the Mac
+# (Ollama.app with Metal, or an exo cluster) while the guard stays dockerized.
+# Docker Desktop on Mac has NO GPU passthrough, so this is how Mac hardware earns:
+# native inference speed + dockerized paywall/registration sidecar.
+#
+# Usage (Ollama.app running natively — see README "Mac hardware" section):
+#   docker compose -f docker-compose.mac.yml up -d --build
+# Usage (exo cluster on the Mac, OpenAI-compat at :52415):
+#   UPSTREAM_URL=http://host.docker.internal:52415 docker compose -f docker-compose.mac.yml up -d --build
+services:
+  guard:
+    build: ./guard
+    ports:
+      - "4122:4122"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Empty HOST_WALLET = dev mode (x402 gate off). Set to host account id for paid serving.
+      - HOST_WALLET=${HOST_WALLET:-}
+      - UPSTREAM_URL=${UPSTREAM_URL:-http://host.docker.internal:11434}
+      - GUARD_PORT=4122
+      - X402_TESTNET_FACILITATOR_URL=${X402_TESTNET_FACILITATOR_URL:-https://api.testnet.blocky402.com}
