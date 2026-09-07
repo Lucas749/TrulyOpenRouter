@@ -1,0 +1,4 @@
+# Replace app.example.com with your domain before first boot.
+app.example.com {
+	reverse_proxy web:3002
+}

@@ -1,0 +1,78 @@
+# Production stack: everything on ONE VPS (see DEPLOY.md for why not Vercel).
+# Public surface is only 80/443 via caddy -> web. Gateway/guard/ollama stay
+# on the internal network; the operator reaches the gateway over SSH tunnel.
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+
+  guard:
+    build: ./host-runner/guard
+    environment:
+      - HOST_WALLET=${HOST_WALLET:-}
+      - UPSTREAM_URL=http://ollama:11434
+      - GUARD_PORT=4122
+      - X402_TESTNET_FACILITATOR_URL=${X402_TESTNET_FACILITATOR_URL:-https://api.testnet.blocky402.com}
+    depends_on:
+      - ollama
+
+  gateway:
+    build: ./gateway
+    environment:
+      - PORT=4121
+      - UPSTREAM_URL=http://ollama:11434
+      - HOSTS_JSON=${HOSTS_JSON:-}
+      - REGISTRY=${REGISTRY:-}
+      - RPC_URL=${RPC_URL:-https://testnet.hashio.io/api}
+      - MODELS=${MODELS:-qwen2.5:0.5b}
+      - VAULT_ADDRESS=${VAULT_ADDRESS:-}
+      - GATEWAY_ADMIN_TOKEN=${GATEWAY_ADMIN_TOKEN:?set in .env.prod}
+      - TAP_HEDERA_ACCOUNT=${TAP_HEDERA_ACCOUNT:-}
+      - MIRROR_URL=${MIRROR_URL:-https://testnet.mirrornode.hedera.com}
+      # Ring on a fresh VPS has no trustchain member (no USB), so production
+      # runs env-fallback: secrets below. The ring path is demoed from the
+      # laptop (see LEDGER-WALKTHROUGH.md) — same code, different backend.
+      - BUDGET_MASTER=${BUDGET_MASTER:?set in .env.prod}
+      - OPERATOR_KEY=${OPERATOR_KEY:-}
+      - X402_PAYER_ID=${X402_PAYER_ID:-}
+      - X402_PAYER_KEY=${X402_PAYER_KEY:-}
+      - HCS_TOPIC_ID=${HCS_TOPIC_ID:-}
+      - HCS_OPERATOR_ID=${HCS_OPERATOR_ID:-}
+      - HCS_OPERATOR_KEY=${HCS_OPERATOR_KEY:-}
+      - HOST_KEY=${HOST_KEY:-}
+    volumes:
+      - gateway-data:/app/.data
+    depends_on:
+      - guard
+
+  web:
+    build: ./web
+    environment:
+      - GATEWAY_URL=http://gateway:4121
+      - GATEWAY_ADMIN_TOKEN=${GATEWAY_ADMIN_TOKEN:?set in .env.prod}
+      - PRIVY_APP_ID=${PRIVY_APP_ID:?set in .env.prod}
+      - PRIVY_APP_SECRET=${PRIVY_APP_SECRET:?set in .env.prod}
+    volumes:
+      - web-data:/app/.data
+    depends_on:
+      - gateway
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - web
+
+volumes:
+  ollama-data:
+  gateway-data:
+  web-data:
+  caddy-data:
