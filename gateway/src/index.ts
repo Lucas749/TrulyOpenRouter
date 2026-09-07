@@ -336,6 +336,14 @@ export function createApp(opts: GatewayOptions = {}) {
       res.json({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled });
     } catch (e: any) {
       if (selectedHost && opts.health) opts.health.recordFail(selectedHost.address);
+      // Mid-stream failures must not touch headers twice — that crashes the process.
+      if (res.headersSent) {
+        try {
+          res.write(`event: error\ndata: ${JSON.stringify({ message: String(e?.message ?? e).slice(0, 200) })}\n\n`);
+          res.end();
+        } catch {}
+        return;
+      }
       const code = String(e?.message ?? "").startsWith("no hosts") ? 404 : 502;
       res.status(code).json({ error: { message: String(e?.message ?? e), type: "upstream_error" } });
     }

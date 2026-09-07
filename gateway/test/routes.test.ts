@@ -185,6 +185,35 @@ describe("routes", () => {
     expect(text).toContain("tor_receipt");
   });
 
+  it("ends SSE with event:error instead of crashing on mid-stream upstream death", async () => {
+    // Regression: the catch block used to res.status().json() unconditionally,
+    // throwing ERR_HTTP_HEADERS_SENT mid-stream and taking the process down.
+    const killer = express();
+    killer.post("/v1/chat/completions", (_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write(`event: routed\ndata: {}\n\n`);
+      setTimeout(() => res.destroy(), 50);
+    });
+    const ks: Server = killer.listen(0);
+    const kport = (ks.address() as any).port;
+    const app = createApp({ fallbackUpstream: `http://127.0.0.1:${kport}`, receipts: new MemoryReceiptLog() });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({ model: "llama-3.1-8b", messages: [] }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const text = await res.text();
+      expect(text).toContain("event: error");
+    } finally {
+      srv.close();
+      ks.close();
+    }
+  });
+
   it("routes to the cheapest HOSTS_JSON host", async () => {
     const mkStub = async (tag: string) => {
       const stub = express();
