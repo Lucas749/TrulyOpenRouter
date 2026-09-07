@@ -4,6 +4,7 @@ import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, fileChallenge, type HostInfo } from "./registry.js";
 import { issueKey, MemoryKeyStore, verifyKey, type KeyScopes } from "./keys.js";
+import { allowanceExceeded, SpendCapStore, sumSpent } from "./allowances.js";
 import { buildReceipt, MemoryReceiptLog, sha256hex } from "./receipts.js";
 import { MemoryHealth } from "./health.js";
 import { createVaultDebit } from "./vault.js";
@@ -34,6 +35,8 @@ export interface GatewayOptions {
   devices?: MemoryDeviceFlow; // CLI device-code login; absent = endpoint 501
   health?: MemoryHealth; // upstream failure window; absent = collection off
   verifier?: MemoryVerifier; // model-identity spot checks; absent = collection off
+  spendCaps?: SpendCapStore; // member allowances; absent = no cap enforcement
+  adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
   settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
 }
 
@@ -225,6 +228,24 @@ export function createApp(opts: GatewayOptions = {}) {
         if (record.scopes.models && !record.scopes.models.includes(model)) {
           res.status(404).json({ error: { message: `model ${model} not in key scope`, type: "model_not_found" } });
           return;
+        }
+        // Member allowance gate (team pools): pre-flight only — one call can still
+        // overshoot slightly since true cost is known post-generation. The onchain
+        // vault debit is the final backstop; this gate gives the clean 429 UX.
+        if (opts.spendCaps) {
+          const cap = opts.spendCaps.getCap(keyPrefix);
+          if (cap) {
+            const spent = sumSpent(opts.receipts?.list(10_000) ?? [], `key:${keyPrefix}`, cap.periodStart);
+            if (allowanceExceeded(spent, cap.cap)) {
+              res.status(429).json({
+                error: {
+                  message: "monthly allowance exhausted — ask your team owner for an increase",
+                  type: "quota_exceeded",
+                },
+              });
+              return;
+            }
+          }
         }
       }
       const fallback = opts.fallbackUpstream ?? process.env.UPSTREAM_URL;
@@ -653,6 +674,58 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json({ prefix: req.params.prefix, budget: address, funded });
   });
 
+  // Spend readout for a user handle (`key:<prefix>` or wallet address).
+  // Public — receipts are already public; this just aggregates them.
+  app.get("/api/usage/:handle", (req, res) => {
+    const handle = req.params.handle;
+    const cap = handle.startsWith("key:") ? opts.spendCaps?.getCap(handle.slice(4)) ?? null : null;
+    const since = cap?.periodStart ?? 0;
+    const spent = sumSpent(opts.receipts?.list(10_000) ?? [], handle, since);
+    res.json({ handle, spent, cap: cap?.cap ?? null, periodStart: cap?.periodStart ?? null });
+  });
+
+  // Admin cap writes. Trust boundary: the WEB server is the only caller, authed by
+  // GATEWAY_ADMIN_TOKEN (shared env, localhost in dev). The wallet signature gates the
+  // WEB route (verified via viem against the org owner's recorded wallet) — this route
+  // only checks propagation auth. Fail closed when no token is configured.
+  function requireAdmin(req: any, res: any): boolean {
+    const token = opts.adminToken ?? process.env.GATEWAY_ADMIN_TOKEN;
+    if (!token) {
+      res.status(501).json({ error: { message: "admin API disabled (no token configured)", type: "unavailable" } });
+      return false;
+    }
+    const presented = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+    if (presented !== token) {
+      res.status(401).json({ error: { message: "bad admin token", type: "unauthorized" } });
+      return false;
+    }
+    return true;
+  }
+
+  app.post("/api/admin/caps", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    if (!opts.spendCaps) {
+      res.status(501).json({ error: { message: "spend caps not configured", type: "unavailable" } });
+      return;
+    }
+    try {
+      const { prefix, cap, periodStart } = req.body ?? {};
+      const rec = opts.spendCaps.setCap(String(prefix), Number(cap), periodStart === undefined ? undefined : Number(periodStart));
+      res.json({ prefix: String(prefix), ...rec });
+    } catch (e: any) {
+      res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "invalid_request" } });
+    }
+  });
+
+  app.delete("/api/admin/caps/:prefix", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    if (!opts.spendCaps) {
+      res.status(501).json({ error: { message: "spend caps not configured", type: "unavailable" } });
+      return;
+    }
+    res.json({ prefix: req.params.prefix, removed: opts.spendCaps.removeCap(req.params.prefix) });
+  });
+
   return app;
 }
 
@@ -663,7 +736,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // Live legs (all env-driven, all optional in dev):
   //   REGISTRY (HostRegistry) + RPC_URL + MODELS + VAULT_ADDRESS + OPERATOR_KEY (vault debit)
   const rpcUrl = process.env.RPC_URL ?? "";
-  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog(), devices: new MemoryDeviceFlow(), meta: new MemoryHostMeta(), health: new MemoryHealth(), verifier: new MemoryVerifier() };
+  const opts: GatewayOptions = { keys: new MemoryKeyStore(), receipts: new MemoryReceiptLog(), devices: new MemoryDeviceFlow(), meta: new MemoryHostMeta(), health: new MemoryHealth(), verifier: new MemoryVerifier(), spendCaps: new SpendCapStore() };
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
   if (rpcUrl) opts.rpcUrl = rpcUrl;
   if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;
