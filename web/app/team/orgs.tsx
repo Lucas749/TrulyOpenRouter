@@ -54,6 +54,10 @@ export default function TeamOrgs({
       if (!r.ok) throw new Error(apiError(d, r.status));
       setIntents((m) => ({ ...m, [walletId]: { intent_id: d.intent_id, status: d.status } }));
       poll(d.intent_id, walletId);
+      // Auto-follow the approval (3 polls, 5s apart) so nobody babysits refresh.
+      for (const wait of [5000, 10000, 15000]) {
+        setTimeout(() => poll(d.intent_id, walletId), wait);
+      }
     } catch (e: any) {
       setIntents((m) => ({ ...m, [walletId]: { intent_id: "", status: "error", error: String(e?.message ?? e).slice(0, 160) } }));
     }
@@ -86,7 +90,7 @@ export default function TeamOrgs({
     setBusyIntent(null);
   }
 
-  async function load() {
+  async function load(myWallet?: string | null) {
     if (mock) {
       // Mock swaps ENTIRELY to fixtures: one fixture org + fixture members.
       const { MOCK_TEAM_ORG } = await import("../../lib/mock");
@@ -94,7 +98,9 @@ export default function TeamOrgs({
       return;
     }
     try {
-      const r: any = await (await fetch("/api/team/orgs")).json();
+      // Your orgs only (created by you or member of) — everyone else's stay invisible.
+      const w = myWallet ?? me?.wallet ?? "";
+      const r: any = await (await fetch(`/api/team/orgs${w ? `?wallet=${encodeURIComponent(w)}` : ""}`)).json();
       setOrgs(r.data ?? []);
     } catch {
       setOrgs([]);
@@ -104,7 +110,7 @@ export default function TeamOrgs({
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mock]);
+  }, [mock, me?.wallet]);
 
   // Spending-cap policies in plain dollars (parsed from the Privy rule wei).
   async function capFor(walletId: string): Promise<string | null> {
@@ -138,7 +144,11 @@ export default function TeamOrgs({
       const r = await fetch("/api/team/orgs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), ...(capUsd.trim() ? { capUsd: Number(capUsd) } : {}) }),
+        body: JSON.stringify({
+          name: name.trim(),
+          ...(capUsd.trim() ? { capUsd: Number(capUsd) } : {}),
+          ...(me?.wallet ? { creatorWallet: me.wallet } : {}),
+        }),
       });
       const d: any = await r.json();
       if (!r.ok) throw new Error(apiError(d, r.status));
@@ -193,11 +203,16 @@ export default function TeamOrgs({
                   <div className="flex flex-wrap items-center gap-x-2 font-mono text-xs">
                     <span>{w.address.slice(0, 12)}…</span>
                     <span className="text-[#0B7A5D]">{caps[w.id] ? `✓ ${caps[w.id]}` : w.policy_ids.length ? "policy attached" : "no policy"}</span>
-                    {!it ? (
-                      <button onClick={() => propose(w.id)} disabled={busyIntent === w.id} className="ml-auto rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
-                        {busyIntent === w.id ? "proposing…" : "Propose spend approval"}
-                      </button>
-                    ) : (
+                      {!it ? (
+                        <button
+                          onClick={() => propose(w.id)}
+                          disabled={busyIntent === w.id}
+                          title="Asks the quorum key to pre-approve a treasury spend above policy. No money moves until approved."
+                          className="ml-auto rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40"
+                        >
+                          {busyIntent === w.id ? "proposing…" : "Request spend approval"}
+                        </button>
+                      ) : (
                       <span className={`ml-auto rounded-full px-2.5 py-0.5 text-[11px] ${it.status === "executed" ? "bg-[#E7F5EE] text-[#0B7A5D]" : it.status === "pending" ? "bg-[#FDF3E2] text-[#8A5300]" : "bg-[#FDECEA] text-[#B3261E]"}`}>
                         {it.status}
                       </span>
@@ -210,9 +225,14 @@ export default function TeamOrgs({
                         {it.intent_id}
                       </details>
                       {it.status === "pending" && (
-                        <button onClick={() => approve(w.id, o.default_key_quorum_id)} disabled={busyIntent === w.id} className="rounded-full border border-black/10 px-3 py-1 text-[11px] disabled:opacity-40">
-                          {busyIntent === w.id ? "approving…" : "Approve (server key)"}
-                        </button>
+                          <button
+                            onClick={() => approve(w.id, o.default_key_quorum_id)}
+                            disabled={busyIntent === w.id}
+                            title="Authorizes with the server-held quorum key"
+                            className="rounded-full border border-black/10 px-3 py-1 text-[11px] disabled:opacity-40"
+                          >
+                            {busyIntent === w.id ? "approving…" : "Approve"}
+                          </button>
                       )}
                       <button onClick={() => poll(it.intent_id, w.id)} className="font-mono text-[11px] text-[#2563EB] underline">refresh</button>
                     </div>

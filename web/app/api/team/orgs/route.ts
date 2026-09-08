@@ -1,20 +1,28 @@
 import { NextResponse } from "next/server";
 import { newAuthKeypair, privyApi } from "../../../../lib/privy-server";
 import { saveQuorumKey } from "../../../../lib/quorum-keys";
+import { visibleOrgIds } from "../../../../lib/members";
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const wallet = new URL(req.url).searchParams.get("wallet") ?? "";
     const orgs: any = await privyApi("GET", "/organizations");
     const list: any[] = orgs.data ?? orgs ?? [];
     const wallets: any = await privyApi("GET", "/wallets").catch(() => ({ data: [] }));
     const all: any[] = wallets.data ?? [];
+    // Only your orgs: created by you or spend-member of. Everyone else's
+    // (including ancient test junk) stays invisible. No wallet = unfiltered
+    // (local dev convenience, never relied on for auth).
+    const visible = wallet ? await visibleOrgIds(wallet) : null;
     return NextResponse.json({
-      data: list.map((o: any) => ({
-        ...o,
-        wallets: all
-          .filter((w: any) => w.entity?.id === o.id)
-          .map((w: any) => ({ id: w.id, address: w.address, policy_ids: w.policy_ids ?? [] })),
-      })),
+      data: list
+        .filter((o: any) => !visible || visible.has(o.id))
+        .map((o: any) => ({
+          ...o,
+          wallets: all
+            .filter((w: any) => w.entity?.id === o.id)
+            .map((w: any) => ({ id: w.id, address: w.address, policy_ids: w.policy_ids ?? [] })),
+        })),
     });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
@@ -29,10 +37,11 @@ export async function GET() {
 /// policy changes need quorum authorization signatures — roadmap, documented.
 export async function POST(req: Request) {
   try {
-    const { name, capWei, capUsd } = (await req.json().catch(() => ({}))) as {
+    const { name, capWei, capUsd, creatorWallet } = (await req.json().catch(() => ({}))) as {
       name?: string;
       capWei?: string;
       capUsd?: number;
+      creatorWallet?: string;
     };
     if (!name || typeof name !== "string" || name.length > 64) {
       return NextResponse.json({ error: "name required (<=64 chars)" }, { status: 400 });
@@ -78,6 +87,10 @@ export async function POST(req: Request) {
       walletBody.policy_ids = [policy.id];
     }
     const wallet: any = await privyApi("POST", "/wallets", walletBody);
+    if (creatorWallet && /^0x[0-9a-fA-F]{40}$/.test(creatorWallet)) {
+      const { setOrgCreator } = await import("../../../../lib/members");
+      await setOrgCreator(org.id, creatorWallet);
+    }
     return NextResponse.json({ org, quorumId: quorum.id, policy, wallet });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });

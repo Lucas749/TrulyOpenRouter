@@ -15,8 +15,10 @@ import {
   periodStartFor,
   removeMember,
   setMemberAllowance,
+  setOrgCreator,
   setOrgDefault,
   verifyApprovalSignature,
+  visibleOrgIds,
 } from "../lib/members";
 
 const OWNER = privateKeyToAccount(generatePrivateKey()); // fresh each run, never hand-type keys
@@ -27,7 +29,7 @@ const MEMBER_WALLET = MEMBER.address;
 beforeEach(async () => {
   process.env.TOR_MEMBERS_DIR = mkdtempSync(join(tmpdir(), "tor-members-"));
   const { resetMembersDb } = await import("./db-test");
-  await resetMembersDb(["org1"]);
+  await resetMembersDb(["org1", "org2", "org3"]);
 });
 
 describe("members store", () => {
@@ -67,6 +69,23 @@ describe("members store", () => {
     await addMember("org1", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member", periodStart: Date.now() - 31 * 86_400_000 });
     const rolled = periodStartFor(await ensureOrg("org1"), "did:m1", Date.now());
     expect(rolled).toBeGreaterThan(Date.now() - 1000); // new period starts now
+  });
+});
+
+describe("org visibility (only yours)", () => {
+  it("shows created-by and member-of orgs, hides strangers", async () => {
+    await ensureOrg("org1");
+    await setOrgCreator("org1", OWNER.address);
+    await ensureOrg("org2");
+    await addMember("org2", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member" });
+    await ensureOrg("org3"); // stranger org: no creator, no membership
+    expect(await visibleOrgIds(null)).toEqual(new Set());
+    expect(await visibleOrgIds(OWNER.address)).toEqual(new Set(["org1"]));
+    expect(await visibleOrgIds(MEMBER_WALLET)).toEqual(new Set(["org2"]));
+    expect(await visibleOrgIds("0x0000000000000000000000000000000000009999")).toEqual(new Set());
+    // first-writer-wins: creator can't be hijacked later
+    await setOrgCreator("org1", MEMBER_WALLET);
+    expect(await visibleOrgIds(OWNER.address)).toEqual(new Set(["org1"]));
   });
 });
 

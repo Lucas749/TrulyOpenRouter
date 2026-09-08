@@ -40,6 +40,7 @@ export interface OrgMeta {
   defaultAllowanceCredits?: number; // org default; undefined = unlimited
   periodDays: number;
   members: Member[];
+  creatorWallet?: string; // who created it (lowercased) — visibility filter, not auth
 }
 
 export type RequestStatus = "pending" | "approved" | "denied";
@@ -138,7 +139,7 @@ const pgBackend: MemberBackend = {
     const orgs: Record<string, OrgMeta> = {};
     const { rows: o } = await q.query(`SELECT * FROM team_orgs`);
     for (const r of o) {
-      orgs[r.id] = { orgId: r.id, defaultAllowanceCredits: r.default_allowance_credits != null ? Number(r.default_allowance_credits) : undefined, periodDays: r.period_days, members: [] };
+      orgs[r.id] = { orgId: r.id, defaultAllowanceCredits: r.default_allowance_credits != null ? Number(r.default_allowance_credits) : undefined, periodDays: r.period_days, members: [], creatorWallet: r.creator_wallet ?? undefined };
     }
     const { rows: m } = await q.query(`SELECT * FROM team_members`);
     for (const r of m) {
@@ -154,9 +155,10 @@ const pgBackend: MemberBackend = {
     const q = db();
     for (const [id, o] of Object.entries(s.orgs)) {
       await q.query(
-        `INSERT INTO team_orgs (id, default_allowance_credits, period_days) VALUES ($1,$2,$3)
-         ON CONFLICT (id) DO UPDATE SET default_allowance_credits = EXCLUDED.default_allowance_credits, period_days = EXCLUDED.period_days`,
-        [id, o.defaultAllowanceCredits ?? null, o.periodDays],
+        `INSERT INTO team_orgs (id, default_allowance_credits, period_days, creator_wallet) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (id) DO UPDATE SET default_allowance_credits = EXCLUDED.default_allowance_credits, period_days = EXCLUDED.period_days,
+           creator_wallet = COALESCE(team_orgs.creator_wallet, EXCLUDED.creator_wallet)`,
+        [id, o.defaultAllowanceCredits ?? null, o.periodDays, o.creatorWallet ?? null],
       );
       for (const m of o.members) {
         await q.query(
@@ -206,6 +208,32 @@ export async function ensureOrg(orgId: string, periodDays = 30): Promise<OrgMeta
   if (!s.orgs[orgId]) s.orgs[orgId] = { orgId, periodDays, members: [] };
   await write(s);
   return s.orgs[orgId];
+}
+
+/// @notice Record who created the org (once — first writer wins). Powers the
+/// "my teams" filter so strangers never see your orgs and vice versa.
+export async function setOrgCreator(orgId: string, wallet: string): Promise<void> {
+  const meta = await ensureOrg(orgId);
+  if (!meta.creatorWallet) {
+    meta.creatorWallet = wallet.toLowerCase();
+    const s = await read();
+    s.orgs[orgId] = meta;
+    await write(s);
+  }
+}
+
+/// @notice Orgs visible to a wallet: created by them OR spend-member of them.
+/// Anything else (other people's orgs, ancient test junk) stays invisible.
+export async function visibleOrgIds(wallet: string | null): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!wallet) return out;
+  const w = wallet.toLowerCase();
+  const s = await read();
+  for (const [id, o] of Object.entries(s.orgs)) {
+    if (o.creatorWallet === w) out.add(id);
+    else if (o.members.some((m) => m.status === "active" && (m.walletAddress.toLowerCase() === w))) out.add(id);
+  }
+  return out;
 }
 
 export async function setOrgDefault(orgId: string, allowanceCredits: number | undefined): Promise<OrgMeta> {

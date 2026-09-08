@@ -6,8 +6,10 @@ INSERT INTO schema_version (v) VALUES (1) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS team_orgs (
   id text PRIMARY KEY,
   default_allowance_credits double precision,
-  period_days int NOT NULL DEFAULT 30
+  periodDays int NOT NULL DEFAULT 30,
+  creator_wallet text
 );
+ALTER TABLE team_orgs ADD COLUMN IF NOT EXISTS creator_wallet text;
 
 -- Team members (allowance null = inherit org default).
 CREATE TABLE IF NOT EXISTS team_members (
