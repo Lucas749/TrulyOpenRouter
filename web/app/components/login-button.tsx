@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { usePrivy } from "@privy-io/react-auth";
+import { useCreateWallet, usePrivy } from "@privy-io/react-auth";
 
 export default function LoginButton() {
   const { ready, authenticated, user, login } = usePrivy();
+  const { createWallet } = useCreateWallet();
   const [stuck, setStuck] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   // Privy usually readies in ~1s. Past 10s it never will this load
   // (blocked scripts, shields, or bad origin config) — say so plainly.
@@ -31,10 +33,21 @@ export default function LoginButton() {
   if (authenticated) {
     const addr = user?.wallet?.address;
     if (!addr) {
-      // Logged in, embedded wallet still provisioning — never show slices of undefined.
+      // Logged in but no embedded wallet yet: Privy doesn't always auto-create.
+      // One click provisions it (the old pill just waited here forever).
       return (
-        <button disabled className="h-10 rounded-full border border-black/10 px-5 text-sm text-zinc-500">
-          finishing login…
+        <button
+          disabled={creating}
+          onClick={async () => {
+            setCreating(true);
+            try {
+              await createWallet();
+            } catch {}
+            setCreating(false);
+          }}
+          className="h-10 rounded-full bg-black px-5 text-sm text-white hover:bg-zinc-800 disabled:opacity-50"
+        >
+          {creating ? "creating wallet…" : "Create wallet"}
         </button>
       );
     }
