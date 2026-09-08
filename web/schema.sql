@@ -42,6 +42,14 @@ CREATE TABLE IF NOT EXISTS increase_requests (
 );
 CREATE INDEX IF NOT EXISTS increase_requests_org_idx ON increase_requests (org_id, created_at DESC);
 
+-- User profiles (display name for UI only — receipts stay hash-anonymous by
+-- privacy design; no public attribution without a protocol change).
+CREATE TABLE IF NOT EXISTS user_profiles (
+  wallet text PRIMARY KEY,
+  display_name text NOT NULL DEFAULT '',
+  updated_at bigint NOT NULL
+);
+
 -- Chat threads (logged-in users, keyed by wallet address — client-claimed identity,
 -- own-history only, never authorization). Logged-out users keep localStorage threads.
 CREATE TABLE IF NOT EXISTS chat_threads (

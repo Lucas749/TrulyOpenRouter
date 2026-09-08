@@ -11,7 +11,7 @@ interface StoredKey {
   models: string[];
 }
 
-export default function ApiKeysPage() {
+export function ApiKeysPanel() {
   const [models, setModels] = useState("");
   const [expiryDays, setExpiryDays] = useState("30");
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -75,15 +75,7 @@ export default function ApiKeysPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
-      <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-[720px] items-center justify-between px-6">
-          <Link href="/account" className="text-sm text-[#6E6E73] hover:text-black">← Account</Link>
-          <span className="text-[15px] font-semibold">API keys</span>
-          <span className="w-16" />
-        </div>
-      </header>
-      <main className="mx-auto flex max-w-[720px] flex-col gap-6 px-6 py-10">
+    <div className="flex flex-col gap-6">
         <div className="flex flex-col gap-3 rounded-[14px] border border-[#E5E5E0] p-5">
           <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">New key</span>
           <label className="flex flex-col gap-1 text-sm">
@@ -119,6 +111,22 @@ export default function ApiKeysPage() {
             <p className="m-0 text-sm text-[#8F8F8F]">no keys yet, create one above. Keys live in this browser; the gateway never stores plaintext.</p>
           )}
         </div>
+    </div>
+  );
+}
+
+export default function ApiKeysPage() {
+  return (
+    <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
+      <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-[720px] items-center justify-between px-6">
+          <Link href="/account" className="text-sm text-[#6E6E73] hover:text-black">← Account</Link>
+          <span className="text-[15px] font-semibold">API keys</span>
+          <span className="w-16" />
+        </div>
+      </header>
+      <main className="mx-auto flex max-w-[720px] flex-col gap-6 px-6 py-10">
+        <ApiKeysPanel />
       </main>
     </div>
   );
