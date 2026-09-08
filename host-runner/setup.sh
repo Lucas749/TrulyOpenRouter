@@ -36,7 +36,7 @@ REGISTRY="${REGISTRY:-0xa45461bdefef422a81b22f36ebfd0995c7642dc3}"
 RPC_URL="${RPC_URL:-https://testnet.hashio.io/api}"
 ask MODEL_ID "Model to serve" "qwen2.5:0.5b"
 ask ENDPOINT "Public endpoint of YOUR guard (https://… — LAN ips won't route)" ""
-[ -n "$ENDPOINT" ] || { echo "ENDPOINT is required (see /host/setup)"; exit 1; }
+[ -n "$ENDPOINT" ] || { echo "ENDPOINT is required (your public guard URL)"; exit 1; }
 ask HOST_HEDERA_ID "Your Hedera account id (0.0.…, receives USDC)" ""
 [ -n "$HOST_HEDERA_ID" ] || { echo "HOST_HEDERA_ID is required"; exit 1; }
 ask_secret HOST_KEY "Your host ECDSA private key (0x…, testnet only)"

@@ -13,11 +13,23 @@ const VAULT_ABI = parseAbi([
   "function refund()",
 ]);
 
+const MIRROR = "https://testnet.mirrornode.hedera.com";
+
+interface VaultTx {
+  id: string;
+  ts: number;
+  hbar: number;
+  kind: string;
+}
+
 export default function AccountPage() {
   const { ready, authenticated, user, logout } = usePrivy();
   const { wallets } = useWallets();
   const [hbar, setHbar] = useState<string | null>(null);
   const [credits, setCredits] = useState<string | null>(null);
+  const [reqCount, setReqCount] = useState<number | null>(null);
+  const [paidUsd, setPaidUsd] = useState<number | null>(null);
+  const [vaultTxs, setVaultTxs] = useState<VaultTx[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -52,6 +64,32 @@ export default function AccountPage() {
         setHbar((Number(b) / 1e18).toFixed(4));
         setCredits(String(c));
       } catch {}
+      // Usage: receipts attributed to this wallet (chat sends the handle when logged in).
+      try {
+        const r: any = await (await fetch(`/api/gw/api/users/wallet:${address}/receipts`)).json();
+        const mine: any[] = r.data ?? [];
+        setReqCount(mine.length);
+        setPaidUsd(mine.reduce((a: number, x: any) => a + Number(x.amountCredits ?? 0) * 0.001, 0));
+      } catch {
+        setReqCount(null);
+        setPaidUsd(null);
+      }
+      // Last onchain vault payments (mirror node contract results, newest first).
+      try {
+        const d: any = await (
+          await fetch(`${MIRROR}/api/v1/contracts/${VAULT}/results?from=${address}&limit=5&order=desc`)
+        ).json();
+        setVaultTxs(
+          (d.results ?? []).map((t: any) => ({
+            id: String(t.transaction_id),
+            ts: Number(String(t.consensus_timestamp).split(".")[0]) * 1000,
+            hbar: Number(t.amount ?? 0) / 1e8,
+            kind: Number(t.amount ?? 0) > 0 ? "subscribe" : "call",
+          })),
+        );
+      } catch {
+        setVaultTxs(null);
+      }
     })();
   }, [address]);
 
@@ -74,8 +112,10 @@ export default function AccountPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               {[
+                ["REQUESTS", reqCount === null ? "—" : String(reqCount)],
+                ["PAID · metered", paidUsd === null ? "—" : `$${paidUsd.toFixed(3)}`],
                 ["HBAR · testnet", hbar ?? "—"],
                 ["CREDITS", credits ?? "—"],
               ].map(([l, v]) => (
@@ -84,11 +124,35 @@ export default function AccountPage() {
                   <span className="font-mono text-lg">{v}</span>
                 </div>
               ))}
-              <div className="flex flex-col gap-1 rounded-[14px] border border-[#E5E5E0] p-4">
-                <span className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Wallets</span>
-                <span className="break-all font-mono text-xs">EVM {address ?? "—"}</span>
-                <span className="text-[11px] text-[#6E6E73]">Same key on Hedera testnet (ECDSA). Fund it with testnet HBAR, then subscribe.</span>
-              </div>
+            </div>
+            <div className="flex flex-col gap-1 rounded-[14px] border border-[#E5E5E0] p-4">
+              <span className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Wallets</span>
+              <span className="break-all font-mono text-xs">EVM {address ?? "—"}</span>
+              <span className="text-[11px] text-[#6E6E73]">Same key on Hedera testnet (ECDSA). Fund it with testnet HBAR, then subscribe.</span>
+            </div>
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Last onchain payments</span>
+              {vaultTxs === null ? (
+                <p className="m-0 font-mono text-xs text-[#8F8F8F]">—</p>
+              ) : !vaultTxs.length ? (
+                <p className="m-0 text-sm text-[#8F8F8F]">no vault transactions yet, subscribe to make the first</p>
+              ) : (
+                vaultTxs.map((t) => (
+                  <div key={t.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-[#F7F7F5] px-3 py-2">
+                    <span className="rounded-full bg-black px-2.5 py-0.5 text-[11px] text-white">{t.kind}</span>
+                    <span className="font-mono text-xs tabular-nums">{t.hbar} HBAR</span>
+                    <span className="font-mono text-[11px] text-[#8F8F8F]">{new Date(t.ts).toLocaleString("en-US")}</span>
+                    <a
+                      href={`https://hashscan.io/testnet/transaction/${t.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-auto font-mono text-[11px] text-[#2563EB] underline"
+                    >
+                      {t.id.slice(0, 18)}… ↗
+                    </a>
+                  </div>
+                ))
+              )}
             </div>
             <div className="flex gap-3">
               <Link href="/onboarding" className="flex h-10 flex-1 items-center justify-center rounded-full bg-black text-sm text-white">Top up $10</Link>

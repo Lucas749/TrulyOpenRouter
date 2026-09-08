@@ -128,7 +128,9 @@ export default function ChatPage() {
       const r = await fetch(`${GATEWAY}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: [{ role: "user", content: text }] }),
+        // Attribution only (receipts link back to this wallet on /account).
+        // Grants nothing: spend caps stay key-based.
+        body: JSON.stringify({ model, messages: [{ role: "user", content: text }], ...(handle ? { userHandle: handle } : {}) }),
       });
       const d = await r.json();
       apply({

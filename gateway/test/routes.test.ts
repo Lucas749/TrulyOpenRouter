@@ -126,6 +126,32 @@ describe("routes", () => {
     expect(await (await fetch(`${base}/api/receipts/nope`)).status).toBe(404);
   });
 
+  it("attributes browser calls to wallet handles (observability only)", async () => {
+    const addr = "0x1234567890abcdef1234567890abcdef12345678";
+    const chat: any = await (
+      await fetch(`${base}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "llama-3.1-8b", messages: [], userHandle: addr }),
+      })
+    ).json();
+    const one: any = await (await fetch(`${base}/api/receipts/${chat.tor_receipt}`)).json();
+    expect(one.user).toBe(`wallet:${addr}`);
+    const mine: any = await (await fetch(`${base}/api/users/wallet:${addr}/receipts`)).json();
+    expect(mine.data.map((r: any) => r.id)).toContain(chat.tor_receipt);
+    // garbage handle falls back to dev (grants nothing). Distinct message so the
+    // receipt id differs from the chat above (ids hash the content).
+    const anon: any = await (
+      await fetch(`${base}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "llama-3.1-8b", messages: [{ role: "user", content: "other" }], userHandle: "mallory" }),
+      })
+    ).json();
+    const anonOne: any = await (await fetch(`${base}/api/receipts/${anon.tor_receipt}`)).json();
+    expect(anonOne.user).toBe("dev");
+  });
+
   it("serves per-payer usage history and credits", async () => {
     const { MemoryReceiptLog } = await import("../src/receipts.js");
     const { buildReceipt } = await import("../src/receipts.js");

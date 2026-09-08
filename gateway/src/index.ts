@@ -218,6 +218,11 @@ export function createApp(opts: GatewayOptions = {}) {
         res.status(400).json({ error: { message: "missing model", type: "invalid_request" } });
         return;
       }
+      // Attribution (observability only, never authorization): a keyed call is
+      // `key:<prefix>`; a logged-in browser call may claim `wallet:<0x…>`; else "dev".
+      // Caps still enforce exclusively via keys — a wallet handle grants nothing.
+      const claimed = typeof req.body?.userHandle === "string" ? req.body.userHandle.toLowerCase() : "";
+      const walletHandle = /^0x[0-9a-f]{40}$/.test(claimed) ? `wallet:${claimed}` : null;
       // Bearer key (harness path): verify + enforce model allowlist. Absent = web/dev path.
       const auth = req.headers.authorization ?? "";
       let keyPrefix: string | undefined;
@@ -297,7 +302,7 @@ const ver = opts.verifier;
         tokensIn,
         tokensOut,
         modelId: model,
-        user: keyPrefix ? `key:${keyPrefix}` : "dev",
+        user: keyPrefix ? `key:${keyPrefix}` : (walletHandle ?? "dev"),
       };
       if (opts.receipts) await opts.receipts.append(buildReceipt(receiptInput));
       const receipt = (await opts.receipts?.list(1))?.[0]?.id;

@@ -41,7 +41,14 @@ export default function OnboardingPage() {
   }
 
   async function subscribe() {
-    if (!wallet || !address) return;
+    if (!authenticated) {
+      setMsg("log in first (step 1) — the subscription pays from your embedded wallet");
+      return;
+    }
+    if (!wallet || !address) {
+      setMsg("wallet still being created — wait a few seconds and retry");
+      return;
+    }
     setBusy(true);
     setMsg(null);
     try {

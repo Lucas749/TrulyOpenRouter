@@ -63,7 +63,7 @@ export default function HostPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {[
             ["1 · Run", "One compose file: Ollama + payment guard."],
-            ["2 · Stake", "10 HBAR locked on testnet. It proves you're serious (spam costs real money), it's slashable if you cheat, and it unlocks after a timelock when you leave."],
+            ["2 · Stake", "10 HBAR locked on testnet, to avoid spam. Unlocks after a timelock when you leave."],
             ["3 · Earn", "90% of every routed call, withdrawable onchain. No platform rent."],
           ].map(([t, d]) => (
             <div key={t} className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-5">
@@ -71,6 +71,12 @@ export default function HostPage() {
               <p className="m-0 text-sm leading-relaxed">{d}</p>
             </div>
           ))}
+        </div>
+
+        <div className="flex flex-col gap-2 rounded-[14px] bg-[#0D0D0D] p-5">
+          <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#8F8F8F]">Fastest path, one command</span>
+          <p className="m-0 font-mono text-sm text-[#EDEDED]">curl -fsSL https://trulyopenrouter.vercel.app/install.sh | bash</p>
+          <p className="m-0 text-[13px] text-[#8F8F8F]">Works with or without a Ledger. Without one, everything runs the same minus tap-gated security: keys live in env files and stake releases execute directly.</p>
         </div>
 
         <div className="grid grid-cols-1 items-center gap-8 rounded-[14px] border border-[#E5E5E0] p-8 md:grid-cols-2">
@@ -92,15 +98,10 @@ export default function HostPage() {
             <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Your take, 30 days</span>
             <span className="font-mono text-[40px] tracking-[-0.03em] text-[#0B7A5D]">{take === null ? "—" : `$${take.toLocaleString("en-US", { maximumFractionDigits: 2 })}`}</span>
             <span className="font-mono text-xs text-[#6E6E73]">{monthlyReq.toLocaleString("en-US")} req/mo · {priceCredits === null ? "price unknown yet" : `$${(priceCredits * 0.001).toFixed(4)}/req`} · 90% share</span>
-            <Link href="/host/setup" className="mt-2 flex h-10 items-center justify-center rounded-full bg-black text-sm text-white hover:bg-zinc-800">Set up this host</Link>
+            <Link href="/docs" className="mt-2 flex h-10 items-center justify-center rounded-full bg-black text-sm text-white hover:bg-zinc-800">Set up this host</Link>
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 rounded-[14px] bg-[#0D0D0D] p-5">
-          <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#8F8F8F]">Fastest path, one command</span>
-          <p className="m-0 font-mono text-sm text-[#EDEDED]">curl -fsSL https://trulyopenrouter.vercel.app/install.sh | bash</p>
-          <p className="m-0 text-[13px] text-[#8F8F8F]">Installs the CLI, pulls the model, registers onchain, installs the heartbeat cron. Key never leaves your machine.</p>
-        </div>
       </main>
     </div>
   );

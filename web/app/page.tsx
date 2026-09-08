@@ -124,7 +124,7 @@ export default function Landing() {
           <div className="flex items-center gap-3">
             <LoginButton />
             <Link href="/onboarding" className="flex h-9 items-center rounded-full bg-black px-4 text-sm text-white hover:bg-zinc-800">
-              Subscribe <span className="ml-2 font-mono">{subPrice}</span>
+              Subscribe <span className="ml-2 inline-block min-w-[11ch] text-left font-mono">{subPrice}</span>
             </Link>
           </div>
         </div>
@@ -143,7 +143,7 @@ export default function Landing() {
           <p className="m-0 max-w-[620px] text-lg leading-relaxed text-[#5D5D5D]">One flat subscription routes your prompts across independently operated hosts running open models. Hosts keep 90% of every call. Every call settles onchain with a receipt you can check yourself.</p>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Link href="/onboarding" className="flex h-12 items-center rounded-full bg-black px-6 text-white hover:bg-zinc-800">
-              Subscribe <span className="ml-2 font-mono">{subPrice}</span>
+              Subscribe <span className="ml-2 inline-block min-w-[11ch] text-left font-mono">{subPrice}</span>
             </Link>
             <Link href="/host" className="flex h-12 items-center rounded-full border border-black/10 px-6 hover:bg-black/5">Serve a model</Link>
           </div>

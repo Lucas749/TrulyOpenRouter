@@ -93,7 +93,7 @@ export default function HostDashboardPage() {
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
           <Link href="/host" className="text-sm text-[#6E6E73] hover:text-black">← Serve</Link>
           <span className="text-[15px] font-semibold">My hosts</span>
-          <Link href="/host/setup" className="text-sm text-[#2563EB] underline">+ register</Link>
+          <Link href="/host" className="text-sm text-[#2563EB] underline">+ register</Link>
         </div>
       </header>
       <main className="mx-auto flex max-w-[1200px] flex-col gap-6 px-6 py-8">
@@ -121,7 +121,7 @@ export default function HostDashboardPage() {
             </div>
             {lookupMsg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{lookupMsg}</p>}
             <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-[13px]">
-              <Link href="/host/setup" className="rounded-full bg-black px-5 py-2.5 text-sm text-white">Register your first host</Link>
+              <Link href="/host" className="rounded-full bg-black px-5 py-2.5 text-sm text-white">Register your first host</Link>
               <Link href="/host/link" className="self-center text-[#2563EB] underline">or claim via CLI code →</Link>
             </div>
           </div>
