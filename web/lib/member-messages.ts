@@ -37,6 +37,37 @@ export interface DecisionSubject {
   amountCredits: number;
 }
 
+/// @notice Stable JSON (sorted keys, recursive) for binding rule payloads.
+export function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v as Record<string, unknown>)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableJson((v as Record<string, unknown>)[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+export interface RuleDecisionSubject {
+  id: string;
+  orgId: string;
+  kind: string;
+  payloadJson: string;
+}
+
+export function ruleDecisionMessage(r: RuleDecisionSubject, decision: "approve" | "deny", expires: number): string {
+  return [
+    "TrulyOpenRouter rule decision",
+    `action: ${decision}`,
+    `request: ${r.id}`,
+    `org: ${r.orgId}`,
+    `kind: ${r.kind}`,
+    `payload: ${r.payloadJson}`,
+    `expires: ${expires}`,
+  ].join("\n");
+}
+
 export function approvalMessage(r: DecisionSubject, decision: "approve" | "deny", expires: number): string {
   return [
     "TrulyOpenRouter allowance decision",

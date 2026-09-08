@@ -4,6 +4,7 @@ import { buildReceipt, PgReceiptLog } from "../src/receipts.js";
 import { issueKey, PgKeyStore, verifyKey } from "../src/keys.js";
 import { PgCapStore } from "../src/allowances.js";
 import { mintTap, PgTapStore } from "../src/taps.js";
+import { PgOrgRules } from "../src/orgrules.js";
 import { PgDeviceFlow } from "../src/device.js";
 import { PgHealth } from "../src/health.js";
 import { PgHostMeta } from "../src/hostmeta.js";
@@ -101,6 +102,16 @@ pg("postgres backends", () => {
     await h.recordLatency(host, 100);
     await h.recordLatency(host, 200);
     expect(await h.latencyMs(host)).toBe(130);
+  });
+
+  it("org rules roundtrip + handle match", async () => {
+    const s = new PgOrgRules();
+    expect(await s.get("oxyz")).toBeNull();
+    await s.set({ orgId: "oxyz", dailyCapCredits: 42, allowedModels: ["m1"], handles: ["key:abc"] });
+    expect(await s.get("oxyz")).toMatchObject({ dailyCapCredits: 42 });
+    expect(await s.orgsForHandle("key:abc")).toHaveLength(1);
+    expect(await s.orgsForHandle("key:nope")).toHaveLength(0);
+    await expect(s.set({ orgId: "", dailyCapCredits: null, allowedModels: null, handles: [] })).rejects.toThrow("orgId required");
   });
 
   it("taps queue/approve/execute with mint parity", async () => {

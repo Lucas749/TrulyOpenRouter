@@ -335,9 +335,9 @@ export function periodStartFor(meta: OrgMeta, did: string, now = Date.now()): nu
 // routes keep one import. Every member mutation is authorized by a Privy
 // embedded-wallet personal_sign over these bytes, verified server-side below.
 
-export { approvalMessage, memberActionMessage, parseActionMessage } from "./member-messages";
-export type { DecisionSubject } from "./member-messages";
-import { parseActionMessage } from "./member-messages";
+export { approvalMessage, memberActionMessage, parseActionMessage, ruleDecisionMessage, stableJson } from "./member-messages";
+export type { DecisionSubject, RuleDecisionSubject } from "./member-messages";
+import { parseActionMessage, ruleDecisionMessage, stableJson } from "./member-messages";
 
 /// @notice Verifies signer + expiry + that every expected binding is present.
 /// Returns the recovered address on success, throws otherwise.
@@ -429,5 +429,226 @@ export async function decideRequest(
     // Fresh read/write inside (also resets the allowance period, documented).
     await setMemberAllowance(r.orgId, r.memberDid, r.amountCredits);
   }
+  return r;
+}
+
+// --- Org rules (firm policy) + rule-change intents ---------------------------
+// Prescription: owners AND managers may PROPOSE; only owners DECIDE. Approval
+// applies the rule locally and the route syncs it to gateway enforcement.
+// Kinds: daily_cap {credits|null}, models {models: string[]|null},
+// per_tx_cap {usd|null} (display mirror; the Privy per-tx policy is set at creation).
+
+export type RuleKind = "daily_cap" | "models" | "per_tx_cap";
+
+export interface OrgRules {
+  orgId: string;
+  dailyCapCredits?: number;
+  allowedModels?: string[] | null;
+  perTxCapUsd?: number;
+  updatedAt: number;
+}
+
+export type RuleStatus = "pending" | "approved" | "denied";
+
+export interface RuleChange {
+  id: string;
+  orgId: string;
+  kind: RuleKind;
+  payload: Record<string, unknown>;
+  status: RuleStatus;
+  createdAt: number;
+  createdByDid: string;
+  decidedAt?: number;
+  decidedByDid?: string;
+  decision?: "approve" | "deny";
+  decisionSignature?: string;
+  decisionSigner?: string;
+  decisionMessage?: string;
+  decisionExpires?: number;
+}
+
+const RULE_KINDS: RuleKind[] = ["daily_cap", "models", "per_tx_cap"];
+
+export function validateRulePayload(kind: string, payload: Record<string, unknown>): void {
+  if (!(RULE_KINDS as string[]).includes(kind)) throw new Error(`unknown rule kind (want ${RULE_KINDS.join("|")})`);
+  if (kind === "daily_cap") {
+    const c = payload.credits;
+    if (c !== null && c !== undefined && (!Number.isFinite(c as number) || (c as number) < 0)) {
+      throw new Error("daily_cap.credits must be a non-negative number or null (unlimited)");
+    }
+  }
+  if (kind === "models") {
+    const m = payload.models;
+    if (m !== null && m !== undefined && (!Array.isArray(m) || !(m as unknown[]).every((x) => typeof x === "string" && x))) {
+      throw new Error("models.models must be a string array or null (all models)");
+    }
+  }
+  if (kind === "per_tx_cap") {
+    const u = payload.usd;
+    if (u !== null && u !== undefined && (!Number.isFinite(u as number) || (u as number) <= 0)) {
+      throw new Error("per_tx_cap.usd must be a positive number or null (no cap)");
+    }
+  }
+}
+
+interface RulesFile {
+  rules: Record<string, OrgRules>;
+  changes: Record<string, RuleChange>;
+}
+
+async function readRules(): Promise<RulesFile> {
+  if (!dbEnabled()) {
+    try {
+      const raw = JSON.parse(readFileSync(rulesPath(), "utf8")) as RulesFile;
+      return { rules: raw.rules ?? {}, changes: raw.changes ?? {} };
+    } catch {
+      return { rules: {}, changes: {} };
+    }
+  }
+  await ensureSchema(join(process.cwd(), "schema.sql"));
+  const q = db();
+  const rules: Record<string, OrgRules> = {};
+  const { rows: ro } = await q.query(`SELECT * FROM org_rules`);
+  for (const r of ro) {
+    rules[r.org_id] = {
+      orgId: r.org_id,
+      dailyCapCredits: r.daily_cap_credits != null ? Number(r.daily_cap_credits) : undefined,
+      allowedModels: r.allowed_models == null ? undefined : (typeof r.allowed_models === "string" ? JSON.parse(r.allowed_models) : r.allowed_models),
+      perTxCapUsd: r.per_tx_cap_usd != null ? Number(r.per_tx_cap_usd) : undefined,
+      updatedAt: Number(r.updated_at),
+    };
+  }
+  const changes: Record<string, RuleChange> = {};
+  const { rows: rc } = await q.query(`SELECT * FROM rule_changes`);
+  for (const r of rc) {
+    changes[r.id] = {
+      id: r.id, orgId: r.org_id, kind: r.kind,
+      payload: typeof r.payload === "string" ? JSON.parse(r.payload) : (r.payload ?? {}),
+      status: r.status, createdAt: Number(r.created_at), createdByDid: r.created_by_did ?? "",
+      decidedAt: r.decided_at != null ? Number(r.decided_at) : undefined,
+      decidedByDid: r.decided_by_did ?? undefined,
+      decision: r.decision ?? undefined,
+      decisionSignature: r.decision_signature ?? undefined,
+      decisionSigner: r.decision_signer ?? undefined,
+      decisionMessage: r.decision_message ?? undefined,
+      decisionExpires: r.decision_expires != null ? Number(r.decision_expires) : undefined,
+    };
+  }
+  return { rules, changes };
+}
+
+function rulesPath(): string {
+  const dir = process.env.TOR_MEMBERS_DIR ?? join(process.cwd(), ".data");
+  return join(dir, "rules.json");
+}
+
+async function writeRules(s: RulesFile): Promise<void> {
+  if (!dbEnabled()) {
+    const p = rulesPath();
+    mkdirSync(join(p, ".."), { recursive: true, mode: 0o700 });
+    writeFileSync(p, JSON.stringify(s, null, 2), { mode: 0o600 });
+    try {
+      chmodSync(p, 0o600);
+    } catch {}
+    return;
+  }
+  await ensureSchema(join(process.cwd(), "schema.sql"));
+  const q = db();
+  for (const [id, o] of Object.entries(s.rules)) {
+    await q.query(
+      `INSERT INTO org_rules (org_id, daily_cap_credits, allowed_models, per_tx_cap_usd, updated_at)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (org_id) DO UPDATE SET daily_cap_credits = EXCLUDED.daily_cap_credits,
+         allowed_models = EXCLUDED.allowed_models, per_tx_cap_usd = EXCLUDED.per_tx_cap_usd,
+         updated_at = EXCLUDED.updated_at`,
+      [id, o.dailyCapCredits ?? null, o.allowedModels === undefined ? null : JSON.stringify(o.allowedModels), o.perTxCapUsd ?? null, o.updatedAt],
+    );
+  }
+  for (const [id, r] of Object.entries(s.changes)) {
+    await q.query(
+      `INSERT INTO rule_changes (id, org_id, kind, payload, status, created_at, created_by_did, decided_at,
+         decided_by_did, decision, decision_signature, decision_signer, decision_message, decision_expires)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, decided_at = EXCLUDED.decided_at,
+         decided_by_did = EXCLUDED.decided_by_did, decision = EXCLUDED.decision,
+         decision_signature = EXCLUDED.decision_signature, decision_signer = EXCLUDED.decision_signer,
+         decision_message = EXCLUDED.decision_message, decision_expires = EXCLUDED.decision_expires`,
+      [id, r.orgId, r.kind, JSON.stringify(r.payload), r.status, r.createdAt, r.createdByDid, r.decidedAt ?? null,
+        r.decidedByDid ?? null, r.decision ?? null, r.decisionSignature ?? null, r.decisionSigner ?? null,
+        r.decisionMessage ?? null, r.decisionExpires ?? null],
+    );
+  }
+}
+
+export async function getRules(orgId: string): Promise<OrgRules> {
+  const s = await readRules();
+  return s.rules[orgId] ?? { orgId, updatedAt: 0 };
+}
+
+export async function listRuleChanges(orgId: string, status?: RuleStatus): Promise<RuleChange[]> {
+  const s = await readRules();
+  return Object.values(s.changes)
+    .filter((r) => r.orgId === orgId && (!status || r.status === status))
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function applyRule(o: OrgRules, kind: RuleKind, payload: Record<string, unknown>): OrgRules {
+  const next: OrgRules = { ...o, updatedAt: Date.now() };
+  if (kind === "daily_cap") next.dailyCapCredits = (payload.credits as number | null) ?? undefined;
+  if (kind === "models") next.allowedModels = (payload.models as string[] | null) ?? undefined;
+  if (kind === "per_tx_cap") next.perTxCapUsd = (payload.usd as number | null) ?? undefined;
+  return next;
+}
+
+/// @notice Propose a rule change. Caller must verify the proposer is owner/manager
+/// (rank 1+) and embed createdByDid — the store trusts but verifies nothing.
+export async function proposeRuleChange(orgId: string, kind: string, payload: Record<string, unknown>, createdByDid: string): Promise<RuleChange> {
+  validateRulePayload(kind, payload);
+  if (!createdByDid) throw new Error("createdByDid required");
+  const s = await readRules();
+  const id = `rule_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const r: RuleChange = { id, orgId, kind: kind as RuleKind, payload, status: "pending", createdAt: Date.now(), createdByDid };
+  s.changes[id] = r;
+  await writeRules(s);
+  return r;
+}
+
+/// @notice Decide (owner-only — caller verifies rank 2). Approval applies immediately.
+export async function decideRuleChange(
+  id: string,
+  decision: "approve" | "deny",
+  decidedByDid: string,
+  ownerWallet: string,
+  signature: string,
+  message: string,
+  now = Date.now(),
+): Promise<RuleChange> {
+  const s = await readRules();
+  const r = s.changes[id];
+  if (!r) throw new Error("rule change not found");
+  if (r.status !== "pending") throw new Error(`already ${r.status}`);
+  const ok = await verifyApprovalSignature(message, signature, ownerWallet);
+  if (!ok) throw new Error("signature is not from the recorded owner wallet");
+  const expected = ruleDecisionMessage(
+    { id, orgId: r.orgId, kind: r.kind, payloadJson: stableJson(r.payload) },
+    decision,
+    Number((message.match(/^expires: (\d+)$/m) ?? [])[1]),
+  );
+  if (message !== expected) throw new Error("signature does not match this decision");
+  const exp = Number((message.match(/^expires: (\d+)$/m) ?? [])[1]);
+  if (!Number.isFinite(exp) || now > exp) throw new Error("approval expired, sign again");
+  r.status = decision === "approve" ? "approved" : "denied";
+  r.decidedAt = now;
+  r.decidedByDid = decidedByDid;
+  r.decision = decision;
+  r.decisionSignature = signature;
+  r.decisionSigner = ownerWallet;
+  r.decisionMessage = message;
+  r.decisionExpires = exp;
+  if (r.status === "approved") {
+    const cur = s.rules[r.orgId] ?? { orgId: r.orgId, updatedAt: 0 };
+    s.rules[r.orgId] = applyRule(cur, r.kind, r.payload);
+  }
+  await writeRules(s);
   return r;
 }

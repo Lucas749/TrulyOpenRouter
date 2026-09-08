@@ -10,6 +10,8 @@ export async function resetMembersDb(orgIds: string[]): Promise<void> {
   await ensureSchema(join(process.cwd(), "schema.sql"));
   const q = db();
   await q.query(`DELETE FROM increase_requests WHERE org_id = ANY($1)`, [orgIds]);
+  await q.query(`DELETE FROM rule_changes WHERE org_id = ANY($1)`, [orgIds]);
   await q.query(`DELETE FROM team_members WHERE org_id = ANY($1)`, [orgIds]);
   await q.query(`DELETE FROM team_orgs WHERE id = ANY($1)`, [orgIds]);
+  await q.query(`DELETE FROM org_rules WHERE org_id = ANY($1)`, [orgIds]);
 }

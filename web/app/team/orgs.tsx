@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiError } from "../../lib/api-error";
 import { hbarWeiToHbar, hbarWeiToUsd, usdToHbarWei } from "../../lib/fx";
 import OrgMembers from "./members";
+import OrgRules from "./rules";
 
 export interface TeamOrg {
   id: string;
@@ -196,6 +197,7 @@ export default function TeamOrgs({
               </details>
             </div>
             <OrgMembers orgId={o.id} me={me} mock={mock} />
+            <OrgRules orgId={o.id} me={me} mock={mock} />
             {(o.wallets ?? []).map((w) => {
               const it = intents[w.id];
               return (

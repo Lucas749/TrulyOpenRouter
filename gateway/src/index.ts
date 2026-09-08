@@ -5,6 +5,7 @@ import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, fileChallenge, type HostInfo } from "./registry.js";
 import { issueKey, type KeyStore, MemoryKeyStore, PgKeyStore, verifyKey, type KeyScopes } from "./keys.js";
 import { allowanceExceeded, type CapStore, PgCapStore, SpendCapStore, sumSpent } from "./allowances.js";
+import { MemoryOrgRules, type OrgRuleStore, PgOrgRules } from "./orgrules.js";
 import { buildReceipt, MemoryReceiptLog, PgReceiptLog, type ReceiptLog, sha256hex } from "./receipts.js";
 import { dbEnabled, ensureSchema } from "./db.js";
 import { type Health, MemoryHealth, PgHealth } from "./health.js";
@@ -38,6 +39,7 @@ export interface GatewayOptions {
   health?: Health; // upstream failure window; absent = collection off
   verifier?: Verifier; // model-identity spot checks; absent = collection off
   spendCaps?: CapStore; // member allowances; absent = no cap enforcement
+  orgRules?: OrgRuleStore; // firm rules mirror; absent = no org enforcement
   taps?: TapStore; // PENDING_TAP queue; absent = tap endpoints 501
   tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
   adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
@@ -253,6 +255,33 @@ export function createApp(opts: GatewayOptions = {}) {
                 },
               });
               return;
+            }
+          }
+        }
+      }
+      // Org rules gate (firm policy): model allowlist (403) + daily org ceiling (429).
+      // Handle = key:<prefix> for keyed calls, wallet:<addr> for browser calls.
+      if (opts.orgRules) {
+        const handle = keyPrefix ? `key:${keyPrefix}` : walletHandle;
+        if (handle) {
+          const orgs = await opts.orgRules.orgsForHandle(handle);
+          for (const o of orgs) {
+            if (o.allowedModels && !o.allowedModels.includes(model)) {
+              res.status(403).json({
+                error: { message: `model ${model} not allowed by org policy`, type: "model_not_allowed" },
+              });
+              return;
+            }
+            if (o.dailyCapCredits != null) {
+              const dayStart = new Date().setUTCHours(0, 0, 0, 0);
+              const receipts = (await opts.receipts?.list(10_000)) ?? [];
+              const spent = o.handles.reduce((a, h) => a + sumSpent(receipts, h, dayStart), 0);
+              if (spent >= o.dailyCapCredits) {
+                res.status(429).json({
+                  error: { message: "org daily ceiling reached — resets at UTC midnight", type: "quota_exceeded" },
+                });
+                return;
+              }
             }
           }
         }
@@ -829,6 +858,46 @@ const ver = opts.verifier;
     res.json({ prefix: req.params.prefix, removed: await opts.spendCaps.removeCap(req.params.prefix) });
   });
 
+  // Org rules mirror (synced from web team management after signed approval).
+  // Same trust shape as caps: caller holds the wallet signature, this hop is
+  // token-authed. Body: { orgId, dailyCapCredits|null, allowedModels|null, handles[] }.
+  app.post("/api/admin/org-rules", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    if (!opts.orgRules) {
+      res.status(501).json({ error: { message: "org rules not configured", type: "unavailable" } });
+      return;
+    }
+    try {
+      const { orgId, dailyCapCredits, allowedModels, handles } = req.body ?? {};
+      if (!orgId || typeof orgId !== "string") throw new Error("orgId required");
+      if (dailyCapCredits !== null && dailyCapCredits !== undefined && (!Number.isFinite(Number(dailyCapCredits)) || Number(dailyCapCredits) < 0)) {
+        throw new Error("dailyCapCredits must be a non-negative number or null");
+      }
+      if (allowedModels !== null && allowedModels !== undefined && (!Array.isArray(allowedModels) || !allowedModels.every((m: unknown) => typeof m === "string"))) {
+        throw new Error("allowedModels must be a string array or null");
+      }
+      const rule = {
+        orgId,
+        dailyCapCredits: dailyCapCredits ?? null,
+        allowedModels: allowedModels ?? null,
+        handles: Array.isArray(handles) ? handles.filter((h: unknown) => typeof h === "string") : [],
+      };
+      await opts.orgRules.set(rule);
+      res.json({ rule });
+    } catch (e: any) {
+      res.status(400).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "invalid_request" } });
+    }
+  });
+
+  app.get("/api/admin/org-rules/:orgId", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    if (!opts.orgRules) {
+      res.status(501).json({ error: { message: "org rules not configured", type: "unavailable" } });
+      return;
+    }
+    res.json({ rule: await opts.orgRules.get(req.params.orgId) });
+  });
+
   // PENDING_TAP queue (L4, Hedera-only). Trust chain: web (wallet-signed
   // owner) -> admin token here -> Ledger-signed HBAR self-transfer (exact dust,
   // verified on the mirror node) -> Hedera execution with the ring-held host
@@ -956,6 +1025,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     verifier: pg ? new PgVerifier() : new MemoryVerifier(),
     spendCaps: pg ? new PgCapStore() : new SpendCapStore(),
     taps: pg ? new PgTapStore() : new FileTapStore(),
+    orgRules: pg ? new PgOrgRules() : new MemoryOrgRules(),
   };
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
   if (rpcUrl) opts.rpcUrl = rpcUrl;

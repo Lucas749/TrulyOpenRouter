@@ -51,6 +51,38 @@ CREATE TABLE IF NOT EXISTS quorum_keys (
   created_at bigint NOT NULL
 );
 
+-- Org rules: firm-level spend policy. daily_cap_credits + allowed_models (null =
+-- unlimited/all) + per_tx_cap_usd (display mirror of the Privy policy).
+-- Changed ONLY via signed rule-change intents below (owner proposes+decides,
+-- managers may propose). Gateway gets a synced copy for pre-flight enforcement.
+CREATE TABLE IF NOT EXISTS org_rules (
+  org_id text PRIMARY KEY,
+  daily_cap_credits double precision,
+  allowed_models jsonb,
+  per_tx_cap_usd double precision,
+  updated_at bigint NOT NULL
+);
+
+-- Rule-change intents: propose (owner/manager-signed) -> decide (owner-signed)
+-- -> applied + synced to gateway. Same audit-trail shape as increase requests.
+CREATE TABLE IF NOT EXISTS rule_changes (
+  id text PRIMARY KEY,
+  org_id text NOT NULL,
+  kind text NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}',
+  status text NOT NULL DEFAULT 'pending',
+  created_at bigint NOT NULL,
+  created_by_did text NOT NULL DEFAULT '',
+  decided_at bigint,
+  decided_by_did text,
+  decision text,
+  decision_signature text,
+  decision_signer text,
+  decision_message text,
+  decision_expires bigint
+);
+CREATE INDEX IF NOT EXISTS rule_changes_org_idx ON rule_changes (org_id, created_at DESC);
+
 -- User profiles (display name for UI only — receipts stay hash-anonymous by
 -- privacy design; no public attribution without a protocol change).
 CREATE TABLE IF NOT EXISTS user_profiles (

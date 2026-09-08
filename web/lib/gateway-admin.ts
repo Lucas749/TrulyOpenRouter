@@ -32,3 +32,22 @@ export async function clearCap(prefix: string): Promise<void> {
   });
   if (!res.ok) throw new Error(`gateway clear failed: ${(await res.text()).slice(0, 160)}`);
 }
+
+export interface OrgRuleSync {
+  dailyCapCredits: number | null;
+  allowedModels: string[] | null;
+  handles: string[];
+}
+
+/// @notice Push org rules to gateway pre-flight enforcement. Same trust shape
+/// as caps: caller holds the wallet signature, this hop is token-authed.
+export async function syncOrgRules(orgId: string, rules: OrgRuleSync): Promise<void> {
+  const t = token();
+  if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured, refusing unwatched sync");
+  const res = await fetch(`${base()}/api/admin/org-rules`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+    body: JSON.stringify({ orgId, ...rules }),
+  });
+  if (!res.ok) throw new Error(`gateway org-rules sync failed: ${(await res.text()).slice(0, 160)}`);
+}

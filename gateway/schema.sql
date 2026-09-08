@@ -84,6 +84,14 @@ CREATE TABLE IF NOT EXISTS host_latency (
   ema_ms double precision NOT NULL
 );
 
+-- Org rules mirror (synced from web team management).
+CREATE TABLE IF NOT EXISTS org_rules (
+  org_id text PRIMARY KEY,
+  daily_cap double precision,
+  allowed_models jsonb,
+  handles jsonb NOT NULL DEFAULT '[]'
+);
+
 -- PENDING_TAP queue (L4 device-gated actions).
 CREATE TABLE IF NOT EXISTS taps (
   id text PRIMARY KEY,
