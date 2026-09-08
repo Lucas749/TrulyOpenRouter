@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS increase_requests (
 );
 CREATE INDEX IF NOT EXISTS increase_requests_org_idx ON increase_requests (org_id, created_at DESC);
 
+-- Server-held quorum private keys (team intent auto-approval).
+CREATE TABLE IF NOT EXISTS quorum_keys (
+  quorum_id text PRIMARY KEY,
+  private_key text NOT NULL,
+  created_at bigint NOT NULL
+);
+
 -- User profiles (display name for UI only — receipts stay hash-anonymous by
 -- privacy design; no public attribution without a protocol change).
 CREATE TABLE IF NOT EXISTS user_profiles (

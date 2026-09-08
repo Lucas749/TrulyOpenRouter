@@ -53,7 +53,7 @@ export async function POST(req: Request) {
       display_name: `${name}-admins`,
     });
     // Server holds this key -> one-click approvals below. Pre-store orgs lack it (see quorum-keys.ts).
-    saveQuorumKey(quorum.id, privateKey);
+    await saveQuorumKey(quorum.id, privateKey);
     const org: any = await privyApi("POST", "/organizations", {
       display_name: name,
       default_key_quorum_id: quorum.id,

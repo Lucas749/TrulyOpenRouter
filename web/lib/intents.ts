@@ -63,7 +63,7 @@ export async function getIntent(intentId: string): Promise<IntentSummary> {
 
 export async function authorizeIntent(intentId: string, quorumId: string): Promise<IntentSummary> {
   const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
-  const privateKey = getQuorumKey(quorumId);
+  const privateKey = await getQuorumKey(quorumId);
   if (!privateKey) throw new Error(`no server-held key for quorum ${quorumId} (pre-store team or recreate)`);
   const intent: any = await getIntent(intentId);
   if (!intent?.request_details) throw new Error("intent has no request_details");
