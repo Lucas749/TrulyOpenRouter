@@ -172,6 +172,7 @@ export default function NetworkPage() {
                   <th className="px-4 py-3 font-medium">Model</th>
                   <th className="px-4 py-3 font-medium">Price/req</th>
                   <th className="px-4 py-3 font-medium">24h calls</th>
+                  <th className="px-4 py-3 font-medium">7d earned</th>
                   <th className="px-4 py-3 font-medium">Reliability</th>
                   <th className="px-4 py-3 font-medium">Model check</th>
                   <th className="px-4 py-3 font-medium">Region</th>
@@ -186,6 +187,7 @@ export default function NetworkPage() {
                       <td className="px-4 py-3"><span className="inline-flex items-center gap-1 rounded-full bg-[#F4F4F4] px-2 py-0.5 text-xs"><Cpu className="h-3 w-3" />{h.modelId}</span></td>
                       <td className="px-4 py-3 font-mono text-xs" title={`${h.pricePerReq} delivered units`}>{usdLabel(h.pricePerReq)}</td>
                       <td className="px-4 py-3 font-mono text-xs"><Activity className="mr-1 inline h-3.5 w-3.5" />{h.calls24h ?? "—"}</td>
+                      <td className="px-4 py-3 font-mono text-xs tabular-nums" title="metered credits, host keeps 90% onchain">{h.earnings7d === null || h.earnings7d === undefined ? "—" : `$${(Number(h.earnings7d) * 0.001).toFixed(2)}`}</td>
                       <td className="px-4 py-3 font-mono text-xs">{h.reliability === null || h.reliability === undefined ? "—" : `${(h.reliability * 100).toFixed(1)}%`}</td>
                       <td className="px-4 py-3 font-mono text-xs"><VerifyCell v={h.verification ?? null} /></td>
                       <td className="px-4 py-3 font-mono text-xs" title={h.geo ? "observed from host IP" : h.region ? "host self-report" : "unknown yet"}>{h.geo ?? h.region ?? "—"}</td>

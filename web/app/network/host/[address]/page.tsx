@@ -18,6 +18,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
   const [mock, toggleMock] = useMock();
   const [d, setD] = useState<any | null>(null);
   const [missing, setMissing] = useState(false);
+  const [wallet, setWallet] = useState<{ hbar: string; usdc: string } | null>(null);
   const [flagMsg, setFlagMsg] = useState<string | null>(null);
   const [flagBusy, setFlagBusy] = useState(false);
   const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
@@ -41,6 +42,23 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
       return;
     }
     load();
+    // Host wallet, straight from the mirror node: what this host actually holds.
+    (async () => {
+      try {
+        const a: any = await (
+          await fetch(`https://testnet.mirrornode.hedera.com/api/v1/accounts/${address}`)
+        ).json();
+        if (!a.account) return;
+        const t: any = await (
+          await fetch(`https://testnet.mirrornode.hedera.com/api/v1/accounts/${address}/tokens?token.id=0.0.429274`)
+        ).json();
+        const usdc = (t.tokens ?? [])[0];
+        setWallet({
+          hbar: `${(Number(a.balance?.balance ?? 0) / 1e8).toFixed(2)} HBAR`,
+          usdc: usdc ? `${(Number(usdc.balance) / 1e6).toFixed(3)} USDC` : "0 USDC",
+        });
+      } catch {}
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mock, address]);
 
@@ -119,6 +137,21 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
               )}
             </div>
             {flagMsg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{flagMsg}</p>}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[14px] border border-[#E5E5E0] p-4">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Wallet holds</div>
+                <div className="font-mono text-sm tabular-nums">{mock ? "12.400 HBAR · 3.210 USDC" : (wallet ? `${wallet.hbar} · ${wallet.usdc}` : "—")}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Earned · 7d</div>
+                <div className="font-mono text-sm tabular-nums">
+                  {mock ? "$1.24" : d.calls7d === undefined ? "—" : `$${(Number(d.earnings7d ?? 0) * 0.001).toFixed(2)} · ${d.calls7d} calls`}
+                </div>
+              </div>
+              <a href={accountUrl(address)} target="_blank" rel="noreferrer" className="ml-auto font-mono text-xs text-[#2563EB] underline">
+                wallet on HashScan ↗
+              </a>
+            </div>
             <div className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Model check</span>

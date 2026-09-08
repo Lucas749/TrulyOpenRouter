@@ -394,10 +394,16 @@ const ver = opts.verifier;
     const now = Date.now();
     const all = (await opts.receipts?.list(10_000)) ?? [];
     const day = 86_400_000;
+    const week = 7 * day;
     res.json({
       data: await Promise.all(
         [...seen.values()].map(async (h) => {
-          const success24h = all.filter((r) => r.host === h.address && now - r.ts < day).length;
+          const mine = all.filter((r) => r.host === h.address);
+          const success24h = mine.filter((r) => now - r.ts < day).length;
+          // 7d host earnings in credits (metered user cost; host keeps 90% onchain).
+          const mine7d = mine.filter((r) => now - r.ts < week);
+          const earnings7d = mine7d.reduce((a, r) => a + (Number(r.amountCredits ?? 0) || 0), 0);
+          const calls7d = mine7d.length;
           const [fail24h, region, geo, latencyMs, reliability, verification] = await Promise.all([
             opts.health?.fails24h(h.address) ?? 0,
             opts.meta?.regionOf(h.address) ?? null,
@@ -417,6 +423,8 @@ const ver = opts.verifier;
           active: h.active,
           lastHeartbeat: h.lastHeartbeat,
           calls24h: success24h,
+          calls7d,
+          earnings7d,
           fail24h,
           region, // self-reported slug (may be null)
           geo, // observed IP geo (see geo.ts), null until first resolve
@@ -549,6 +557,8 @@ const ver = opts.verifier;
     const now = Date.now();
     const mine = ((await opts.receipts?.list(10_000)) ?? []).filter((r) => r.host === found!.address);
     const success24h = mine.filter((r) => now - r.ts < 86_400_000).length;
+    const mine7d = mine.filter((r) => now - r.ts < 7 * 86_400_000);
+    const earnings7d = mine7d.reduce((a, r) => a + (Number((r as any).amountCredits ?? 0) || 0), 0);
     let earningsWei: string | null = null;
     if (opts.vaultAddress && opts.rpcUrl) {
       try {
@@ -584,6 +594,8 @@ const ver = opts.verifier;
       latencyMs: (await opts.health?.latencyMs(found.address)) ?? null,
       verification: (await opts.verifier?.verification(found.address)) ?? null,
       earningsWei,
+      calls7d: mine7d.length,
+      earnings7d,
       receipts: mine.slice(0, 20),
     });
   });
