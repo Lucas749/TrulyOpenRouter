@@ -22,13 +22,29 @@ export async function GET() {
 }
 
 /// @notice Full team setup in one call: quorum (server key, threshold 1) -> org -> wallet.
-/// Optional capWei attaches a spending-cap policy AT CREATION (creation is app-authed;
-/// later policy changes need quorum authorization signatures — roadmap, documented).
+/// Optional capUsd attaches a spending-cap policy AT CREATION in USD terms,
+/// converted to native (HBAR) wei at the indicative rate in lib/fx.ts — our
+/// chain's native token IS HBAR, so the policy covers HBAR sends by construction.
+/// (Legacy capWei passthrough kept for compat.) Creation is app-authed; later
+/// policy changes need quorum authorization signatures — roadmap, documented.
 export async function POST(req: Request) {
   try {
-    const { name, capWei } = (await req.json().catch(() => ({}))) as { name?: string; capWei?: string };
+    const { name, capWei, capUsd } = (await req.json().catch(() => ({}))) as {
+      name?: string;
+      capWei?: string;
+      capUsd?: number;
+    };
     if (!name || typeof name !== "string" || name.length > 64) {
       return NextResponse.json({ error: "name required (<=64 chars)" }, { status: 400 });
+    }
+    let cap = capWei;
+    if (capUsd !== undefined) {
+      const { usdToHbarWei } = await import("../../../../lib/fx");
+      try {
+        cap = usdToHbarWei(Number(capUsd));
+      } catch {
+        return NextResponse.json({ error: "capUsd must be a positive number" }, { status: 400 });
+      }
     }
     const { publicKey, privateKey } = newAuthKeypair();
     const quorum: any = await privyApi("POST", "/key_quorums", {
@@ -44,7 +60,7 @@ export async function POST(req: Request) {
     });
     let policy: any = null;
     const walletBody: any = { entity: { id: org.id, type: "organization" }, chain_type: "ethereum" };
-    if (capWei) {
+    if (cap) {
       policy = await privyApi("POST", "/policies", {
         version: "1.0",
         name: `${name}-cap`,
@@ -55,7 +71,7 @@ export async function POST(req: Request) {
             name: "cap-send",
             method: "eth_sendTransaction",
             action: "ALLOW",
-            conditions: [{ field_source: "ethereum_transaction", field: "value", operator: "lte", value: String(capWei) }],
+            conditions: [{ field_source: "ethereum_transaction", field: "value", operator: "lte", value: String(cap) }],
           },
         ],
       });

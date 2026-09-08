@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiError } from "../../lib/api-error";
+import { hbarWeiToHbar, usdToHbarWei } from "../../lib/fx";
 import OrgMembers from "./members";
 
 export interface TeamOrg {
@@ -29,7 +30,15 @@ export default function TeamOrgs({
 }) {
   const [orgs, setOrgs] = useState<TeamOrg[] | null>(null);
   const [name, setName] = useState("");
-  const [cap, setCap] = useState("0.5");
+  const [capUsd, setCapUsd] = useState("25");
+  const capPreview = (() => {
+    try {
+      const hbar = hbarWeiToHbar(usdToHbarWei(Number(capUsd)));
+      return `≈ ${hbar.toLocaleString("en-US", { maximumFractionDigits: 2 })} HBAR/tx`;
+    } catch {
+      return null;
+    }
+  })();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [created, setCreated] = useState<any | null>(null);
@@ -102,11 +111,11 @@ export default function TeamOrgs({
     setMsg(null);
     setCreated(null);
     try {
-      const capWei = cap.trim() ? String(BigInt(Math.round(Number(cap) * 1e6)) * BigInt(1e12)) : undefined;
+      // USD-termed cap → HBAR wei policy (native on our chain). Empty = no cap.
       const r = await fetch("/api/team/orgs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), ...(capWei ? { capWei } : {}) }),
+        body: JSON.stringify({ name: name.trim(), ...(capUsd.trim() ? { capUsd: Number(capUsd) } : {}) }),
       });
       const d: any = await r.json();
       if (!r.ok) throw new Error(apiError(d, r.status));
@@ -123,10 +132,13 @@ export default function TeamOrgs({
     <div className="flex flex-col gap-6">
       {!mock && (
         <>
-          <div className="flex gap-2">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" className="h-10 flex-[2] rounded-lg border border-black/10 px-3 text-sm" />
-            <input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="spending cap (ETH)" title="Spending-cap policy attached at creation (ETH)" className="h-10 flex-1 rounded-lg border border-black/10 px-3 font-mono text-sm" inputMode="decimal" />
-            <button onClick={create} disabled={busy || !name.trim()} className="h-10 rounded-full bg-black px-5 text-sm text-white disabled:opacity-40">{busy ? "creating…" : "Create team"}</button>
+          <div className="flex flex-col gap-1">
+            <div className="flex gap-2">
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" className="h-10 flex-[2] rounded-lg border border-black/10 px-3 text-sm" />
+              <input value={capUsd} onChange={(e) => setCapUsd(e.target.value)} placeholder="spending cap (USD)" title="Per-transaction spending-cap policy in USD, enforced in HBAR" className="h-10 flex-1 rounded-lg border border-black/10 px-3 font-mono text-sm" inputMode="decimal" />
+              <button onClick={create} disabled={busy || !name.trim()} className="h-10 rounded-full bg-black px-5 text-sm text-white disabled:opacity-40">{busy ? "creating…" : "Create team"}</button>
+            </div>
+            {capPreview && <span className="font-mono text-[11px] text-[#6E6E73]">cap {capPreview}, enforced onchain per transaction</span>}
           </div>
           {msg && <p className="m-0 font-mono text-xs text-[#B3261E]">{msg}</p>}
           {created && (
