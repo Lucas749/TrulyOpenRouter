@@ -305,23 +305,19 @@ const ver = opts.verifier;
       // mapping, else DEFAULT_PAYER (dev/test), else "dev" (fails closed on vault debit).
       const payer =
         (keyPrefix && budgetAddressFor(keyPrefix)) || process.env.DEFAULT_PAYER || "dev";
-      // "dev" = anonymous demo call: no wallet to debit, so it serves free and
-      // unsettled by design (receipt still proves what was served). Real users
-      // bring a key (budget account) or DEFAULT_PAYER; both settle normally.
-      const settled =
-        opts.settle && payer !== "dev"
-          ? await settleCall(
-              {
-                user: payer,
-                host,
-                promptTokens: tokensIn,
-                completionTokens: tokensOut,
-                // bytes32 link to the receipt: sha256 of the receipt id (ids are hex, not bytes).
-                receiptHash: receipt ? (`0x${sha256hex(receipt)}` as `0x${string}`) : (`0x${"00".repeat(32)}` as `0x${string}`),
-              },
-              opts.settle,
-            )
-          : { settled: false, amountCredits: 0n, hostShare: 0n };
+      const settled = opts.settle
+        ? await settleCall(
+            {
+              user: payer,
+              host,
+              promptTokens: tokensIn,
+              completionTokens: tokensOut,
+              // bytes32 link to the receipt: sha256 of the receipt id (ids are hex, not bytes).
+              receiptHash: receipt ? (`0x${sha256hex(receipt)}` as `0x${string}`) : (`0x${"00".repeat(32)}` as `0x${string}`),
+            },
+            opts.settle,
+          )
+        : { settled: false, amountCredits: 0n, hostShare: 0n };
       if (opts.receipts && receipt) {
         await opts.receipts.annotate(receipt, {
           amountCredits: String(settled.amountCredits),
@@ -338,7 +334,8 @@ const ver = opts.verifier;
           }
         });
       }
-      if (opts.settle && !settled.settled) {
+      if (opts.settle && !settled.settled && payer !== "dev") {
+        // "dev" = anonymous demo call with no wallet to debit: expected, not an error.
         console.error(`settle failed user=${payer} host=${host?.address} amount=${settled.amountCredits}: ${settled.error}`);
       }
       emit("settled", { receipt });
