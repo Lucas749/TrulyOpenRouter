@@ -23,3 +23,8 @@ export function usdToUsdcUnits(usd: number): string {
 export function hbarWeiToHbar(wei: string | number | bigint): number {
   return Number(wei) / 1e18;
 }
+
+/** HBAR wei -> indicative USD (same table, inverse direction). */
+export function hbarWeiToUsd(wei: string | number | bigint): number {
+  return hbarWeiToHbar(wei) * USD_PER_HBAR;
+}

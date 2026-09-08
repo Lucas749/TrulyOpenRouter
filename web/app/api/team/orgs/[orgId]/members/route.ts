@@ -90,8 +90,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       const updated = await setOrgDefault(orgId, Number(body.setDefault));
       return NextResponse.json({ defaultAllowanceCredits: updated.defaultAllowanceCredits ?? null });
     }
-    if (!body.member?.did || !body.member?.walletAddress || !body.signature || !body.message || !body.signerWallet) {
-      return NextResponse.json({ error: "member {did, walletAddress} + signature + message + signerWallet required" }, { status: 400 });
+    // did is optional: owners invite by email + wallet, and the did defaults to
+    // wallet:<address>. Login matching already works by wallet, so invited members
+    // just work when they log in — no Privy DID archaeology required.
+    const did = body.member?.did?.trim() || `wallet:${String(body.member?.walletAddress ?? "").toLowerCase()}`;
+    if (!body.member?.walletAddress || !body.signature || !body.message || !body.signerWallet) {
+      return NextResponse.json({ error: "member {walletAddress} + signature + message + signerWallet required" }, { status: 400 });
     }
     const rollback = async (did: string) => {
       try {
@@ -111,7 +115,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     try {
       signer = await verifyActionMessage(body.message, body.signature, "member-add", {
         orgId,
-        did: body.member.did,
+        did,
         wallet: body.member.walletAddress,
         role,
       });
@@ -129,7 +133,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     let m;
     try {
       m = await addMember(orgId, {
-        did: body.member.did,
+        did,
         email: body.member.email,
         walletAddress: body.member.walletAddress,
         role,

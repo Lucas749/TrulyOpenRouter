@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiError } from "../../lib/api-error";
-import { hbarWeiToHbar, usdToHbarWei } from "../../lib/fx";
+import { hbarWeiToHbar, hbarWeiToUsd, usdToHbarWei } from "../../lib/fx";
 import OrgMembers from "./members";
 
 export interface TeamOrg {
@@ -44,6 +44,7 @@ export default function TeamOrgs({
   const [created, setCreated] = useState<any | null>(null);
   const [intents, setIntents] = useState<Record<string, IntentState>>({});
   const [busyIntent, setBusyIntent] = useState<string | null>(null);
+  const [caps, setCaps] = useState<Record<string, string>>({});
 
   async function propose(walletId: string) {
     setBusyIntent(walletId);
@@ -105,6 +106,28 @@ export default function TeamOrgs({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mock]);
 
+  // Spending-cap policies in plain dollars (parsed from the Privy rule wei).
+  async function capFor(walletId: string): Promise<string | null> {
+    if (caps[walletId] !== undefined) return caps[walletId] || null;
+    try {
+      const d: any = await (await fetch(`/api/team/wallets/${walletId}/policies`)).json();
+      const rule = (d.policies ?? []).flatMap((p: any) => p.rules ?? []).find((r: any) => r?.conditions?.[0]?.value);
+      const usd = rule ? hbarWeiToUsd(rule.conditions[0].value) : NaN;
+      const label = Number.isFinite(usd) ? `spending cap $${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}/tx` : "";
+      setCaps((m) => ({ ...m, [walletId]: label }));
+      return label || null;
+    } catch {
+      setCaps((m) => ({ ...m, [walletId]: "" }));
+      return null;
+    }
+  }
+
+  useEffect(() => {
+    if (mock) return;
+    for (const o of orgs ?? []) for (const w of o.wallets ?? []) void capFor(w.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgs, mock]);
+
   async function create() {
     if (!name.trim()) return;
     setBusy(true);
@@ -157,7 +180,10 @@ export default function TeamOrgs({
             <div className="flex flex-wrap items-center gap-x-3 text-sm">
               <span className="font-medium">{o.display_name}</span>
               <span className="font-mono text-xs text-[#6E6E73]">{o.id}</span>
-              <span className="ml-auto font-mono text-[11px] text-[#8F8F8F]">quorum {o.default_key_quorum_id.slice(0, 10)}…</span>
+              <details className="ml-auto font-mono text-[11px] text-[#8F8F8F]">
+                <summary className="cursor-pointer underline">technical details</summary>
+                quorum {o.default_key_quorum_id} · {(o.wallets ?? []).map((w) => w.id).join(", ")}
+              </details>
             </div>
             <OrgMembers orgId={o.id} me={me} mock={mock} />
             {(o.wallets ?? []).map((w) => {
@@ -166,7 +192,7 @@ export default function TeamOrgs({
                 <div key={w.id} className="flex flex-col gap-2 rounded-lg bg-[#F7F7F5] p-3">
                   <div className="flex flex-wrap items-center gap-x-2 font-mono text-xs">
                     <span>{w.address.slice(0, 12)}…</span>
-                    <span className="text-[#6E6E73]">{w.policy_ids.length ? `${w.policy_ids.length} polic${w.policy_ids.length === 1 ? "y" : "ies"}` : "no policy"}</span>
+                    <span className="text-[#0B7A5D]">{caps[w.id] ? `✓ ${caps[w.id]}` : w.policy_ids.length ? "policy attached" : "no policy"}</span>
                     {!it ? (
                       <button onClick={() => propose(w.id)} disabled={busyIntent === w.id} className="ml-auto rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
                         {busyIntent === w.id ? "proposing…" : "Propose spend approval"}
@@ -179,7 +205,10 @@ export default function TeamOrgs({
                   </div>
                   {it?.intent_id && (
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-[11px] text-[#6E6E73]">intent {it.intent_id.slice(0, 12)}…</span>
+                      <details className="font-mono text-[11px] text-[#8F8F8F]">
+                        <summary className="cursor-pointer underline">intent id</summary>
+                        {it.intent_id}
+                      </details>
                       {it.status === "pending" && (
                         <button onClick={() => approve(w.id, o.default_key_quorum_id)} disabled={busyIntent === w.id} className="rounded-full border border-black/10 px-3 py-1 text-[11px] disabled:opacity-40">
                           {busyIntent === w.id ? "approving…" : "Approve (server key)"}

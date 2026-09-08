@@ -99,6 +99,21 @@ describe("members routes", () => {
     expect(denied.status).toBe(403);
   });
 
+  it("invites by wallet alone (did defaults, login matches by wallet)", async () => {
+    const first = await signedAdd("did:owner", OWNER.address, "owner");
+    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
+    const expires = Date.now() + 300_000;
+    const did = `wallet:${MEMBER.address.toLowerCase()}`;
+    const msg = memberActionMessage("member-add", { orgId: ORG, did, wallet: MEMBER.address, role: "member" }, expires);
+    const sig = await OWNER.signMessage({ message: msg });
+    const r = await addMemberRoute(
+      new Request("http://x", { method: "POST", body: JSON.stringify({ member: { walletAddress: MEMBER.address }, signature: sig, message: msg, signerWallet: OWNER.address }) }),
+      { params: Promise.resolve({ orgId: ORG }) },
+    );
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).member.did).toBe(did);
+  });
+
   it("edits allowance (sync-first) and removes members", async () => {
     await ensureOrg(ORG);
     const first = await signedAdd("did:owner", OWNER.address, "owner");

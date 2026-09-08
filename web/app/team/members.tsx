@@ -160,10 +160,13 @@ export default function OrgMembers({
   }
 
   async function invite() {
-    if (!invDid.trim() || !myWallet) return;
+    if (!invWallet.trim() || !myWallet) return;
+    // DID optional: defaults to wallet:<address>, and login matches by wallet,
+    // so invitees just work when they log in. No DID archaeology required.
+    const did = invDid.trim() || `wallet:${invWallet.trim().toLowerCase()}`;
     const role = (members?.length ?? 0) === 0 ? "owner" : invRole; // first member founds as owner
     const expires = Date.now() + 300_000;
-    const fields: Record<string, string> = { orgId, did: invDid.trim(), wallet: invWallet.trim(), role };
+    const fields: Record<string, string> = { orgId, did, wallet: invWallet.trim(), role };
     const message = memberActionMessage("member-add", fields, expires);
     let signature: string;
     try {
@@ -174,7 +177,7 @@ export default function OrgMembers({
     }
     const cap = invCap.trim() ? Number(invCap) : undefined;
     const d = await post(`/api/team/orgs/${orgId}/members`, {
-      member: { did: invDid.trim(), walletAddress: invWallet.trim() || null, email: invEmail.trim() || null, role, allowanceCredits: cap },
+      member: { did, walletAddress: invWallet.trim(), email: invEmail.trim() || null, role, allowanceCredits: cap },
       signature,
       message,
       signerWallet: myWallet,
@@ -366,19 +369,19 @@ export default function OrgMembers({
 
       {isOwner && !mock && (
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-black/15 p-3">
-          <span className="text-xs font-medium">Invite member</span>
+          <span className="text-xs font-medium">Invite member — email + wallet is enough</span>
           <div className="flex flex-wrap gap-2">
-            <input value={invDid} onChange={(e) => setInvDid(e.target.value)} placeholder="Privy DID (did:privy:…)" className="h-8 min-w-[200px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
-            <input value={invWallet} onChange={(e) => setInvWallet(e.target.value)} placeholder="wallet 0x… (for signing)" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
+            <input value={invEmail} onChange={(e) => setInvEmail(e.target.value)} placeholder="email" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 text-xs" />
+            <input value={invWallet} onChange={(e) => setInvWallet(e.target.value)} placeholder="wallet 0x…" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
           </div>
           <div className="flex flex-wrap gap-2">
-            <input value={invEmail} onChange={(e) => setInvEmail(e.target.value)} placeholder="email (label only)" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 text-xs" />
+            <input value={invDid} onChange={(e) => setInvDid(e.target.value)} placeholder="Privy DID, optional (defaults to wallet)" className="h-8 min-w-[200px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
             <select value={invRole} onChange={(e) => setInvRole(e.target.value as "owner" | "member")} className="h-8 rounded-lg border border-black/10 bg-white px-2 text-xs">
               <option value="member">Member</option>
               <option value="owner">Owner</option>
             </select>
             <input value={invCap} onChange={(e) => setInvCap(e.target.value)} placeholder="cap, empty = default" className="h-8 w-36 rounded-lg border border-black/10 px-2.5 font-mono text-xs" inputMode="numeric" />
-            <button onClick={invite} disabled={busy === "invite" || !invDid.trim() || !myWallet} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
+            <button onClick={invite} disabled={busy === "invite" || !invWallet.trim() || !myWallet} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
               {busy === "invite" ? "signing…" : (members?.length ?? 0) === 0 ? "Add founding owner" : "Invite"}
             </button>
           </div>
