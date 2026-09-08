@@ -29,6 +29,7 @@ export default function AccountPage() {
   const [credits, setCredits] = useState<string | null>(null);
   const [reqCount, setReqCount] = useState<number | null>(null);
   const [paidUsd, setPaidUsd] = useState<number | null>(null);
+  const [recentCalls, setRecentCalls] = useState<any[]>([]);
   const [vaultTxs, setVaultTxs] = useState<VaultTx[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -71,6 +72,7 @@ export default function AccountPage() {
         const mine: any[] = r.data ?? [];
         setReqCount(mine.length);
         setPaidUsd(mine.reduce((a: number, x: any) => a + Number(x.amountCredits ?? 0) * 0.001, 0));
+        setRecentCalls(mine.slice(0, 5));
       } catch {
         setReqCount(null);
         setPaidUsd(null);
@@ -118,6 +120,15 @@ export default function AccountPage() {
           </div>
         ) : (
           <>
+            <div className="flex flex-wrap items-center gap-3">
+              {credits === null ? (
+                <span className="font-mono text-xs text-[#8F8F8F]">subscription status unknown</span>
+              ) : Number(credits) > 0 ? (
+                <span className="rounded-full bg-[#E7F5EE] px-3 py-1 text-xs font-medium text-[#0B7A5D]">Subscription active · {credits} credits left</span>
+              ) : (
+                <span className="rounded-full bg-[#FDF3E2] px-3 py-1 text-xs font-medium text-[#8A5300]">Out of credits — top up to keep chatting settled</span>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               {[
                 ["REQUESTS", reqCount === null ? "—" : String(reqCount)],
@@ -147,6 +158,30 @@ export default function AccountPage() {
                   <span className="text-[11px] text-[#6E6E73]">No Hedera account yet, fund this address from <a href="https://faucet.hedera.com" target="_blank" rel="noreferrer" className="text-[#2563EB] underline">faucet.hedera.com</a> to create it.</span>
                 )}
               </div>
+            {recentCalls.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Recent calls</span>
+                {recentCalls.map((r: any) => (
+                  <div key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-[#F7F7F5] px-3 py-2">
+                    <span className="font-mono text-xs">{r.modelId ?? r.model ?? "chat"}</span>
+                    <span className="font-mono text-[11px] text-[#6E6E73]">{r.ts ? new Date(Number(r.ts)).toLocaleString("en-US") : ""}</span>
+                    {r.settled === false ? (
+                      <span className="font-mono text-[11px] text-[#8A5300]">demo</span>
+                    ) : (
+                      <span className="font-mono text-[11px] text-[#0B7A5D]">settled</span>
+                    )}
+                    <a
+                      href={r.debitTx ? `https://hashscan.io/testnet/transaction/${r.debitTx}` : `https://hashscan.io/testnet/topic/0.0.10379640`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-auto font-mono text-[11px] text-[#2563EB] underline"
+                    >
+                      {String(r.id).slice(0, 12)}… ↗
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex flex-col gap-2">
               <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Last onchain payments</span>
               {vaultTxs === null ? (
