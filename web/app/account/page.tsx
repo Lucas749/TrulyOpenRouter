@@ -34,6 +34,7 @@ export default function AccountPage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const address = (user?.wallet?.address ?? wallets[0]?.address) as `0x${string}` | undefined;
+  const [hederaId, setHederaId] = useState<string | null>(null);
 
   async function refund() {
     const w = wallets[0];
@@ -74,6 +75,11 @@ export default function AccountPage() {
         setReqCount(null);
         setPaidUsd(null);
       }
+      // Hedera account id for this EVM key (mirror lookup; null until funded).
+      try {
+        const a: any = await (await fetch(`${MIRROR}/api/v1/accounts/${address}`)).json();
+        if (a.account) setHederaId(String(a.account));
+      } catch {}
       // Last onchain vault payments (mirror node contract results, newest first).
       try {
         const d: any = await (
@@ -125,11 +131,22 @@ export default function AccountPage() {
                 </div>
               ))}
             </div>
-            <div className="flex flex-col gap-1 rounded-[14px] border border-[#E5E5E0] p-4">
-              <span className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Wallets</span>
-              <span className="break-all font-mono text-xs">EVM {address ?? "—"}</span>
-              <span className="text-[11px] text-[#6E6E73]">Same key on Hedera testnet (ECDSA). Fund it with testnet HBAR, then subscribe.</span>
-            </div>
+              <div className="flex flex-col gap-1.5 rounded-[14px] border border-[#E5E5E0] p-4">
+                <span className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Wallets</span>
+                <span className="break-all font-mono text-xs">EVM {address ?? "—"}</span>
+                {hederaId ? (
+                  <a
+                    href={`https://hashscan.io/testnet/account/${hederaId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono text-xs text-[#2563EB] underline"
+                  >
+                    Hedera {hederaId} ↗
+                  </a>
+                ) : (
+                  <span className="text-[11px] text-[#6E6E73]">No Hedera account yet, fund this address from <a href="https://faucet.hedera.com" target="_blank" rel="noreferrer" className="text-[#2563EB] underline">faucet.hedera.com</a> to create it.</span>
+                )}
+              </div>
             <div className="flex flex-col gap-2">
               <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Last onchain payments</span>
               {vaultTxs === null ? (

@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { useCreateWallet, usePrivy } from "@privy-io/react-auth";
+import { useEffect, useRef, useState } from "react";
+import { useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
 
 export default function LoginButton() {
   const { ready, authenticated, user, login } = usePrivy();
+  const { wallets } = useWallets();
   const { createWallet } = useCreateWallet();
   const [stuck, setStuck] = useState(false);
   const [creating, setCreating] = useState(false);
+  const autoRef = useRef(false);
 
   // Privy usually readies in ~1s. Past 10s it never will this load
   // (blocked scripts, shields, or bad origin config) — say so plainly.
@@ -17,6 +19,20 @@ export default function LoginButton() {
     const t = setTimeout(() => setStuck(true), 10000);
     return () => clearTimeout(t);
   }, [ready]);
+
+  // No click-to-create: the moment login lands without a wallet, provision one.
+  // Guarded against double-fire (StrictMode + one header instance per page).
+  const walletAddr = user?.wallet?.address ?? wallets[0]?.address;
+  useEffect(() => {
+    if (!ready || !authenticated || walletAddr || autoRef.current) return;
+    autoRef.current = true;
+    setCreating(true);
+    createWallet()
+      .catch(() => {
+        autoRef.current = false; // let the user retry manually
+      })
+      .finally(() => setCreating(false));
+  }, [ready, authenticated, walletAddr, createWallet]);
 
   if (!ready) {
     return (
@@ -31,23 +47,23 @@ export default function LoginButton() {
     );
   }
   if (authenticated) {
-    const addr = user?.wallet?.address;
+    const addr = walletAddr;
     if (!addr) {
-      // Logged in but no embedded wallet yet: Privy doesn't always auto-create.
-      // One click provisions it (the old pill just waited here forever).
+      // Auto-provision runs above; this is only visible mid-flight or after a
+      // failure (click retries). Never address slices of undefined.
       return (
         <button
           disabled={creating}
-          onClick={async () => {
+          onClick={() => {
+            autoRef.current = false;
             setCreating(true);
-            try {
-              await createWallet();
-            } catch {}
-            setCreating(false);
+            createWallet()
+              .catch(() => {})
+              .finally(() => setCreating(false));
           }}
-          className="h-10 rounded-full bg-black px-5 text-sm text-white hover:bg-zinc-800 disabled:opacity-50"
+          className="h-10 rounded-full border border-black/10 px-5 text-sm text-zinc-500 disabled:opacity-70"
         >
-          {creating ? "creating wallet…" : "Create wallet"}
+          {creating ? "creating wallet…" : "retry wallet"}
         </button>
       );
     }
