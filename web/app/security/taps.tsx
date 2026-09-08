@@ -211,7 +211,7 @@ export default function TapQueue({ mock }: { mock: boolean }) {
                 <div className="rounded-lg bg-[#F7F7F5] p-3">
                   <p className="m-0 mb-2 font-mono text-xs">
                     {t.deviceInstruction ??
-                      `In Ledger Live (HBAR app): send exactly ${formatHbar(t.approveAmountTinybar)} HBAR from ${tapAccount ?? "your tap account"} to yourself, then come back and hit Verify`}
+                      `In Ledger Live (HBAR app): send exactly ${formatHbar(t.approveAmountTinybar)} HBAR from ${tapAccount || "your tap account (operator hasn't configured it yet)"} to yourself, then come back and hit Verify`}
                   </p>
                   <CopyButton
                     text={t.deviceInstruction ?? `send exactly ${formatHbar(t.approveAmountTinybar)} HBAR to yourself`}

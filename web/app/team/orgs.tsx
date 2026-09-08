@@ -125,7 +125,7 @@ export default function TeamOrgs({
         <>
           <div className="flex gap-2">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" className="h-10 flex-[2] rounded-lg border border-black/10 px-3 text-sm" />
-            <input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="cap ETH" className="h-10 flex-1 rounded-lg border border-black/10 px-3 font-mono text-sm" inputMode="decimal" />
+            <input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="spending cap (ETH)" title="Spending-cap policy attached at creation (ETH)" className="h-10 flex-1 rounded-lg border border-black/10 px-3 font-mono text-sm" inputMode="decimal" />
             <button onClick={create} disabled={busy || !name.trim()} className="h-10 rounded-full bg-black px-5 text-sm text-white disabled:opacity-40">{busy ? "creating…" : "Create team"}</button>
           </div>
           {msg && <p className="m-0 font-mono text-xs text-[#B3261E]">{msg}</p>}
