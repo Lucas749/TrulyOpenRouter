@@ -751,10 +751,18 @@ const ver = opts.verifier;
         return res.status(501).json({ error: { message: "RPC_URL + OPERATOR_KEY required", type: "unavailable" } });
       }
       const { privateKeyToAccount } = await import("viem/accounts");
+      const { defineChain } = await import("viem");
+      const chain = defineChain({
+        id: 296,
+        name: "Hedera Testnet",
+        network: "hedera-testnet",
+        nativeCurrency: { decimals: 18, name: "HBAR", symbol: "HBAR" },
+        rpcUrls: { default: { http: [rpcUrl] } },
+        testnet: true,
+      });
       const account = privateKeyToAccount(operatorKey as `0x${string}`);
-      const wallet = createWalletClient({ account, transport: http(rpcUrl) });
-      // chainId auto-detected from RPC (viem eth_chainId); explicit undefined satisfies the type.
-      const hash = await wallet.sendTransaction({ to: address as `0x${string}`, value: 50000000n, chain: undefined });
+      const wallet = createWalletClient({ account, chain, transport: http(rpcUrl) });
+      const hash = await wallet.sendTransaction({ to: address as `0x${string}`, value: 50000000n, chain });
       res.json({ tx: hash, account: null, note: "account creates on confirmation — refresh in ~10s" });
     } catch (e: any) {
       res.status(502).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "upstream_error" } });
