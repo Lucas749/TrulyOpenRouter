@@ -17,6 +17,9 @@ describe("org rules", () => {
     expect(await s.get("o1")).toMatchObject({ dailyCapCredits: 100 });
     expect(await s.orgsForHandle("key:abc")).toHaveLength(1);
     expect(await s.orgsForHandle("wallet:nobody")).toHaveLength(0);
+    // handles normalize case at write: checksummed wallets still match
+    await s.set({ orgId: "o2", dailyCapCredits: null, allowedModels: null, handles: ["wallet:0xABCDEF"] });
+    expect(await s.orgsForHandle("wallet:0xabcdef")).toHaveLength(1);
     await expect(s.set({ orgId: "", dailyCapCredits: null, allowedModels: null, handles: [] })).rejects.toThrow("orgId required");
   });
 

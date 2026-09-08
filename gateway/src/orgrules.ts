@@ -21,7 +21,8 @@ const clean = (r: OrgRule): OrgRule => ({
   orgId: r.orgId,
   dailyCapCredits: r.dailyCapCredits ?? null,
   allowedModels: r.allowedModels ?? null,
-  handles: r.handles ?? [],
+  // Handles compare case-insensitively downstream — normalize once, here.
+  handles: (r.handles ?? []).map((h) => h.toLowerCase()),
 });
 
 export class MemoryOrgRules implements OrgRuleStore {
