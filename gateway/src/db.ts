@@ -8,13 +8,17 @@ import { Pool } from "pg";
 let pool: Pool | null = null;
 let schemaDone = false;
 
+export function connectionString(): string | undefined {
+  return process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
+}
+
 export function dbEnabled(): boolean {
-  return !!process.env.DATABASE_URL;
+  return !!connectionString();
 }
 
 export function db(): Pool {
   if (!pool) {
-    pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+    pool = new Pool({ connectionString: connectionString(), max: 5 });
     pool.on("error", (e) => console.error(`pg pool: ${String(e?.message ?? e).slice(0, 160)}`));
   }
   return pool;
