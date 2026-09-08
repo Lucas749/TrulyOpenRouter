@@ -106,7 +106,7 @@ export const MOCK_TEAM_ORG = { id: "org_mock_acme", defaultAllowanceCredits: 300
 export const MOCK_TEAM_MEMBERS: MockTeamMember[] = [
   { did: "did:privy:owner1", email: "founder@acme.test", walletAddress: "0xAbC0000000000000000000000000000000000001", role: "owner", keyPrefix: "deadbeef01", allowanceCredits: null, effectiveCredits: 300, spentCredits: 41, createdAt: 1756680000000 },
   { did: "did:privy:ana7", email: "ana@acme.test", walletAddress: "0xAbC0000000000000000000000000000000000002", role: "member", keyPrefix: "deadbeef02", allowanceCredits: null, effectiveCredits: 300, spentCredits: 262, createdAt: 1756683600000 },
-  { did: "did:privy:ben3", email: "ben@acme.test", walletAddress: "0xAbC0000000000000000000000000000000000003", role: "member", keyPrefix: "deadbeef03", allowanceCredits: 120, effectiveCredits: 120, spentCredits: 120, createdAt: 1756687200000 },
+  { did: "did:privy:ben3", email: "ben@acme.test", walletAddress: "0xAbC0000000000000000000000000000000000003", role: "manager", keyPrefix: "deadbeef03", allowanceCredits: 120, effectiveCredits: 120, spentCredits: 120, createdAt: 1756687200000 },
   { did: "did:privy:cat9", email: "cat@acme.test", walletAddress: null, role: "member", keyPrefix: null, allowanceCredits: null, effectiveCredits: 300, spentCredits: null, createdAt: 1756690800000 },
 ];
 

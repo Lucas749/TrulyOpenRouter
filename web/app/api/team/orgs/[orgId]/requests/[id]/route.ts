@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { approvalMessage, decideRequest, getMember, getOrgMeta, getRequest } from "../../../../../../../lib/members";
+import { approvalMessage, decideRequest, getMember, getRequest, memberByWallet, roleRank } from "../../../../../../../lib/members";
 import { syncCap } from "../../../../../../../lib/gateway-admin";
 
-// POST: owner decides. Signed by the OWNER's wallet over the canonical decision
-// message (useSignMessage); the signature + recovered signer are stored on the
-// request as the audit trail, then the quorum intent path executes.
+// POST: owner/manager decides. Signed by the decider's wallet over the canonical
+// decision message (useSignMessage); the signature + recovered signer are stored
+// on the request as the audit trail, then the quorum intent path executes.
 export async function POST(req: Request, { params }: { params: Promise<{ orgId: string; id: string }> }) {
   try {
     const { orgId, id } = await params;
@@ -19,9 +19,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     }
     const r = await getRequest(id);
     if (!r || r.orgId !== orgId) return NextResponse.json({ error: "request not found" }, { status: 404 });
-    const meta = await getOrgMeta(orgId);
-    const owner = meta?.members.find((m) => m.role === "owner" && m.status === "active" && m.walletAddress.toLowerCase() === String(body.signerWallet).toLowerCase());
-    if (!owner) return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
+    const decider = await memberByWallet(orgId, String(body.signerWallet));
+    if (!decider || roleRank(decider.role) < 1) {
+      return NextResponse.json({ error: "signer is not an owner or manager" }, { status: 403 });
+    }
+    const owner = decider;
     // Rebuild the expected message server-side: the signature must bind THIS decision.
     const expected = approvalMessage(r, body.decision, Number((body.message.match(/^expires: (\d+)$/m) ?? [])[1]));
     if (body.message !== expected) {

@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
-import { getMember, getOrgMeta, removeMember, setMemberAllowance, setMemberRole, verifyActionMessage } from "../../../../../../../lib/members";
-import type { Member } from "../../../../../../../lib/members";
+import { getMember, memberByWallet, removeMember, roleRank, setMemberAllowance, setMemberRole, verifyActionMessage } from "../../../../../../../lib/members";
+import type { Member, MemberRole } from "../../../../../../../lib/members";
 import { clearCap, syncCap } from "../../../../../../../lib/gateway-admin";
 
-async function requireOwner(
+/// @notice Rank-gated authorization: minRank 2 = owner-only (roles, removal),
+/// minRank 1 = owner + manager (allowances). Returns the acting member.
+async function requireMinRole(
   orgId: string,
   body: { signature?: string; message?: string; signerWallet?: string },
   bind: Record<string, string>,
   action: string,
-): Promise<{ owner: Member } | { error: NextResponse }> {
+  minRank: number,
+): Promise<{ member: Member } | { error: NextResponse }> {
   if (!body.signature || !body.message || !body.signerWallet) {
     return { error: NextResponse.json({ error: "signature + message + signerWallet required" }, { status: 400 }) };
   }
@@ -18,13 +21,25 @@ async function requireOwner(
   } catch (e: any) {
     return { error: NextResponse.json({ error: `bad signature: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 401 }) };
   }
-  const meta = await getOrgMeta(orgId);
-  const owner = meta?.members.find((m) => m.role === "owner" && m.status === "active" && m.walletAddress.toLowerCase() === signer.toLowerCase());
-  if (!owner) return { error: NextResponse.json({ error: "signer is not an active owner" }, { status: 403 }) };
-  return { owner };
+  const member = await memberByWallet(orgId, signer);
+  if (!member || roleRank(member.role) < minRank) {
+    return { error: NextResponse.json({ error: minRank >= 2 ? "signer is not an active owner" : "signer is not an owner or manager" }, { status: 403 }) };
+  }
+  return { member };
 }
 
-// PATCH: owner sets allowance and/or role. Wallet-signed; synced to gateway enforcement.
+async function requireOwner(
+  orgId: string,
+  body: { signature?: string; message?: string; signerWallet?: string },
+  bind: Record<string, string>,
+  action: string,
+): Promise<{ owner: Member } | { error: NextResponse }> {
+  const r = await requireMinRole(orgId, body, bind, action, 2);
+  return "error" in r ? r : { owner: r.member };
+}
+
+// PATCH: owner+manager sets allowance; owner-only sets role. Wallet-signed;
+// allowance changes sync to gateway enforcement first.
 export async function PATCH(req: Request, { params }: { params: Promise<{ orgId: string; did: string }> }): Promise<Response> {
   try {
     const { orgId, did } = await params;
@@ -42,12 +57,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
     if (body.allowanceCredits !== undefined && body.allowanceCredits !== null && (!Number.isFinite(body.allowanceCredits) || body.allowanceCredits < 0)) {
       return NextResponse.json({ error: "allowanceCredits must be a non-negative number or null (inherit)" }, { status: 400 });
     }
-    if (body.role !== undefined && body.role !== "owner" && body.role !== "member") {
-      return NextResponse.json({ error: "role must be owner|member" }, { status: 400 });
+    if (body.role !== undefined && body.role !== "owner" && body.role !== "manager" && body.role !== "member") {
+      return NextResponse.json({ error: "role must be owner|manager|member" }, { status: 400 });
     }
     const target = await getMember(orgId, targetDid);
     if (!target) return NextResponse.json({ error: "member not found" }, { status: 404 });
-    const authed = await requireOwner(orgId, body, { orgId, did: targetDid }, "member-set");
+    // Role changes are owner-only; allowance changes are owner+manager.
+    const authed = body.role !== undefined
+      ? await requireOwner(orgId, body, { orgId, did: targetDid }, "member-set")
+      : await requireMinRole(orgId, body, { orgId, did: targetDid }, "member-set", 1);
     if ("error" in authed) return authed.error;
     // Role changes apply locally (no gateway surface); allowance changes sync first.
     // null = inherit org default -> clear any gateway override so nothing stale enforces.
@@ -63,7 +81,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
     if (body.allowanceCredits !== undefined) await setMemberAllowance(orgId, targetDid, body.allowanceCredits ?? undefined);
     if (body.role) {
       try {
-        await setMemberRole(orgId, targetDid, body.role as "owner" | "member");
+        await setMemberRole(orgId, targetDid, body.role as MemberRole);
       } catch (e: any) {
         return NextResponse.json({ error: String(e?.message ?? e).slice(0, 160) }, { status: 409 });
       }

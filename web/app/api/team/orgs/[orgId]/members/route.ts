@@ -4,8 +4,10 @@ import {
   effectiveAllowance,
   ensureOrg,
   getOrgMeta,
+  memberByWallet,
   periodStartFor,
   removeMember,
+  roleRank,
   setOrgDefault,
   verifyActionMessage,
 } from "../../../../../../lib/members";
@@ -109,8 +111,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     const owners = meta.members.filter((m) => m.role === "owner" && m.status === "active");
     const bootstrapping = owners.length === 0;
     // Bootstrap: first member claims founding ownership (role forced, locked after).
-    // Otherwise the signer must be an active owner.
-    const role = bootstrapping ? "owner" : body.member.role === "owner" ? "owner" : "member";
+    // Otherwise the signer needs rank 1+ (manager) and can only grant roles at or
+    // below their own — managers can't mint owners.
+    const requested = body.member.role === "owner" || body.member.role === "manager" ? body.member.role : "member";
+    const role = bootstrapping ? "owner" : requested;
     let signer: string;
     try {
       signer = await verifyActionMessage(body.message, body.signature, "member-add", {
@@ -127,8 +131,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       if (signer.toLowerCase() !== String(body.member.walletAddress).toLowerCase()) {
         return NextResponse.json({ error: "signer must match the registered wallet" }, { status: 403 });
       }
-    } else if (!owners.some((o) => o.walletAddress.toLowerCase() === signer.toLowerCase())) {
-      return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
+    } else {
+      const authed = await memberByWallet(orgId, signer);
+      if (!authed || roleRank(authed.role) < 1) {
+        return NextResponse.json({ error: "signer is not an owner or manager" }, { status: 403 });
+      }
+      if (roleRank(requested) > roleRank(authed.role)) {
+        return NextResponse.json({ error: "cannot grant a role above your own" }, { status: 403 });
+      }
     }
     let m;
     try {

@@ -16,7 +16,7 @@ interface Member {
   did: string;
   email: string | null;
   walletAddress: string | null;
-  role: "owner" | "member";
+  role: "owner" | "manager" | "member";
   keyPrefix: string | null;
   allowanceCredits: number | null;
   effectiveCredits: number | null; // null = unlimited
@@ -51,12 +51,22 @@ function age(ts: number): string {
 }
 
 function RoleChip({ role }: { role: string }) {
-  return role === "owner" ? (
-    <span className="rounded-full bg-black px-2.5 py-0.5 text-[11px] text-white">Owner</span>
-  ) : (
-    <span className="rounded-full border border-black/15 px-2.5 py-0.5 text-[11px] text-[#5D5D5D]">Member</span>
-  );
+  if (role === "owner") {
+    return <span className="rounded-full bg-black px-2.5 py-0.5 text-[11px] text-white">Owner</span>;
+  }
+  if (role === "manager") {
+    return <span className="rounded-full bg-[#E7F5EE] px-2.5 py-0.5 text-[11px] text-[#0B7A5D]">Manager</span>;
+  }
+  return <span className="rounded-full border border-black/15 px-2.5 py-0.5 text-[11px] text-[#5D5D5D]">Member</span>;
 }
+
+// Prescribed roles (server-enforced, see lib/members.ts):
+// Owner = everything · Manager = invite + allowances + approvals (no roles, no removals, no defaults) · Member = spend + request.
+const ROLE_HELP: Record<string, string> = {
+  owner: "everything, incl. managing owners",
+  manager: "invite, allowances, approvals",
+  member: "spend within cap, request increases",
+};
 
 function SpendBar({ spend }: { spend: { used: number; cap: number | null } | null }) {
   if (!spend) return <span className="font-mono text-xs text-[#8F8F8F]">—</span>;
@@ -95,7 +105,7 @@ export default function OrgMembers({
   const [invDid, setInvDid] = useState("");
   const [invWallet, setInvWallet] = useState("");
   const [invEmail, setInvEmail] = useState("");
-  const [invRole, setInvRole] = useState<"owner" | "member">("member");
+  const [invRole, setInvRole] = useState<"owner" | "manager" | "member">("member");
   const [invCap, setInvCap] = useState("");
   // per-row edit
   const [editDid, setEditDid] = useState<string | null>(null);
@@ -135,6 +145,8 @@ export default function OrgMembers({
     (m) => m.role === "owner" && (m.did === me?.did || sameWallet(m.walletAddress, me?.wallet)),
   );
   const myMembership = members?.find((m) => m.did === me?.did || sameWallet(m.walletAddress, me?.wallet)) ?? null;
+  // Managers share invite / cap / inbox powers; removal, defaults, and roles stay owner-only.
+  const canManage = isOwner || myMembership?.role === "manager";
   const myWallet = myMembership?.walletAddress ?? me?.wallet ?? null;
 
   async function sign(msg: string): Promise<string> {
@@ -329,7 +341,7 @@ export default function OrgMembers({
               {m.walletAddress && <span>{shortId(m.walletAddress, 10)}</span>}
             </div>
             <div className="pl-[38px]"><SpendBar spend={toSpend(m)} /></div>
-            {isOwner && !mock && (
+            {canManage && !mock && (
               <div className="flex flex-wrap items-center gap-2 pl-[38px]">
                 {editDid === m.did ? (
                   <>
@@ -346,7 +358,9 @@ export default function OrgMembers({
                 ) : (
                   <>
                     <button onClick={() => { setEditDid(m.did); setEditCap(m.allowanceCredits === null ? "" : String(m.allowanceCredits)); setConfirmRm(null); }} className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px]">Edit cap</button>
-                    <button onClick={() => { setConfirmRm(m.did); setEditDid(null); }} className="text-[11px] text-[#6E6E73] underline">Remove</button>
+                    {isOwner && (
+                      <button onClick={() => { setConfirmRm(m.did); setEditDid(null); }} className="text-[11px] text-[#6E6E73] underline">Remove</button>
+                    )}
                   </>
                 )}
               </div>
@@ -367,7 +381,7 @@ export default function OrgMembers({
         </div>
       )}
 
-      {isOwner && !mock && (
+      {canManage && !mock && (
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-black/15 p-3">
           <span className="text-xs font-medium">Invite member — email + wallet is enough</span>
           <div className="flex flex-wrap gap-2">
@@ -376,9 +390,10 @@ export default function OrgMembers({
           </div>
           <div className="flex flex-wrap gap-2">
             <input value={invDid} onChange={(e) => setInvDid(e.target.value)} placeholder="Privy DID, optional (defaults to wallet)" className="h-8 min-w-[200px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
-            <select value={invRole} onChange={(e) => setInvRole(e.target.value as "owner" | "member")} className="h-8 rounded-lg border border-black/10 bg-white px-2 text-xs">
-              <option value="member">Member</option>
-              <option value="owner">Owner</option>
+            <select value={invRole} onChange={(e) => setInvRole(e.target.value as "owner" | "manager" | "member")} title={ROLE_HELP[invRole]} className="h-8 rounded-lg border border-black/10 bg-white px-2 text-xs">
+              <option value="member" title={ROLE_HELP.member}>Member</option>
+              <option value="manager" title={ROLE_HELP.manager}>Manager</option>
+              <option value="owner" title={ROLE_HELP.owner}>Owner</option>
             </select>
             <input value={invCap} onChange={(e) => setInvCap(e.target.value)} placeholder="cap, empty = default" className="h-8 w-36 rounded-lg border border-black/10 px-2.5 font-mono text-xs" inputMode="numeric" />
             <button onClick={invite} disabled={busy === "invite" || !invWallet.trim() || !myWallet} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
@@ -408,7 +423,7 @@ export default function OrgMembers({
               <span className="font-mono text-xs">{shortId(r.memberDid, 16)}</span>
               <span className="font-mono text-xs font-medium tabular-nums">→ {r.amountCredits} credits</span>
               <span className="font-mono text-[11px] text-[#8A5300]">{age(r.createdAt)}</span>
-              {isOwner && !mock ? (
+              {canManage && !mock ? (
                 <span className="ml-auto flex gap-2">
                   <button onClick={() => decide(r, "approve")} disabled={busy === `decide-${r.id}`} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
                     {busy === `decide-${r.id}` ? "signing…" : "Approve"}

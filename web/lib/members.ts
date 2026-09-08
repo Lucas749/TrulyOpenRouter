@@ -10,14 +10,24 @@ import { db, dbEnabled, ensureSchema } from "./db";
 
 // --- Types -----------------------------------------------------------------
 
-export type MemberRole = "owner" | "member";
+// Prescoped roles (prescribed, enforced server-side everywhere below):
+// - owner: everything, incl. managing owners, removing anyone, org defaults.
+// - manager: invite members/managers, set allowances, decide increases.
+//   Cannot touch roles, remove anyone, or change org defaults.
+// - member: chat within allowance, request increases.
+export type MemberRole = "owner" | "manager" | "member";
+
+/// @notice Rank for privilege comparison (higher acts on lower-or-equal, never above).
+export function roleRank(role: MemberRole): number {
+  return role === "owner" ? 2 : role === "manager" ? 1 : 0;
+}
 export type MemberStatus = "active" | "removed";
 
 export interface Member {
   did: string; // Privy DID, stable identity
   email?: string;
-  walletAddress: string; // checksummed EVM address, approval signer identity
-  role: MemberRole;
+  walletAddress: string; // checksummed EVM address — approval signer identity
+  role: MemberRole; // owner | manager | member (prescoped, server-enforced)
   keyPrefix?: string; // bound tor API key prefix (spend attribution via receipts)
   allowanceCredits?: number; // per-period override; undefined = inherit org default
   periodStart: number; // ms epoch of current allowance period
@@ -209,6 +219,13 @@ export async function setOrgDefault(orgId: string, allowanceCredits: number | un
 
 export async function getMember(orgId: string, did: string): Promise<Member | null> {
   return (await getOrgMeta(orgId))?.members.find((m) => m.did === did) ?? null;
+}
+
+/// @notice Active member by signer wallet (case-insensitive). The identity root
+/// for every role check below.
+export async function memberByWallet(orgId: string, wallet: string): Promise<Member | null> {
+  const meta = await getOrgMeta(orgId);
+  return meta?.members.find((m) => m.status === "active" && m.walletAddress.toLowerCase() === wallet.toLowerCase()) ?? null;
 }
 
 export async function addMember(orgId: string, m: Omit<Member, "status" | "createdAt" | "periodStart"> & { periodStart?: number }): Promise<Member> {
