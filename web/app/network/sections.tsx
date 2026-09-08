@@ -1,5 +1,7 @@
 "use client";
 
+import { usdLabel } from "../../lib/money";
+
 function Bar({ pct, color = "#0D0D0D" }: { pct: number; color?: string }) {
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#F4F4F4]">
@@ -161,7 +163,7 @@ export default function DataSections({ hosts, models, receipts }: SectionsData) 
           <h2 className={h2}>Compare</h2>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {[
-              cheapest && { t: "Cheapest right now", id: cheapest.address, d: `${cheapest.pricePerReq} wei/req · ${cheapest.modelId}` },
+              cheapest && { t: "Cheapest right now", id: cheapest.address, d: `${usdLabel(cheapest.pricePerReq)}/req · ${cheapest.modelId}` },
               busiest && { t: "Top by 24h calls", id: busiest.address, d: `${busiest.calls24h ?? 0} calls · ${busiest.modelId}` },
               reliable && { t: "Most reliable", id: reliable.address, d: `${((reliable.reliability ?? 0) * 100).toFixed(1)}% success · ${reliable.modelId}` },
             ].map((c) =>

@@ -19,7 +19,9 @@ function useCycle<T>(items: T[], ms: number, active: boolean): T {
   return items[i % items.length];
 }
 
-const SUB_PRICES = ["$10", "10 USDC", "40 HBAR", "0.0025 ETH", "0.00009 BTC"];
+// Indicative $10 equivalents (Sep 2026: HBAR $0.08, ETH $2,450, BTC $79k).
+// Static marketing copy, not live quotes — the vault takes HBAR either way.
+const SUB_PRICES = ["$10", "10 USDC", "125 HBAR", "0.0041 ETH", "0.00013 BTC"];
 
 interface ReceiptView {
   amount: string;

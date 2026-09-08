@@ -6,6 +6,7 @@ import { Activity, CircleCheck, Clock, Cpu, ExternalLink, Receipt as ReceiptIcon
 import Globe from "../components/globe";
 import DataSections from "./sections";
 import { topicUrl, txUrl } from "../../lib/chain";
+import { usdLabel } from "../../lib/money";
 
 const receiptUrl = (r: any): string => (r.debitTx ? txUrl(r.debitTx) : topicUrl());
 import { MockBanner, useMock } from "../components/mock";
@@ -183,7 +184,7 @@ export default function NetworkPage() {
                     <tr key={h.address} className="border-b border-[#F4F4F4] last:border-0">
                       <td className="px-4 py-3 font-mono text-xs"><Server className="mr-1.5 inline h-3.5 w-3.5" />{short(h.address)}</td>
                       <td className="px-4 py-3"><span className="inline-flex items-center gap-1 rounded-full bg-[#F4F4F4] px-2 py-0.5 text-xs"><Cpu className="h-3 w-3" />{h.modelId}</span></td>
-                      <td className="px-4 py-3 font-mono text-xs">{h.pricePerReq}</td>
+                      <td className="px-4 py-3 font-mono text-xs" title={`${h.pricePerReq} delivered units`}>{usdLabel(h.pricePerReq)}</td>
                       <td className="px-4 py-3 font-mono text-xs"><Activity className="mr-1 inline h-3.5 w-3.5" />{h.calls24h ?? "—"}</td>
                       <td className="px-4 py-3 font-mono text-xs">{h.reliability === null || h.reliability === undefined ? "—" : `${(h.reliability * 100).toFixed(1)}%`}</td>
                       <td className="px-4 py-3 font-mono text-xs"><VerifyCell v={h.verification ?? null} /></td>
