@@ -155,7 +155,7 @@ export default function AccountPage() {
                     Hedera {hederaId} ↗
                   </a>
                 ) : (
-                  <span className="text-[11px] text-[#6E6E73]">No Hedera account yet, fund this address from <a href="https://faucet.hedera.com" target="_blank" rel="noreferrer" className="text-[#2563EB] underline">faucet.hedera.com</a> to create it.</span>
+                    <span className="text-[11px] text-[#6E6E73]">Paste this address into <a href="https://faucet.hedera.com" target="_blank" rel="noreferrer" className="text-[#2563EB] underline">faucet.hedera.com</a>, the transfer itself creates your Hedera account.</span>
                 )}
               </div>
             {recentCalls.length > 0 && (
