@@ -484,7 +484,6 @@ describe("routes", () => {
     const debits: unknown[][] = [];
     const app = createApp({
       keys,
-      payerAccounts: {},
       fetchHosts: async () => [],
       fallbackUpstream: `http://127.0.0.1:${(stubSrv.address() as any).port}`,
       settle: async (...args) => {

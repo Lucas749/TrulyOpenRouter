@@ -42,6 +42,46 @@ CREATE TABLE IF NOT EXISTS spend_caps (
   period_start bigint NOT NULL
 );
 
+-- Host metadata: self-reported regions + owner claims (login-linked dashboards).
+CREATE TABLE IF NOT EXISTS host_meta (
+  address text PRIMARY KEY,
+  region text,
+  owner_user_id text
+);
+CREATE INDEX IF NOT EXISTS host_meta_owner_idx ON host_meta (owner_user_id);
+
+-- Device-code login (CLI link flow, 10-min TTL).
+CREATE TABLE IF NOT EXISTS device_codes (
+  code text PRIMARY KEY,
+  user_id text,
+  token text,
+  expires_at bigint NOT NULL
+);
+
+-- Verification reports (cheat-host memory survives restarts).
+CREATE TABLE IF NOT EXISTS verify_reports (
+  host text NOT NULL,
+  ts bigint NOT NULL,
+  model_id text NOT NULL DEFAULT '',
+  passed int NOT NULL DEFAULT 0,
+  total int NOT NULL DEFAULT 0,
+  score double precision,
+  inconclusive boolean NOT NULL DEFAULT false,
+  results jsonb NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS verify_reports_host_idx ON verify_reports (host, ts DESC);
+
+-- Upstream health: failure timestamps (24h window) + latency EMA.
+CREATE TABLE IF NOT EXISTS host_fails (
+  host text NOT NULL,
+  ts bigint NOT NULL
+);
+CREATE INDEX IF NOT EXISTS host_fails_host_idx ON host_fails (host, ts DESC);
+CREATE TABLE IF NOT EXISTS host_latency (
+  host text PRIMARY KEY,
+  ema_ms double precision NOT NULL
+);
+
 -- PENDING_TAP queue (L4 device-gated actions).
 CREATE TABLE IF NOT EXISTS taps (
   id text PRIMARY KEY,

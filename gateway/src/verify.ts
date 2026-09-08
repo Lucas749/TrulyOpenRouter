@@ -1,4 +1,5 @@
 import { createRequire } from "module";
+import { db } from "./db.js";
 
 /// @notice Reference outputs, captured from a trusted run of the serving stack
 /// (scripts/capture-references.mjs). Keyed by exact modelId string.
@@ -175,8 +176,28 @@ export interface VerifySummary {
   failing: boolean;
 }
 
-/// @notice Rolling per-host verification history (in-memory, like MemoryHealth).
-export class MemoryVerifier {
+export interface Verifier {
+  record(report: CheckReport): Promise<void>;
+  reports(address: string): Promise<CheckReport[]>;
+  verification(address: string): Promise<VerifySummary>;
+  /// @notice 0..1 multiplier for the scorer. Unchecked hosts route normally (null-safe).
+  scoreMultiplier(address: string): Promise<number>;
+}
+
+function summarize(list: CheckReport[], policy: VerifyPolicy): VerifySummary {
+  const conclusive = list.filter((r) => !r.inconclusive);
+  return {
+    lastCheck: list.length ? list[list.length - 1].ts : null,
+    checks: list.length,
+    avgScore: conclusive.length
+      ? conclusive.reduce((a, r) => a + (r.score ?? 0), 0) / conclusive.length
+      : null,
+    failing: isFailing(list, policy),
+  };
+}
+
+/// @notice Rolling per-host verification history (in-memory).
+export class MemoryVerifier implements Verifier {
   private history = new Map<string, CheckReport[]>();
 
   constructor(
@@ -184,32 +205,85 @@ export class MemoryVerifier {
     private policy: VerifyPolicy = DEFAULT_POLICY,
   ) {}
 
-  record(report: CheckReport): void {
+  async record(report: CheckReport): Promise<void> {
     const key = report.host.toLowerCase();
     const list = [...(this.history.get(key) ?? []), report].slice(-this.window);
     this.history.set(key, list);
   }
 
-  reports(address: string): CheckReport[] {
+  async reports(address: string): Promise<CheckReport[]> {
     return this.history.get(address.toLowerCase()) ?? [];
   }
 
-  verification(address: string): VerifySummary {
-    const list = this.reports(address);
-    const conclusive = list.filter((r) => !r.inconclusive);
+  async verification(address: string): Promise<VerifySummary> {
+    return summarize(await this.reports(address), this.policy);
+  }
+
+  async scoreMultiplier(address: string): Promise<number> {
+    const v = await this.verification(address);
+    if (v.avgScore === null) return 1;
+    if (v.failing) return 0;
+    return 0.5 + 0.5 * Math.min(1, Math.max(0, v.avgScore));
+  }
+}
+
+/// @notice Postgres verification history (DATABASE_URL set). A cheat host
+/// keeps its failing streak across restarts — no clean slates.
+export class PgVerifier implements Verifier {
+  constructor(
+    private window = 10,
+    private policy: VerifyPolicy = DEFAULT_POLICY,
+    private pool?: { query: (t: string, p?: unknown[]) => Promise<{ rows: any[] }> },
+  ) {}
+
+  private q() {
+    return this.pool ?? db();
+  }
+
+  private static row(r: any): CheckReport {
     return {
-      lastCheck: list.length ? list[list.length - 1].ts : null,
-      checks: list.length,
-      avgScore: conclusive.length
-        ? conclusive.reduce((a, r) => a + (r.score ?? 0), 0) / conclusive.length
-        : null,
-      failing: isFailing(list, this.policy),
+      host: r.host,
+      modelId: r.model_id ?? "",
+      ts: Number(r.ts),
+      passed: r.passed ?? 0,
+      total: r.total ?? 0,
+      score: r.score != null ? Number(r.score) : null,
+      inconclusive: !!r.inconclusive,
+      results: typeof r.results === "string" ? JSON.parse(r.results) : (r.results ?? []),
     };
   }
 
-  /// @notice 0..1 multiplier for the scorer. Unchecked hosts route normally (null-safe).
-  scoreMultiplier(address: string): number {
-    const v = this.verification(address);
+  async record(report: CheckReport): Promise<void> {
+    await this.q().query(
+      `INSERT INTO verify_reports (host, ts, model_id, passed, total, score, inconclusive, results)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        report.host.toLowerCase(), report.ts, report.modelId, report.passed, report.total,
+        report.score, report.inconclusive, JSON.stringify(report.results ?? []),
+      ],
+    );
+    // Trim to window (cheapest correct: drop older rows beyond window count).
+    await this.q().query(
+      `DELETE FROM verify_reports WHERE host = $1 AND ts NOT IN
+       (SELECT ts FROM verify_reports WHERE host = $1 ORDER BY ts DESC LIMIT $2)`,
+      [report.host.toLowerCase(), this.window],
+    );
+  }
+
+  async reports(address: string): Promise<CheckReport[]> {
+    const { rows } = await this.q().query(
+      `SELECT * FROM verify_reports WHERE host = $1 ORDER BY ts ASC LIMIT $2`,
+      [address.toLowerCase(), this.window],
+    );
+    return rows.map(PgVerifier.row);
+  }
+
+  async verification(address: string): Promise<VerifySummary> {
+    return summarize(await this.reports(address), this.policy);
+  }
+
+  async scoreMultiplier(address: string): Promise<number> {
+    const v = await this.verification(address);
     if (v.avgScore === null) return 1;
     if (v.failing) return 0;
     return 0.5 + 0.5 * Math.min(1, Math.max(0, v.avgScore));

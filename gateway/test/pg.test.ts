@@ -4,6 +4,10 @@ import { buildReceipt, PgReceiptLog } from "../src/receipts.js";
 import { issueKey, PgKeyStore, verifyKey } from "../src/keys.js";
 import { PgCapStore } from "../src/allowances.js";
 import { mintTap, PgTapStore } from "../src/taps.js";
+import { PgDeviceFlow } from "../src/device.js";
+import { PgHealth } from "../src/health.js";
+import { PgHostMeta } from "../src/hostmeta.js";
+import { PgVerifier } from "../src/verify.js";
 
 // Postgres backend proof. Runs ONLY with DATABASE_URL set (local docker or
 // RDS); skipped otherwise so unit CI stays device/db-free:
@@ -14,7 +18,7 @@ const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(
 pg("postgres backends", () => {
   beforeEach(async () => {
     await ensureSchema();
-    await db().query(`TRUNCATE receipts, api_keys, spend_caps, taps`);
+    await db().query(`TRUNCATE receipts, api_keys, spend_caps, taps, host_meta, device_codes, verify_reports, host_fails, host_latency`);
   });
 
   it("receipts roundtrip + annotate", async () => {
@@ -50,6 +54,53 @@ pg("postgres backends", () => {
     expect(await store.removeCap(p)).toBe(true);
     expect(await store.getCap(p)).toBeNull();
     await expect(store.setCap("", 1)).rejects.toThrow("prefix required");
+  });
+
+  it("host meta regions + owner claims survive", async () => {
+    const meta = new PgHostMeta();
+    const a = `0xabc${uid()}`.slice(0, 42);
+    await meta.setRegion(a, "eu-central");
+    await meta.setOwner(a, "user-7");
+    expect(await meta.regionOf(a.toUpperCase())).toBe("eu-central");
+    expect(await meta.distinctRegions()).toEqual(["eu-central"]);
+    expect(await meta.ownerOf(a)).toBe("user-7");
+    expect(await meta.hostsOf("user-7")).toEqual([a.toLowerCase()]);
+  });
+
+  it("device codes issue/approve/poll", async () => {
+    const f = new PgDeviceFlow();
+    const { code } = await f.issue();
+    expect(await f.poll(code)).toMatchObject({ status: "pending" });
+    const ok = await f.approve(code.toLowerCase(), "user-9");
+    expect(ok?.token.startsWith("tor_dev_")).toBe(true);
+    expect(await f.poll(code)).toMatchObject({ status: "approved", userId: "user-9" });
+    expect(await f.approve("NOPE12", "u")).toBeNull();
+  });
+
+  it("verifier keeps failing streaks", async () => {
+    const v = new PgVerifier();
+    const host = `0xfeed${uid()}`.slice(0, 42);
+    expect((await v.verification(host)).failing).toBe(false);
+    for (let i = 0; i < 3; i++) {
+      await v.record({ host, modelId: "m", ts: 1000 + i, passed: 0, total: 5, score: 0, inconclusive: false, results: [] });
+    }
+    const s = await v.verification(host);
+    expect(s.checks).toBe(3);
+    expect(s.failing).toBe(true);
+    expect(await v.scoreMultiplier(host)).toBe(0);
+  });
+
+  it("health fails + EMA roundtrip", async () => {
+    const h = new PgHealth();
+    const host = `0xbeef${uid()}`.slice(0, 42);
+    expect(await h.latencyMs(host)).toBeNull();
+    await h.recordFail(host, 1000);
+    await h.recordFail(host, 2000);
+    expect(await h.fails24h(host, 3000)).toBe(2);
+    expect(await h.reliability(8, host, 3000)).toBe(0.8);
+    await h.recordLatency(host, 100);
+    await h.recordLatency(host, 200);
+    expect(await h.latencyMs(host)).toBe(130);
   });
 
   it("taps queue/approve/execute with mint parity", async () => {

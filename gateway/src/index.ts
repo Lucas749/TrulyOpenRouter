@@ -7,14 +7,14 @@ import { issueKey, type KeyStore, MemoryKeyStore, PgKeyStore, verifyKey, type Ke
 import { allowanceExceeded, type CapStore, PgCapStore, SpendCapStore, sumSpent } from "./allowances.js";
 import { buildReceipt, MemoryReceiptLog, PgReceiptLog, type ReceiptLog, sha256hex } from "./receipts.js";
 import { dbEnabled, ensureSchema } from "./db.js";
-import { MemoryHealth } from "./health.js";
+import { type Health, MemoryHealth, PgHealth } from "./health.js";
 import { createVaultDebit } from "./vault.js";
-import { MemoryHostMeta, validRegion } from "./hostmeta.js";
+import { type HostMeta, MemoryHostMeta, PgHostMeta, validRegion } from "./hostmeta.js";
 import { logReceiptHcs, type HcsConfig } from "./hcs.js";
-import { deriveBudgetAddress } from "./budget.js";
-import { MemoryDeviceFlow } from "./device.js";
+import { budgetAddressFor } from "./budget.js";
+import { type DeviceFlow, MemoryDeviceFlow, PgDeviceFlow } from "./device.js";
 import { proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
-import { loadReferences, MemoryVerifier, PROBES, spotCheck, type CheckReport } from "./verify.js";
+import { loadReferences, MemoryVerifier, PgVerifier, PROBES, spotCheck, type CheckReport, type Verifier } from "./verify.js";
 import { createPaidFetch } from "./payer.js";
 import { settleCall, type DebitFn } from "./settle.js";
 import { FileTapStore, PgTapStore, tapInstruction, type TapKind, type TapStatus, type TapStore, verifyTapTransfer } from "./taps.js";
@@ -31,13 +31,11 @@ export interface GatewayOptions {
   keys?: KeyStore;
   receipts?: ReceiptLog;
   x402?: X402Creds; // gateway payer for gated hosts (Key Ring in prod, env in dev)
-  // key prefix -> vault account. Production derives a budget account per key at issuance (SPEC §4).
-  payerAccounts?: Record<string, string>;
-  meta?: MemoryHostMeta; // self-reported regions; absent = collection off
+  meta?: HostMeta; // self-reported regions; absent = collection off
   hcs?: HcsConfig; // audit topic; absent = no onchain log (receipts still served)
-  devices?: MemoryDeviceFlow; // CLI device-code login; absent = endpoint 501
-  health?: MemoryHealth; // upstream failure window; absent = collection off
-  verifier?: MemoryVerifier; // model-identity spot checks; absent = collection off
+  devices?: DeviceFlow; // CLI device-code login; absent = endpoint 501
+  health?: Health; // upstream failure window; absent = collection off
+  verifier?: Verifier; // model-identity spot checks; absent = collection off
   spendCaps?: CapStore; // member allowances; absent = no cap enforcement
   taps?: TapStore; // PENDING_TAP queue; absent = tap endpoints 501
   tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
@@ -78,8 +76,8 @@ export async function verifyOnce(opts: GatewayOptions): Promise<CheckReport[]> {
     refs[target.modelId].refs,
     { model: target.modelId },
   );
-  opts.verifier.record(report);
-  const summary = opts.verifier.verification(target.address);
+  await opts.verifier.record(report);
+  const summary = await opts.verifier.verification(target.address);
   console.log(
     `verify ${target.address.slice(0, 10)}… ${target.modelId}: ${report.passed}/${report.total}` +
       (report.inconclusive ? " (inconclusive)" : "") +
@@ -269,7 +267,10 @@ export function createApp(opts: GatewayOptions = {}) {
         const hosts = await resolveHosts(opts, model);
         // Failing verification = out of rotation until it recovers. The directory
         // still lists the host (with its failing status) — exclusion is routing-only.
-        return opts.verifier ? hosts.filter((h) => !opts.verifier!.verification(h.address).failing) : hosts;
+const ver = opts.verifier;
+        if (!ver) return hosts;
+        const checks = await Promise.all(hosts.map(async (h) => ({ h, failing: (await ver.verification(h.address)).failing })));
+        return checks.filter((c) => !c.failing).map((c) => c.h);
       }, fallback);
       selectedHost = host;
       emit("submitted", { endpoint });
@@ -280,7 +281,7 @@ export function createApp(opts: GatewayOptions = {}) {
       const upstreamBody = { ...((req.body ?? {}) as object), stream: false };
       const { out, paid } = await proxyWithFallback(endpoint, upstreamBody, opts.x402, paidFetch, () => emit("paying", {}));
       if (paid) emit("paid-host", {});
-      if (host && opts.health) opts.health.recordLatency(host.address, Date.now() - t0);
+      if (host && opts.health) await opts.health.recordLatency(host.address, Date.now() - t0);
       emit("running", {});
       const usage = (out as any)?.usage ?? {};
       const tokensIn = Number(usage.prompt_tokens ?? 0);
@@ -302,7 +303,7 @@ export function createApp(opts: GatewayOptions = {}) {
       // Vault needs a real account, not the "key:<prefix>" handle: explicit per-key
       // mapping, else DEFAULT_PAYER (dev/test), else "dev" (fails closed on vault debit).
       const payer =
-        (keyPrefix && opts.payerAccounts?.[keyPrefix]) || process.env.DEFAULT_PAYER || "dev";
+        (keyPrefix && budgetAddressFor(keyPrefix)) || process.env.DEFAULT_PAYER || "dev";
       const settled = opts.settle
         ? await settleCall(
             {
@@ -343,7 +344,7 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       res.json({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled });
     } catch (e: any) {
-      if (selectedHost && opts.health) opts.health.recordFail(selectedHost.address);
+      if (selectedHost && opts.health) await opts.health.recordFail(selectedHost.address);
       // Mid-stream failures must not touch headers twice — that crashes the process.
       if (res.headersSent) {
         try {
@@ -382,9 +383,17 @@ export function createApp(opts: GatewayOptions = {}) {
     const all = (await opts.receipts?.list(10_000)) ?? [];
     const day = 86_400_000;
     res.json({
-      data: [...seen.values()].map((h) => {
-        const success24h = all.filter((r) => r.host === h.address && now - r.ts < day).length;
-        return {
+      data: await Promise.all(
+        [...seen.values()].map(async (h) => {
+          const success24h = all.filter((r) => r.host === h.address && now - r.ts < day).length;
+          const [fail24h, region, latencyMs, reliability, verification] = await Promise.all([
+            opts.health?.fails24h(h.address) ?? 0,
+            opts.meta?.regionOf(h.address) ?? null,
+            opts.health?.latencyMs(h.address) ?? null,
+            opts.health?.reliability(success24h, h.address) ?? null,
+            opts.verifier?.verification(h.address) ?? null,
+          ]);
+          return {
           address: h.address,
           endpoint: h.endpoint,
           modelId: h.modelId,
@@ -395,13 +404,14 @@ export function createApp(opts: GatewayOptions = {}) {
           active: h.active,
           lastHeartbeat: h.lastHeartbeat,
           calls24h: success24h,
-          fail24h: opts.health?.fails24h(h.address) ?? 0,
-          region: opts.meta?.regionOf(h.address) ?? null, // self-reported, never verified geo
-          latencyMs: opts.health?.latencyMs(h.address) ?? null, // observed EMA, null until served
-          reliability: opts.health?.reliability(success24h, h.address) ?? null,
-          verification: opts.verifier?.verification(h.address) ?? null,
+          fail24h,
+          region, // self-reported, never verified geo
+          latencyMs, // observed EMA, null until served
+          reliability,
+          verification,
         };
-      }),
+        }),
+      ),
     });
   });
 
@@ -436,8 +446,8 @@ export function createApp(opts: GatewayOptions = {}) {
         refs.refs,
         { model: found.modelId },
       );
-      opts.verifier.record(report);
-      res.json({ ...report, verification: opts.verifier.verification(found.address) });
+      await opts.verifier.record(report);
+      res.json({ ...report, verification: await opts.verifier.verification(found.address) });
     } catch (e) {
       res.status(502).json({ error: { message: String(e).slice(0, 200), type: "upstream_error" } });
     }
@@ -445,7 +455,7 @@ export function createApp(opts: GatewayOptions = {}) {
 
   // Hosts self-report their region slug. Validated, overwrite-only, no auth in dev
   // (production: signature check against the host key — see SPEC).
-  app.post("/api/hosts/:address/meta", (req, res) => {
+  app.post("/api/hosts/:address/meta", async (req, res) => {
     if (!opts.meta) {
       res.status(501).json({ error: { message: "host meta not configured", type: "unavailable" } });
       return;
@@ -454,13 +464,13 @@ export function createApp(opts: GatewayOptions = {}) {
       res.status(400).json({ error: { message: "region must match [a-z0-9-]{2,32}", type: "invalid_request" } });
       return;
     }
-    opts.meta.setRegion(req.params.address, req.body.region);
+    await opts.meta.setRegion(req.params.address, req.body.region);
     res.json({ address: req.params.address, region: req.body.region });
   });
 
   // Claim a host for an account (link step of `tor-host login`). Dev: open + overwrite;
   // production: signature check that the caller holds the host key (see SPEC).
-  app.post("/api/hosts/:address/owner", (req, res) => {
+  app.post("/api/hosts/:address/owner", async (req, res) => {
     if (!opts.meta) {
       res.status(501).json({ error: { message: "host meta not configured", type: "unavailable" } });
       return;
@@ -470,12 +480,12 @@ export function createApp(opts: GatewayOptions = {}) {
       res.status(400).json({ error: { message: "userId required", type: "invalid_request" } });
       return;
     }
-    opts.meta.setOwner(req.params.address, userId);
+    await opts.meta.setOwner(req.params.address, userId);
     res.json({ address: req.params.address, owner: userId });
   });
 
-  app.get("/api/owners/:userId/hosts", (req, res) => {
-    res.json({ data: opts.meta?.hostsOf(req.params.userId) ?? [] });
+  app.get("/api/owners/:userId/hosts", async (req, res) => {
+    res.json({ data: (await opts.meta?.hostsOf(req.params.userId)) ?? [] });
   });
 
   // CLI device-code login. POST /api/device/code -> show code -> user approves on web
@@ -486,20 +496,20 @@ export function createApp(opts: GatewayOptions = {}) {
     return true;
   };
 
-  app.post("/api/device/code", (_req, res) => {
+  app.post("/api/device/code", async (_req, res) => {
     if (needDevices(res)) return;
-    const { code, expiresAt } = opts.devices!.issue();
+    const { code, expiresAt } = await opts.devices!.issue();
     res.json({ code, expiresAt, approveUrl: "/host/link" });
   });
 
-  app.get("/api/device/poll", (req, res) => {
+  app.get("/api/device/poll", async (req, res) => {
     if (needDevices(res)) return;
-    res.json(opts.devices!.poll(String(req.query.code ?? "")));
+    res.json(await opts.devices!.poll(String(req.query.code ?? "")));
   });
 
-  app.post("/api/device/approve", (req, res) => {
+  app.post("/api/device/approve", async (req, res) => {
     if (needDevices(res)) return;
-    const out = opts.devices!.approve(String(req.body?.code ?? ""), String(req.body?.userId ?? ""));
+    const out = await opts.devices!.approve(String(req.body?.code ?? ""), String(req.body?.userId ?? ""));
     if (!out) {
       res.status(400).json({ error: { message: "bad or expired code", type: "invalid_request" } });
       return;
@@ -552,12 +562,12 @@ export function createApp(opts: GatewayOptions = {}) {
       active: found.active,
       lastHeartbeat: found.lastHeartbeat,
       challenged: found.challenged ?? null,
-      region: opts.meta?.regionOf(found.address) ?? null,
+      region: (await opts.meta?.regionOf(found.address)) ?? null,
       calls24h: success24h,
-      fail24h: opts.health?.fails24h(found.address) ?? 0,
-      reliability: opts.health?.reliability(success24h, found.address) ?? null,
-      latencyMs: opts.health?.latencyMs(found.address) ?? null,
-      verification: opts.verifier?.verification(found.address) ?? null,
+      fail24h: (await opts.health?.fails24h(found.address)) ?? 0,
+      reliability: (await opts.health?.reliability(success24h, found.address)) ?? null,
+      latencyMs: (await opts.health?.latencyMs(found.address)) ?? null,
+      verification: (await opts.verifier?.verification(found.address)) ?? null,
       earningsWei,
       receipts: mine.slice(0, 20),
     });
@@ -639,7 +649,7 @@ export function createApp(opts: GatewayOptions = {}) {
       avgCreditsPer1kTokens,
       poolBalanceWei,
       ts: now,
-      regions: opts.meta?.distinctRegions() ?? null,
+      regions: (await opts.meta?.distinctRegions()) ?? null,
     });
   });
 
@@ -654,16 +664,8 @@ export function createApp(opts: GatewayOptions = {}) {
     await opts.keys.save(record);
     // Proper per-key budget account: deterministic derivation from the single master
     // (env in dev, Key Ring in prod). Funding stays an explicit operator step.
-    let budget: string | null = null;
-    const master = process.env.BUDGET_MASTER;
-    if (master) {
-      try {
-        budget = deriveBudgetAddress(master as `0x${string}`, record.prefix);
-        (opts.payerAccounts ??= {})[record.prefix] = budget;
-      } catch {
-        budget = null;
-      }
-    }
+    // Display only — resolution re-derives from the master on every use.
+    const budget = budgetAddressFor(record.prefix);
     res.json({ key, prefix: record.prefix, budget }); // key shown ONCE
   });
 
@@ -677,7 +679,7 @@ export function createApp(opts: GatewayOptions = {}) {
 
   // Budget account funding status (derived address + onchain HBAR check when RPC is set).
   app.get("/api/keys/:prefix/budget", async (req, res) => {
-    const address = opts.payerAccounts?.[req.params.prefix] ?? null;
+    const address = budgetAddressFor(req.params.prefix);
     let funded: boolean | null = null;
     if (address && opts.rpcUrl) {
       try {
@@ -863,10 +865,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const opts: GatewayOptions = {
     keys: pg ? new PgKeyStore() : new MemoryKeyStore(),
     receipts: pg ? new PgReceiptLog() : new MemoryReceiptLog(),
-    devices: new MemoryDeviceFlow(),
-    meta: new MemoryHostMeta(),
-    health: new MemoryHealth(),
-    verifier: new MemoryVerifier(),
+    devices: pg ? new PgDeviceFlow() : new MemoryDeviceFlow(),
+    meta: pg ? new PgHostMeta() : new MemoryHostMeta(),
+    health: pg ? new PgHealth() : new MemoryHealth(),
+    verifier: pg ? new PgVerifier() : new MemoryVerifier(),
     spendCaps: pg ? new PgCapStore() : new SpendCapStore(),
     taps: pg ? new PgTapStore() : new FileTapStore(),
   };

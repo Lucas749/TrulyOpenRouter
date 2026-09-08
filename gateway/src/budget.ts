@@ -29,3 +29,15 @@ export function deriveBudgetKey(masterHex: Hex, prefix: string): Hex {
 export function deriveBudgetAddress(masterHex: Hex, prefix: string): `0x${string}` {
   return privateKeyToAccount(deriveBudgetKey(masterHex, prefix)).address;
 }
+
+/// @notice Resolve a key prefix to its budget account on demand. Derivation is
+/// deterministic from the single master, so NO mapping is stored anywhere —
+/// nothing to persist, nothing to lose on restart. Null when no master.
+export function budgetAddressFor(prefix: string | undefined, master = process.env.BUDGET_MASTER): string | null {
+  if (!prefix || !master) return null;
+  try {
+    return deriveBudgetAddress(master as `0x${string}`, prefix);
+  } catch {
+    return null;
+  }
+}

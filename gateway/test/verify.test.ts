@@ -96,21 +96,21 @@ describe("isFailing", () => {
 });
 
 describe("MemoryVerifier", () => {
-  it("rolls history, summarizes and gates routing", () => {
+  it("rolls history, summarizes and gates routing", async () => {
     const v = new MemoryVerifier(10, DEFAULT_POLICY);
-    expect(v.verification("0xABC")).toEqual({ lastCheck: null, checks: 0, avgScore: null, failing: false });
-    expect(v.scoreMultiplier("0xabc")).toBe(1); // unchecked routes normally
-    v.record(report(1, 1));
-    v.record(report(0.5, 2));
-    const s = v.verification("0xabc");
+    expect(await v.verification("0xABC")).toEqual({ lastCheck: null, checks: 0, avgScore: null, failing: false });
+    expect(await v.scoreMultiplier("0xabc")).toBe(1); // unchecked routes normally
+    await v.record(report(1, 1));
+    await v.record(report(0.5, 2));
+    const s = await v.verification("0xabc");
     expect(s.checks).toBe(2);
     expect(s.avgScore).toBeCloseTo(0.75);
     expect(s.failing).toBe(false);
-    expect(v.scoreMultiplier("0xabc")).toBeCloseTo(0.875);
-    v.record(report(0, 3));
-    v.record(report(0, 4));
-    v.record(report(0, 5));
-    expect(v.verification("0xabc").failing).toBe(true);
-    expect(v.scoreMultiplier("0xabc")).toBe(0);
+    expect(await v.scoreMultiplier("0xabc")).toBeCloseTo(0.875);
+    await v.record(report(0, 3));
+    await v.record(report(0, 4));
+    await v.record(report(0, 5));
+    expect((await v.verification("0xabc")).failing).toBe(true);
+    expect(await v.scoreMultiplier("0xabc")).toBe(0);
   });
 });
