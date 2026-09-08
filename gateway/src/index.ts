@@ -306,10 +306,15 @@ const ver = opts.verifier;
       };
       if (opts.receipts) await opts.receipts.append(buildReceipt(receiptInput));
       const receipt = (await opts.receipts?.list(1))?.[0]?.id;
-      // Vault needs a real account, not the "key:<prefix>" handle: explicit per-key
-      // mapping, else DEFAULT_PAYER (dev/test), else "dev" (fails closed on vault debit).
+      // Vault needs a real account, not a handle. Order: key budget account,
+      // then the logged-in wallet itself (subscribed users debit their own
+      // credits; broke/empty wallets revert inside settleCall and transparently
+      // fall back to unsettled demo), then DEFAULT_PAYER, then "dev" (never debited).
       const payer =
-        (keyPrefix && budgetAddressFor(keyPrefix)) || process.env.DEFAULT_PAYER || "dev";
+        (keyPrefix && budgetAddressFor(keyPrefix)) ||
+        walletHandle?.slice("wallet:".length) ||
+        process.env.DEFAULT_PAYER ||
+        "dev";
       const settled = opts.settle
         ? await settleCall(
             {
@@ -762,7 +767,9 @@ const ver = opts.verifier;
       });
       const account = privateKeyToAccount(operatorKey as `0x${string}`);
       const wallet = createWalletClient({ account, chain, transport: http(rpcUrl) });
-      const hash = await wallet.sendTransaction({ to: address as `0x${string}`, value: 50000000n, chain });
+      // 0.5 HBAR in wei (1 HBAR = 1e8 tinybar = 1e18 wei). Enough to create
+      // the account with room for a few contract calls afterwards.
+      const hash = await wallet.sendTransaction({ to: address as `0x${string}`, value: 500000000000000000n, chain });
       res.json({ tx: hash, account: null, note: "account creates on confirmation — refresh in ~10s" });
     } catch (e: any) {
       res.status(502).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "upstream_error" } });

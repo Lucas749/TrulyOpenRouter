@@ -30,6 +30,7 @@ export default function AccountPage() {
   const [reqCount, setReqCount] = useState<number | null>(null);
   const [paidUsd, setPaidUsd] = useState<number | null>(null);
   const [recentCalls, setRecentCalls] = useState<any[]>([]);
+  const [modelSplit, setModelSplit] = useState<{ model: string; calls: number; tokens: number }[]>([]);
   const [vaultTxs, setVaultTxs] = useState<VaultTx[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -73,6 +74,15 @@ export default function AccountPage() {
         setReqCount(mine.length);
         setPaidUsd(mine.reduce((a: number, x: any) => a + Number(x.amountCredits ?? 0) * 0.001, 0));
         setRecentCalls(mine.slice(0, 5));
+        const byModel = new Map<string, { calls: number; tokens: number }>();
+        for (const r of mine) {
+          const m = String(r.modelId ?? r.model ?? "unknown");
+          const e = byModel.get(m) ?? { calls: 0, tokens: 0 };
+          e.calls += 1;
+          e.tokens += Number(r.tokensIn ?? 0) + Number(r.tokensOut ?? 0);
+          byModel.set(m, e);
+        }
+        setModelSplit([...byModel.entries()].map(([model, s]) => ({ model, ...s })).sort((a, b) => b.calls - a.calls));
       } catch {
         setReqCount(null);
         setPaidUsd(null);
@@ -89,8 +99,9 @@ export default function AccountPage() {
         ).json();
         setVaultTxs(
           (d.results ?? []).map((t: any) => ({
-            id: String(t.transaction_id),
-            ts: Number(String(t.consensus_timestamp).split(".")[0]) * 1000,
+            // Mirror contract-results shape: hash / timestamp ("sec.nanos") / amount (tinybar).
+            id: String(t.hash ?? t.transaction_id),
+            ts: Number(String(t.timestamp ?? t.consensus_timestamp ?? "0").split(".")[0]) * 1000,
             hbar: Number(t.amount ?? 0) / 1e8,
             kind: Number(t.amount ?? 0) > 0 ? "subscribe" : "call",
           })),
@@ -142,18 +153,24 @@ export default function AccountPage() {
                 </div>
               ))}
             </div>
-              <div className="flex flex-col gap-1.5 rounded-[14px] border border-[#E5E5E0] p-4">
+              <div className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-4">
                 <span className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Wallets</span>
-                <span className="break-all font-mono text-xs">{address ?? "—"}</span>
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 rounded-full bg-black px-2 py-0.5 font-mono text-[10px] text-white">EVM</span>
+                  <span className="break-all font-mono text-xs">{address ?? "—"}</span>
+                </div>
                 {hederaId ? (
-                  <a
-                    href={`https://hashscan.io/testnet/account/${hederaId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-mono text-xs text-[#2563EB] underline"
-                  >
-                    Hedera {hederaId} ↗
-                  </a>
+                  <div className="flex items-center gap-2">
+                    <span className="shrink-0 rounded-full bg-[#E7F5EE] px-2 py-0.5 font-mono text-[10px] text-[#0B7A5D]">HBAR</span>
+                    <a
+                      href={`https://hashscan.io/testnet/account/${hederaId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono text-xs text-[#2563EB] underline"
+                    >
+                      {hederaId} ↗
+                    </a>
+                  </div>
                 ) : (
                   <span className="flex flex-wrap items-center gap-2 text-[11px] text-[#6E6E73]">
                     <button
@@ -180,6 +197,18 @@ export default function AccountPage() {
                   </span>
                 )}
               </div>
+            {modelSplit.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Models used</span>
+                {modelSplit.map((m) => (
+                  <div key={m.model} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-[#F7F7F5] px-3 py-2">
+                    <span className="font-mono text-xs">{m.model}</span>
+                    <span className="font-mono text-[11px] text-[#6E6E73]">{m.calls} call{m.calls === 1 ? "" : "s"}</span>
+                    <span className="ml-auto font-mono text-[11px] tabular-nums text-[#6E6E73]">{m.tokens.toLocaleString("en-US")} tokens</span>
+                  </div>
+                ))}
+              </div>
+            )}
             {recentCalls.length > 0 && (
               <div className="flex flex-col gap-2">
                 <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Recent calls</span>
@@ -215,7 +244,7 @@ export default function AccountPage() {
                   <div key={t.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-[#F7F7F5] px-3 py-2">
                     <span className="rounded-full bg-black px-2.5 py-0.5 text-[11px] text-white">{t.kind}</span>
                     <span className="font-mono text-xs tabular-nums">{t.hbar} HBAR</span>
-                    <span className="font-mono text-[11px] text-[#8F8F8F]">{new Date(t.ts).toLocaleString("en-US")}</span>
+                    <span className="font-mono text-[11px] text-[#8F8F8F]">{t.ts > 0 && Number.isFinite(t.ts) ? new Date(t.ts).toLocaleString("en-US") : "—"}</span>
                     <a
                       href={`https://hashscan.io/testnet/transaction/${t.id}`}
                       target="_blank"
