@@ -29,7 +29,7 @@ function toSpend(m: Member): { used: number; cap: number | null } | null {
   return { used: m.spentCredits, cap: m.effectiveCredits };
 }
 
-// Mirrors lib/members.ts IncreaseRequest (server shape — no invented fields).
+// Mirrors lib/members.ts IncreaseRequest (server shape, no invented fields).
 interface IncreaseRequest {
   id: string;
   orgId: string;
@@ -322,7 +322,7 @@ export default function OrgMembers({
               <span className="ml-auto shrink-0"><RoleChip role={m.role} /></span>
             </div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-[38px] font-mono text-xs text-[#6E6E73]">
-              {m.keyPrefix ? <span>key {shortId(m.keyPrefix, 8)}</span> : <span className="text-[#B3261E]">no key — headless only</span>}
+              {m.keyPrefix ? <span>key {shortId(m.keyPrefix, 8)}</span> : <span className="text-[#B3261E]">no key, headless only</span>}
               {m.walletAddress && <span>{shortId(m.walletAddress, 10)}</span>}
             </div>
             <div className="pl-[38px]"><SpendBar spend={toSpend(m)} /></div>
@@ -351,7 +351,7 @@ export default function OrgMembers({
           </div>
         );
       })}
-      {members && !members.length && <p className="m-0 text-sm text-[#8F8F8F]">no members yet — invite the first below</p>}
+      {members && !members.length && <p className="m-0 text-sm text-[#8F8F8F]">no members yet, invite the first below</p>}
 
       {myMembership && myMembership.role !== "owner" && !mock && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-black/15 p-3">
@@ -382,7 +382,7 @@ export default function OrgMembers({
               {busy === "invite" ? "signing…" : (members?.length ?? 0) === 0 ? "Add founding owner" : "Invite"}
             </button>
           </div>
-          {(members?.length ?? 0) === 0 && <span className="text-[11px] text-[#6E6E73]">Empty team — your signature adds the first member as owner, no prior owner needed.</span>}
+          {(members?.length ?? 0) === 0 && <span className="text-[11px] text-[#6E6E73]">Empty team, your signature adds the first member as owner, no prior owner needed.</span>}
           {!myWallet && <span className="text-[11px] text-[#B3261E]">connect your wallet to sign invites</span>}
         </div>
       )}

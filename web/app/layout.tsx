@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "TrulyOpenRouter — Like OpenRouter, except open",
+  title: "TrulyOpenRouter, Like OpenRouter, except open",
   description: "Flat subscriptions for open LLMs. Anyone who can run a model can serve it.",
 };
 

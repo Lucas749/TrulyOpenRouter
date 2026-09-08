@@ -14,7 +14,7 @@ function token(): string {
 
 export async function syncCap(prefix: string, cap: number, periodStart?: number): Promise<void> {
   const t = token();
-  if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured — refusing unwatched sync");
+  if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured, refusing unwatched sync");
   const res = await fetch(`${base()}/api/admin/caps`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
@@ -25,7 +25,7 @@ export async function syncCap(prefix: string, cap: number, periodStart?: number)
 
 export async function clearCap(prefix: string): Promise<void> {
   const t = token();
-  if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured — refusing unwatched sync");
+  if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured, refusing unwatched sync");
   const res = await fetch(`${base()}/api/admin/caps/${encodeURIComponent(prefix)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${t}` },

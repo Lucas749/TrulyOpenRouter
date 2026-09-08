@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { MockBanner, useMock } from "../components/mock";
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
 const GPUS = [
   { id: "rtx-3090", label: "RTX 3090 · 24GB", reqDay: 6000 },
@@ -62,8 +62,8 @@ export default function HostPage() {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {[
-            ["1 · Run", "One compose file: Ollama + payment guard. CPU works, GPUs earn."],
-            ["2 · Stake", "10 HBAR stake on testnet. It unlocks after a timelock when you leave."],
+            ["1 · Run", "One compose file: Ollama + payment guard."],
+            ["2 · Stake", "10 HBAR locked on testnet. It proves you're serious (spam costs real money), it's slashable if you cheat, and it unlocks after a timelock when you leave."],
             ["3 · Earn", "90% of every routed call, withdrawable onchain. No platform rent."],
           ].map(([t, d]) => (
             <div key={t} className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-5">
@@ -86,7 +86,7 @@ export default function HostPage() {
               <span className="flex justify-between text-[#6E6E73]"><span>Duty cycle</span><span className="font-mono text-black">{duty}%</span></span>
               <input type="range" min={1} max={100} value={duty} onChange={(e) => setDuty(Number(e.target.value))} className="w-full accent-black" />
             </label>
-            <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">Estimated earning, not guaranteed — varies while the network bootstraps.</p>
+            <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">Estimated earning, not guaranteed, varies while the network bootstraps.</p>
           </div>
           <div className="flex flex-col gap-2 border-[#E5E5E0] md:border-l md:pl-8">
             <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Your take, 30 days</span>
@@ -94,6 +94,12 @@ export default function HostPage() {
             <span className="font-mono text-xs text-[#6E6E73]">{monthlyReq.toLocaleString("en-US")} req/mo · {priceCredits === null ? "price unknown yet" : `$${(priceCredits * 0.001).toFixed(4)}/req`} · 90% share</span>
             <Link href="/host/setup" className="mt-2 flex h-10 items-center justify-center rounded-full bg-black text-sm text-white hover:bg-zinc-800">Set up this host</Link>
           </div>
+        </div>
+
+        <div className="flex flex-col gap-2 rounded-[14px] bg-[#0D0D0D] p-5">
+          <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#8F8F8F]">Fastest path, one command</span>
+          <p className="m-0 font-mono text-sm text-[#EDEDED]">curl -fsSL https://trulyopenrouter.vercel.app/install.sh | bash</p>
+          <p className="m-0 text-[13px] text-[#8F8F8F]">Installs the CLI, pulls the model, registers onchain, installs the heartbeat cron. Key never leaves your machine.</p>
         </div>
       </main>
     </div>

@@ -137,7 +137,7 @@ export default function TeamPage() {
         {msg && <p className="m-0 font-mono text-xs text-[#B3261E]">{msg}</p>}
         {created && (
           <div className="flex flex-col gap-1.5 rounded-[14px] border border-[#10A37F] p-4 font-mono text-xs">
-            <span className="text-[#0B7A5D]">✓ team live — quorum → org → wallet</span>
+            <span className="text-[#0B7A5D]">✓ team live, quorum → org → wallet</span>
             <span>org {created.org.id}</span>
             <span>wallet {created.wallet.address}</span>
           </div>
@@ -186,7 +186,7 @@ export default function TeamPage() {
               })}
             </div>
           ))}
-          {orgs && !orgs.length && <p className="m-0 text-sm text-[#8F8F8F]">no teams yet — create the first above</p>}
+          {orgs && !orgs.length && <p className="m-0 text-sm text-[#8F8F8F]">no teams yet, create the first above</p>}
         </div>
         <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">approvals behind the button: propose → server-held quorum key authorizes → auto-executes. Server keys exist for teams created after the key-store change; older teams show the approve error with the fix.</p>
       </main>

@@ -7,7 +7,7 @@ import LoginButton from "../components/login-button";
 
 const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What can you run on a laptop GPU?", "How do host payouts work?"];
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
 interface Msg {
   role: string;
@@ -221,7 +221,7 @@ export default function ChatPage() {
             ))}
           </div>
           <p className="m-0 max-w-md text-xs leading-relaxed text-[#8F8F8F]">
-            Every answer settles onchain — receipt hash below each reply. Prompts and completions stay off-chain.
+            Every answer settles onchain, receipt hash below each reply. Prompts and completions stay off-chain.
           </p>
         </div>
       ) : (
@@ -233,7 +233,11 @@ export default function ChatPage() {
               </div>
               {m.receipt && (
                 <p className="m-0 font-mono text-[11px] text-emerald-700">
-                  ✓ {m.receipt.slice(0, 12)}… · settled={String(m.settled)}
+                  {m.settled ? (
+                    <>✓ {m.receipt.slice(0, 12)}… · settled</>
+                  ) : (
+                    <Link href="/onboarding" className="underline">demo reply — subscribe to settle onchain</Link>
+                  )}
                 </p>
               )}
             </div>

@@ -14,7 +14,7 @@ const VAULT_ABI = parseAbi([
 ]);
 
 export default function AccountPage() {
-  const { ready, authenticated, user } = usePrivy();
+  const { ready, authenticated, user, logout } = usePrivy();
   const { wallets } = useWallets();
   const [hbar, setHbar] = useState<string | null>(null);
   const [credits, setCredits] = useState<string | null>(null);
@@ -33,7 +33,7 @@ export default function AccountPage() {
       const provider = await w.getEthereumProvider();
       const walletClient = createWalletClient({ account: address, chain: hederaTestnet, transport: custom(provider) });
       const hash = await walletClient.writeContract({ address: VAULT, abi: VAULT_ABI, functionName: "refund" });
-      setMsg(`refunded ✓ ${hash.slice(0, 18)}… — unused credits back as HBAR`);
+      setMsg(`refunded ✓ ${hash.slice(0, 18)}…, unused credits back as HBAR`);
     } catch (e: any) {
       setMsg(`refund failed: ${String(e?.message ?? e).slice(0, 160)}`);
     }
@@ -76,7 +76,6 @@ export default function AccountPage() {
           <>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               {[
-                ["WALLET", address ? `${address.slice(0, 10)}…` : "—"],
                 ["HBAR · testnet", hbar ?? "—"],
                 ["CREDITS", credits ?? "—"],
               ].map(([l, v]) => (
@@ -85,6 +84,11 @@ export default function AccountPage() {
                   <span className="font-mono text-lg">{v}</span>
                 </div>
               ))}
+              <div className="flex flex-col gap-1 rounded-[14px] border border-[#E5E5E0] p-4">
+                <span className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Wallets</span>
+                <span className="break-all font-mono text-xs">EVM {address ?? "—"}</span>
+                <span className="text-[11px] text-[#6E6E73]">Same key on Hedera testnet (ECDSA). Fund it with testnet HBAR, then subscribe.</span>
+              </div>
             </div>
             <div className="flex gap-3">
               <Link href="/onboarding" className="flex h-10 flex-1 items-center justify-center rounded-full bg-black text-sm text-white">Top up $10</Link>
@@ -95,6 +99,9 @@ export default function AccountPage() {
             </div>
             {msg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{msg}</p>}
             <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">balances read live from Hedera testnet (relay + vault {VAULT.slice(0, 10)}…)</p>
+            <div>
+              <button onClick={logout} className="font-mono text-[11px] text-[#8F8F8F] underline hover:text-black">log out of this browser</button>
+            </div>
           </>
         )}
       </main>

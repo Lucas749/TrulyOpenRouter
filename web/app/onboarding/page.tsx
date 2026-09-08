@@ -36,7 +36,7 @@ export default function OnboardingPage() {
       const c = await client.readContract({ address: VAULT, abi: VAULT_ABI, functionName: "credits", args: [address] });
       setCredits(String(c));
     } catch {
-      setMsg("could not read credits — is the wallet funded with testnet HBAR?");
+      setMsg("could not read credits, is the wallet funded with testnet HBAR?");
     }
   }
 
@@ -55,7 +55,7 @@ export default function OnboardingPage() {
         args: [BigInt(PLAN_ID)],
         value: PLAN_PRICE_WEI,
       });
-      setMsg(`subscribed ✓ ${hash.slice(0, 18)}… — reading credits…`);
+      setMsg(`subscribed ✓ ${hash.slice(0, 18)}…, reading credits…`);
       setTimeout(refresh, 4000);
     } catch (e: any) {
       setMsg(`subscribe failed: ${String(e?.message ?? e).slice(0, 160)}`);
@@ -91,7 +91,7 @@ export default function OnboardingPage() {
         </section>
 
         <section className={`rounded-[14px] border p-5 ${step === 2 ? "border-black" : "border-[#E5E5E0]"} ${!authenticated ? "opacity-50" : ""}`}>
-          <div className="mb-1 text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">2 · Subscribe — $10 → {PLAN_CREDITS.toLocaleString("en-US")} credits {credits !== null && authenticated ? "✓" : ""}</div>
+          <div className="mb-1 text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">2 · Subscribe, $10 → {PLAN_CREDITS.toLocaleString("en-US")} credits {credits !== null && authenticated ? "✓" : ""}</div>
           <p className="m-0 mb-3 text-sm text-[#6E6E73]">
             One onchain payment on Hedera testnet. Your wallet needs testnet HBAR first —{" "}
             <a href="https://faucet.hedera.com" className="text-[#2563EB] underline">faucet.hedera.com</a>

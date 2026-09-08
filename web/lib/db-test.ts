@@ -3,7 +3,7 @@ import { join } from "path";
 
 // Test isolation across backends: file mode uses TOR_MEMBERS_DIR (set by the
 // caller); PG mode shares one database across parallel test files, so reset
-// ONLY the given org ids — never truncate whole tables (that wipes a sibling
+// ONLY the given org ids, never truncate whole tables (that wipes a sibling
 // file's rows mid-test).
 export async function resetMembersDb(orgIds: string[]): Promise<void> {
   if (!dbEnabled()) return;

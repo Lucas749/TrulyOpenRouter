@@ -42,8 +42,9 @@ export default function DataSections({ hosts, models, receipts }: SectionsData) 
 
   const byRegion = new Map<string, number>();
   for (const h of hosts) {
-    if (!h.region) continue;
-    byRegion.set(h.region, (byRegion.get(h.region) ?? 0) + 1);
+    const g = h.geo ?? h.region;
+    if (!g) continue;
+    byRegion.set(g, (byRegion.get(g) ?? 0) + 1);
   }
   const regions = [...byRegion.entries()].sort((a, b) => b[1] - a[1]);
   const totalHosts = Math.max(1, hosts.length);
@@ -133,7 +134,7 @@ export default function DataSections({ hosts, models, receipts }: SectionsData) 
             ))}
           </div>
         ) : (
-          <p className="m-0 text-sm text-[#8F8F8F]">no token flow yet — share appears with traffic</p>
+          <p className="m-0 text-sm text-[#8F8F8F]">no token flow yet, share appears with traffic</p>
         )}
       </section>
 
@@ -150,9 +151,9 @@ export default function DataSections({ hosts, models, receipts }: SectionsData) 
             ))}
           </div>
         ) : (
-          <p className="m-0 text-sm text-[#8F8F8F]">no self-reported regions yet</p>
+          <p className="m-0 text-sm text-[#8F8F8F]">no host locations yet</p>
         )}
-        <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">regions are host self-reports, not verified geo</p>
+        <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">observed from host IPs, self-report as fallback</p>
       </section>
 
       {(cheapest || busiest || reliable) && (

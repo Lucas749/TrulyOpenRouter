@@ -9,7 +9,7 @@ import { MockBanner, useMock } from "../../../components/mock";
 import { MOCK_HOSTS } from "../../../../lib/mock";
 import { accountUrl, topicUrl, txUrl } from "../../../../lib/chain";
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 const REGISTRY = "0xa45461bdefef422a81b22f36ebfd0995c7642dc3";
 const REGISTRY_ABI = parseAbi(["function challenge(address host, bytes32 receiptId)"]);
 
@@ -55,8 +55,8 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
       if (!r.ok) throw new Error(report.error?.message ?? r.status);
       setVerifyMsg(
         report.inconclusive
-          ? "inconclusive — host unreachable, not counted against it"
-          : `${report.passed}/${report.total} probes match${report.verification?.failing ? " — FAILING, out of rotation" : ""}`,
+          ? "inconclusive, host unreachable, not counted against it"
+          : `${report.passed}/${report.total} probes match${report.verification?.failing ? ", FAILING, out of rotation" : ""}`,
       );
       await load();
     } catch (e: any) {
@@ -64,9 +64,9 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
     }
     setVerifyBusy(false);
   }
-  // Anyone with a wallet can challenge — review (not auto-slash) is the v1 semantic.
+  // Anyone with a wallet can challenge, review (not auto-slash) is the v1 semantic.
   // Flag a host with its latest failed receipt (or zero hash for general review).
-  // Anyone with a wallet can challenge — review (not auto-slash) is the v1 semantic.
+  // Anyone with a wallet can challenge, review (not auto-slash) is the v1 semantic.
   async function flag() {
     const w = wallets[0];
     const from = w?.address as `0x${string}` | undefined;
@@ -85,7 +85,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
         functionName: "challenge",
         args: [address as `0x${string}`, id32 as `0x${string}`],
       });
-      setFlagMsg(`challenged ✓ ${hash.slice(0, 18)}… — queued for review (no auto-slash in v1)`);
+      setFlagMsg(`challenged ✓ ${hash.slice(0, 18)}…, queued for review (no auto-slash in v1)`);
       await load();
     } catch (e: any) {
       setFlagMsg(`challenge failed: ${String(e?.message ?? e).slice(0, 160)}`);
@@ -105,13 +105,13 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
       </header>
       <main className="mx-auto flex max-w-[920px] flex-col gap-6 px-6 py-8">
         {!d && !missing && <div className="h-40 animate-pulse rounded-[14px] bg-[#F4F4F4]" />}
-        {missing && <p className="rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-12 text-center text-sm text-[#8F8F8F]">unknown host — check the address or <Link href="/network" className="text-[#2563EB] underline">browse the directory</Link></p>}
+        {missing && <p className="rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-12 text-center text-sm text-[#8F8F8F]">unknown host, check the address or <Link href="/network" className="text-[#2563EB] underline">browse the directory</Link></p>}
         {d && (
           <>
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 text-sm"><span className={`h-2 w-2 rounded-full ${d.active ? "bg-[#10A37F]" : "bg-[#DC2626]"}`} />{d.active ? "serving" : "offline"}</span>
               <span className="rounded-full bg-[#F4F4F4] px-2.5 py-0.5 text-xs">{d.modelId}</span>
-              {d.challenged ? <span className="rounded-full bg-[#FDECEA] px-2.5 py-0.5 text-xs text-[#B3261E]">challenged — under review</span> : null}
+              {d.challenged ? <span className="rounded-full bg-[#FDECEA] px-2.5 py-0.5 text-xs text-[#B3261E]">challenged, under review</span> : null}
               {!mock && !d.challenged && (
                 <button onClick={flag} disabled={flagBusy || !authenticated} title={authenticated ? "Flag with latest receipt (wallet signs)" : "Log in to flag"} className="rounded-full border border-black/10 px-2.5 py-0.5 text-xs disabled:opacity-40">
                   {flagBusy ? "flagging…" : "Flag host"}
@@ -127,7 +127,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
                     {d.verification.failing ? "failing" : "✓"} {(d.verification.avgScore * 100).toFixed(0)}% · {d.verification.checks} check{d.verification.checks === 1 ? "" : "s"}
                   </span>
                 ) : (
-                  <span className="font-mono text-sm text-[#8F8F8F]">unchecked — anyone can run the probes</span>
+                  <span className="font-mono text-sm text-[#8F8F8F]">unchecked, anyone can run the probes</span>
                 )}
                 {!mock && (
                   <button onClick={verifyNow} disabled={verifyBusy} className="ml-auto rounded-full border border-black/10 px-2.5 py-0.5 text-xs disabled:opacity-40">
@@ -137,7 +137,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
               </div>
               <p className="m-0 text-xs leading-relaxed text-[#6E6E73]">
                 Deterministic fingerprint probes (temperature 0, fixed seed) vs. reference outputs
-                captured from the pinned serving stack. Probes are paid calls — the host earns for them.
+                captured from the pinned serving stack. Probes are paid calls, the host earns for them.
               </p>
               {verifyMsg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{verifyMsg}</p>}
             </div>

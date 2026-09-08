@@ -15,11 +15,14 @@ export interface HostMeta {
   setOwner(address: string, userId: string): Promise<void>;
   ownerOf(address: string): Promise<string | null>;
   hostsOf(userId: string): Promise<string[]>;
+  geoOf(address: string): Promise<string | null>;
+  setGeo(address: string, geo: string): Promise<void>;
 }
 
 export class MemoryHostMeta implements HostMeta {
   private regions = new Map<string, string>();
   private owners = new Map<string, string>(); // host -> Privy user id (claimed at link time)
+  private geos = new Map<string, string>(); // host -> observed IP geo (see geo.ts)
 
   async setRegion(address: string, region: string): Promise<void> {
     this.regions.set(address.toLowerCase(), region);
@@ -43,6 +46,14 @@ export class MemoryHostMeta implements HostMeta {
 
   async hostsOf(userId: string): Promise<string[]> {
     return [...this.owners.entries()].filter(([, u]) => u === userId).map(([a]) => a);
+  }
+
+  async geoOf(address: string): Promise<string | null> {
+    return this.geos.get(address.toLowerCase()) ?? null;
+  }
+
+  async setGeo(address: string, geo: string): Promise<void> {
+    this.geos.set(address.toLowerCase(), geo);
   }
 }
 
@@ -89,5 +100,18 @@ export class PgHostMeta implements HostMeta {
   async hostsOf(userId: string): Promise<string[]> {
     const { rows } = await this.q().query(`SELECT address FROM host_meta WHERE owner_user_id = $1`, [userId]);
     return rows.map((r) => r.address);
+  }
+
+  async geoOf(address: string): Promise<string | null> {
+    const { rows } = await this.q().query(`SELECT geo FROM host_meta WHERE address = $1`, [address.toLowerCase()]);
+    return rows[0]?.geo ?? null;
+  }
+
+  async setGeo(address: string, geo: string): Promise<void> {
+    await this.q().query(
+      `INSERT INTO host_meta (address, geo) VALUES ($1,$2)
+       ON CONFLICT (address) DO UPDATE SET geo = EXCLUDED.geo`,
+      [address.toLowerCase(), geo],
+    );
   }
 }

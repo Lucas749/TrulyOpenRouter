@@ -7,7 +7,7 @@ import { MockBanner, useMock } from "./components/mock";
 import { MOCK_HOST_MATH, MOCK_HERO, MOCK_RECEIPTS, MOCK_STATS, type StatPoint } from "../lib/mock";
 import { topicUrl, txUrl } from "../lib/chain";
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
 function useCycle<T>(items: T[], ms: number, active: boolean): T {
   const [i, setI] = useState(0);
@@ -19,7 +19,7 @@ function useCycle<T>(items: T[], ms: number, active: boolean): T {
   return items[i % items.length];
 }
 
-const SUB_PRICES = ["$10", "10.00 USDC", "0.0025 ETH", "0.00009 BTC", "0.051 SOL", "40.3 HBAR"];
+const SUB_PRICES = ["$10", "10 USDC", "40 HBAR", "0.0025 ETH", "0.00009 BTC"];
 
 interface ReceiptView {
   amount: string;
@@ -38,10 +38,10 @@ export default function Landing() {
   const [receipts, setReceipts] = useState<ReceiptView[] | null>(null);
   const [hero, setHero] = useState<{ hosts: number; settled: string } | null>(null);
   const [medianWei, setMedianWei] = useState<string | null>(null);
-  // Protocol constant (mirrors gateway settle.ts 9/10 split) — NOT mock data.
+  // Protocol constant (mirrors gateway settle.ts 9/10 split), NOT mock data.
   const HOST_SHARE_PCT = 90;
   const [reqDay, setReqDay] = useState(4000);
-  const subPrice = useCycle(SUB_PRICES, 2600, mock);
+  const subPrice = useCycle(SUB_PRICES, 2600, true);
 
   useEffect(() => {
     if (mock) return;
@@ -52,11 +52,11 @@ export default function Landing() {
         if (!live) return;
         setHero({ hosts: s.hostsOnline ?? 0, settled: (s.settledToday ?? 0).toLocaleString("en-US") });
         setStats([
-          { label: "Hosts online", value: String(s.hostsOnline ?? "—"), delta: "", note: s.regions ? `${s.regions} regions, self-reported` : "regions not collected yet" },
+          { label: "Hosts online", value: String(s.hostsOnline ?? "—"), delta: "", note: s.regions ? `${s.regions} regions, observed from host IPs` : "regions not collected yet" },
           { label: "Models served", value: String(s.modelsServed ?? "—"), delta: "", note: "digest-pinned" },
           { label: "Requests / 24h", value: (s.requests24h ?? 0).toLocaleString("en-US"), delta: "", note: `${(s.settledToday ?? 0).toLocaleString("en-US")} settled today` },
           { label: "Avg wei / req", value: s.avgPriceWeiPerReq ?? "—", delta: "", note: "network mean, testnet units" },
-          { label: "Pool balance", value: s.poolBalanceWei ? `${(BigInt(s.poolBalanceWei) / BigInt(1e15)).toString()} mℏ` : "—", delta: "", note: "vault balance, testnet" },
+          { label: "Vault balance", value: s.poolBalanceWei ? `${(BigInt(s.poolBalanceWei) / BigInt(1e15)).toString()} mℏ` : "—", delta: "", note: "HBAR held by the vault contract, testnet" },
         ]);
         const r: any = await (await fetch(`${GATEWAY}/api/receipts?limit=3`)).json();
         if (!live) return;
@@ -92,7 +92,9 @@ export default function Landing() {
       ? `${hero.hosts} hosts serving now`
       : "connecting to network…";
   const settledLine = mock ? MOCK_HERO.settledToday : (hero?.settled ?? "—");
-  const pricePerReq = mock ? MOCK_HOST_MATH.pricePerReq : medianWei ? Number(medianWei) / 1e18 : null;
+  // Units math: 1e5 delivered units = 1 credit = $0.001, so $ = units / 1e8.
+  // (Not 1e18: our prices are delivered tinybar-ish units, not ETH wei.)
+  const pricePerReq = mock ? MOCK_HOST_MATH.pricePerReq : medianWei ? Number(medianWei) / 1e8 : null;
   const gross = pricePerReq === null ? null : reqDay * pricePerReq * 30;
   const take = gross === null ? null : (gross * HOST_SHARE_PCT) / 100;
 
@@ -120,7 +122,7 @@ export default function Landing() {
           <div className="flex items-center gap-3">
             <LoginButton />
             <Link href="/onboarding" className="flex h-9 items-center rounded-full bg-black px-4 text-sm text-white hover:bg-zinc-800">
-              Subscribe <span className="ml-2 font-mono">{mock ? subPrice : "$10"}</span>
+              Subscribe <span className="ml-2 font-mono">{subPrice}</span>
             </Link>
           </div>
         </div>
@@ -139,12 +141,12 @@ export default function Landing() {
           <p className="m-0 max-w-[620px] text-lg leading-relaxed text-[#5D5D5D]">One flat subscription routes your prompts across independently operated hosts running open models. Hosts keep 90% of every call. Every call settles onchain with a receipt you can check yourself.</p>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Link href="/onboarding" className="flex h-12 items-center rounded-full bg-black px-6 text-white hover:bg-zinc-800">
-              Subscribe <span className="ml-2 font-mono">{mock ? subPrice : "$10"}</span>
+              Subscribe <span className="ml-2 font-mono">{subPrice}</span>
             </Link>
             <Link href="/host" className="flex h-12 items-center rounded-full border border-black/10 px-6 hover:bg-black/5">Serve a model</Link>
           </div>
-          <p className="-mt-1 text-[13px] text-[#8F8F8F]">Card, USDC, ETH, BTC, SOL or HBAR — same flat month.</p>
-          <p className="m-0 font-mono text-[13px] text-[#6E6E73]">{settledLine} calls settled today — <Link href="/network" className="text-[#2563EB]">verify any of them ↗</Link></p>
+          <p className="-mt-1 text-[13px] text-[#8F8F8F]">Crypto only, same flat month.</p>
+          <p className="m-0 font-mono text-[13px] text-[#6E6E73]">{settledLine} calls settled today, <Link href="/network" className="text-[#2563EB]">verify any of them ↗</Link></p>
         </div>
       </section>
 
@@ -154,7 +156,7 @@ export default function Landing() {
             <div className="flex items-center justify-between border-b border-[#E5E5E0] px-4 py-3">
               <div className="flex items-center gap-2">
                 <span className="inline-flex h-6 items-center rounded-full border border-[#E5E5E0] bg-[#F7F7F5] px-2.5 text-xs text-[#424242]">▦ Llama-3.1-8B</span>
-                <span className="font-mono text-xs text-[#6E6E73]">{mock ? "$0.0015/req · 310ms" : "illustration — live prices on /network"}</span>
+                <span className="font-mono text-xs text-[#6E6E73]">{mock ? "$0.0015/req · 310ms" : "illustration, live prices on /network"}</span>
               </div>
               <span className="text-xs text-[#8F8F8F]">host h-0f4c…</span>
             </div>
@@ -167,7 +169,7 @@ export default function Landing() {
                 </div>
               ) : (
                 <div className="inline-flex items-center gap-2 self-start rounded-full bg-[#F4F4F4] px-2.5 font-mono text-xs text-[#6E6E73]">
-                  illustration — real receipts settle onchain
+                  illustration, real receipts settle onchain
                 </div>
               )}
               <div className="mt-auto flex items-center gap-2.5 rounded-[28px] border border-[#E5E5E0] py-2.5 pl-4 pr-3 shadow-sm">
@@ -222,13 +224,13 @@ export default function Landing() {
         <div className="mx-auto flex max-w-[1120px] flex-col gap-10">
           <div className="flex flex-col items-center gap-2.5 text-center">
             <h2 className="m-0 text-[34px] font-normal tracking-[-0.025em]">Subscription on the outside, x402 on the inside</h2>
-            <p className="m-0 max-w-[560px] text-[#5D5D5D]">You pay once a month. Underneath, each call is a signed micropayment to whichever host wins the route.</p>
+            <p className="m-0 max-w-[560px] text-[#5D5D5D]">You pay once a month. Underneath, each call is a signed micropayment to whichever host wins the route. You never touch x402, it only moves between the router and hosts.</p>
           </div>
           <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
             {[
               { n: "01 · Pool", t: "Ten dollars in, credits out", d: "Your subscription funds a shared pool held by the vault contract. No per-token invoices, no card on file with a dozen providers.", f: "$10.00/mo = 10,000 credits" },
               { n: "02 · Route", t: "Cheapest healthy host wins", d: "The router scores price, latency and stake, then pays the winner with an x402 micropayment. A host that stops answering drops out mid-flight.", f: "price scored live, per request" },
-              { n: "03 · Prove", t: "Every call leaves a receipt", d: "Price, host, model digest and prompt hashes settle onchain. Prompt and completion bodies never do — only their hashes.", f: "receipts verifiable on HashScan" },
+              { n: "03 · Prove", t: "Every call leaves a receipt", d: "Price, host, model digest and prompt hashes settle onchain. Prompt and completion bodies never do, only their hashes.", f: "receipts verifiable on HashScan" },
             ].map((c) => (
               <div key={c.n} className="flex flex-col gap-3 rounded-[14px] border border-[#E5E5E0] p-[26px]">
                 <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">{c.n}</div>
@@ -256,7 +258,7 @@ export default function Landing() {
                   </div>
                   <div className="flex items-center gap-2 font-mono text-[13px]">
                     # {r.hash}
-                    <a href={r.url} className="ml-auto inline-flex items-center gap-1 text-xs text-[#2563EB]">HashScan ↗</a>
+                    <a href={r.url} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs text-[#2563EB]">HashScan ↗</a>
                   </div>
                   <div className="flex items-center gap-2.5 text-xs text-[#6E6E73]">
                     <span>▦ {r.host}</span>
@@ -266,7 +268,7 @@ export default function Landing() {
                 </div>
               ))
             ) : (
-              <p className="font-mono text-xs text-[#8F8F8F]">no settled calls yet — be the first</p>
+              <p className="font-mono text-xs text-[#8F8F8F]">no settled calls yet, be the first</p>
             )}
           </div>
         </div>
@@ -296,14 +298,6 @@ export default function Landing() {
             <Link href="/host" className="flex h-10 items-center justify-center rounded-full border border-black/10 text-sm hover:bg-black/5">Serve a model</Link>
             {!mock && <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">testnet units until mainnet pricing</p>}
           </div>
-        </div>
-      </section>
-
-      <section className="px-6 pb-[88px]">
-        <div className="mx-auto flex max-w-[920px] flex-col gap-3 rounded-[14px] bg-[#0D0D0D] p-8">
-          <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#8F8F8F]">Run it locally</div>
-          <p className="m-0 font-mono text-sm text-[#EDEDED]">git clone https://github.com/Lucas749/TrulyOpenRouter && sh quickstart.sh</p>
-          <p className="m-0 text-[13px] text-[#8F8F8F]">CLI, stack, Ledger walkthrough, Privy onboarding — 15 minutes, testnet only, nothing costs money.</p>
         </div>
       </section>
 

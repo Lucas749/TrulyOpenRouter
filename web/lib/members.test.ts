@@ -19,7 +19,7 @@ import {
   verifyApprovalSignature,
 } from "../lib/members";
 
-const OWNER = privateKeyToAccount(generatePrivateKey()); // fresh each run — never hand-type keys
+const OWNER = privateKeyToAccount(generatePrivateKey()); // fresh each run, never hand-type keys
 const MEMBER_KEY = generatePrivateKey();
 const MEMBER = privateKeyToAccount(MEMBER_KEY);
 const MEMBER_WALLET = MEMBER.address;

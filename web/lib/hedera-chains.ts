@@ -1,7 +1,7 @@
 import { defineChain } from "viem";
 
 // Hedera is NOT a Privy-default chain: configure explicitly + override RPC (see SPEC §8b).
-// Managed extras (gas sponsorship, swaps) are assumed unavailable here — plain transfers only.
+// Managed extras (gas sponsorship, swaps) are assumed unavailable here, plain transfers only.
 export const hederaTestnet = defineChain({
   id: 296,
   name: "Hedera Testnet",

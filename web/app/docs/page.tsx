@@ -37,7 +37,7 @@ export default function DocsPage() {
       <main className="mx-auto flex max-w-[920px] flex-col gap-6 px-6 py-10">
         <div>
           <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">API docs</h1>
-          <p className="mb-0 mt-2 text-[#5D5D5D]">OpenAI-compatible. Two env vars and any harness works — opencode, Cursor, Cline, or plain curl. Testnet gateway: <span className="font-mono text-sm text-black">http://127.0.0.1:4121</span> (local) · contracts on Hedera testnet.</p>
+          <p className="mb-0 mt-2 text-[#5D5D5D]">OpenAI-compatible. Two env vars and any harness works, opencode, Cursor, Cline, or plain curl. Testnet gateway: <span className="font-mono text-sm text-black">http://127.0.0.1:4121</span> (local) · contracts on Hedera testnet.</p>
         </div>
         <Snippet title="Run everything locally (CLI, stack, Ledger, Privy)" code={`git clone https://github.com/Lucas749/TrulyOpenRouter && cd TrulyOpenRouter
 sh quickstart.sh   # ~15 min, testnet only, nothing costs money`} />
@@ -55,7 +55,7 @@ response = client.chat.completions.create(
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)`} />
-        <Snippet title="opencode provider" code={`# opencode.json — custom provider pointing at the router
+        <Snippet title="opencode provider" code={`# opencode.json, custom provider pointing at the router
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "trulyopenrouter/qwen2.5-7b",
@@ -70,13 +70,13 @@ curl -X POST http://127.0.0.1:4121/api/keys \\
   -H 'Content-Type: application/json' \\
   -d '{"scopes":{"models":["qwen2.5:0.5b"]}}'
 
-# chat — response carries tor_receipt + tor_settled
+# chat, response carries tor_receipt + tor_settled
 curl -X POST http://127.0.0.1:4121/v1/chat/completions \\
   -H 'Content-Type: application/json' \\
   -H "Authorization: Bearer tor_sk_…" \\
   -d '{"model":"qwen2.5:0.5b","messages":[{"role":"user","content":"hi"}]}'
 
-# verify the receipt (hashes only — bodies never leave the hosts)
+# verify the receipt (hashes only, bodies never leave the hosts)
 curl http://127.0.0.1:4121/api/receipts/<id>
 
 # network truth
@@ -84,7 +84,7 @@ curl http://127.0.0.1:4121/api/hosts
 curl http://127.0.0.1:4121/api/stats`} />
         <div className="rounded-[14px] border border-[#E5E5E0] bg-[#F7F7F5] p-5 text-sm leading-relaxed text-[#5D5D5D]">
           <p className="m-0 mb-2 font-medium text-black">Money path (Hedera testnet)</p>
-          <p className="m-0 font-mono text-xs leading-relaxed">Registry 0xa454…dc3 · Vault 0xd75c…f576 · USDC 0.0.429274 · facilitator api.testnet.blocky402.com · 1 credit ≡ $0.001 by definition · contract value unit is tinybar (sent/1e10) — see SPEC money rule.</p>
+          <p className="m-0 font-mono text-xs leading-relaxed">Registry 0xa454…dc3 · Vault 0xd75c…f576 · USDC 0.0.429274 · facilitator api.testnet.blocky402.com · 1 credit ≡ $0.001 by definition · contract value unit is tinybar (sent/1e10), see SPEC money rule.</p>
           <p className="mb-0 mt-2"><Link href="/api" className="text-[#2563EB] underline">Manage keys →</Link></p>
         </div>
       </main>

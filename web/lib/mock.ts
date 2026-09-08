@@ -1,6 +1,6 @@
 "use client";
 
-// Mock data — copied EXACTLY from the design slice (landing .dc.html renderVals).
+// Mock data, copied EXACTLY from the design slice (landing .dc.html renderVals).
 // RULE: mock is only ever shown when useMock() is true (explicit ?mock=1 toggle).
 // Real mode renders live backend data, skeletons while loading, and "—" for anything
 // unwired. The two sources are NEVER merged.

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 const REGISTRY = "0xa45461bdefef422a81b22f36ebfd0995c7642dc3";
 
 export default function HostSetupPage() {
@@ -37,12 +37,12 @@ export default function HostSetupPage() {
         const addrs: string[] = JSON.parse(window.localStorage.getItem("tor-my-hosts") ?? "[]");
         for (const m of mine) if (!addrs.includes(m.address)) addrs.push(m.address);
         window.localStorage.setItem("tor-my-hosts", JSON.stringify(addrs));
-        setVerify(`registered ✓ ${mine[0].address.slice(0, 10)}… — saved to this browser`);
+        setVerify(`registered ✓ ${mine[0].address.slice(0, 10)}…, saved to this browser`);
       } else {
-        setVerify("not onchain yet — run the command above, then re-check");
+        setVerify("not onchain yet, run the command above, then re-check");
       }
     } catch {
-      setVerify("gateway unreachable — is it running?");
+      setVerify("gateway unreachable, is it running?");
     }
   }
 
@@ -60,9 +60,19 @@ export default function HostSetupPage() {
       </header>
       <main className="mx-auto flex max-w-[920px] flex-col gap-6 px-6 py-10">
         <div className="flex flex-col gap-2 rounded-[14px] bg-[#0D0D0D] p-5">
-          <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#8F8F8F]">Fastest path — one command, key stays on your machine</div>
+          <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#8F8F8F]">Fastest path, one command, key stays on your machine</div>
           <p className="m-0 font-mono text-sm text-[#EDEDED]">sh host-runner/setup.sh</p>
           <p className="m-0 text-[13px] text-[#8F8F8F]">Pulls the model, computes its digest, starts the stack, registers onchain, installs the heartbeat cron. Manual form below if you want each step.</p>
+        </div>
+        <div className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-5">
+          <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Every host needs an account</span>
+          <p className="m-0 text-sm leading-relaxed text-[#5D5D5D]">
+            Log in up top (Privy email, no seed phrase), then on your host machine run{" "}
+            <span className="font-mono text-black">tor-host login</span>, approve the code at{" "}
+            <Link href="/host/link" className="text-[#2563EB] underline">/host/link</Link>, then{" "}
+            <span className="font-mono text-black">tor-host link</span>. Your dashboard follows your login.
+            Hosters with a Ledger: stake releases go through the tap queue at <Link href="/security" className="text-[#2563EB] underline">/security</Link>.
+          </p>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <label className={field}><span className="text-[#6E6E73]">Public endpoint (your Ollama/guard URL)</span><input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} className={input} /></label>
@@ -74,7 +84,7 @@ export default function HostSetupPage() {
         </div>
         <div className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] bg-[#0D0D0D] p-5">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-xs text-[#8B95A5]">run this where your host key lives — key never leaves your machine</span>
+            <span className="font-mono text-xs text-[#8B95A5]">run this where your host key lives, key never leaves your machine</span>
             <button onClick={copy} className="rounded-full bg-white px-3 py-1 text-xs text-black">{copied ? "copied ✓" : "copy"}</button>
           </div>
           <pre className="m-0 overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-[#E6EAF0]">{cmd}</pre>

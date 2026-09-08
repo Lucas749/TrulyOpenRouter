@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-// Mock toggle: ?mock=1 in URL (persisted to localStorage). Default OFF — real data only.
+// Mock toggle: ?mock=1 in URL (persisted to localStorage). Default OFF, real data only.
 // When ON, every data surface switches ENTIRELY to mock.ts fixtures and shows the banner.
 const KEY = "tor-mock";
 
@@ -41,7 +41,7 @@ export function useMock(): [boolean, () => void] {
 export function MockBanner({ onOff }: { onOff: () => void }) {
   return (
     <div className="flex w-full items-center justify-center gap-3 bg-amber-100 px-4 py-1.5 text-xs text-amber-900">
-      <span className="font-mono">MOCK DATA — figures on this page are fixtures, not live</span>
+      <span className="font-mono">MOCK DATA, figures on this page are fixtures, not live</span>
       <button onClick={onOff} className="underline">
         show real data
       </button>

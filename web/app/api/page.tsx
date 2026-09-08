@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
 interface StoredKey {
   prefix: string;
@@ -98,7 +98,7 @@ export default function ApiKeysPage() {
           {msg && <p className="m-0 font-mono text-xs text-[#B3261E]">{msg}</p>}
           {revealed && (
             <div className="flex flex-col gap-1.5 rounded-lg bg-[#0D0D0D] p-4">
-              <span className="text-[11px] uppercase tracking-[0.1em] text-[#8B95A5]">shown once — copy now</span>
+              <span className="text-[11px] uppercase tracking-[0.1em] text-[#8B95A5]">shown once, copy now</span>
               <span className="break-all font-mono text-xs text-[#E6EAF0]">{revealed}</span>
             </div>
           )}
@@ -116,7 +116,7 @@ export default function ApiKeysPage() {
               </div>
             ))
           ) : (
-            <p className="m-0 text-sm text-[#8F8F8F]">no keys yet — create one above. Keys live in this browser; the gateway never stores plaintext.</p>
+            <p className="m-0 text-sm text-[#8F8F8F]">no keys yet, create one above. Keys live in this browser; the gateway never stores plaintext.</p>
           )}
         </div>
       </main>

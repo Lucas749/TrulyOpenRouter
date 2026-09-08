@@ -3,7 +3,7 @@ import { join } from "path";
 import { db, dbEnabled, ensureSchema } from "./db";
 
 // Chat threads for logged-in users (keyed by wallet address). Trust note:
-// the handle is client-claimed — fine for reading your OWN history, never
+// the handle is client-claimed, fine for reading your OWN history, never
 // used for authorization (spend caps stay key-based). Same dual backend as
 // members.ts: Postgres when DATABASE_URL is set, else gitignored JSON.
 

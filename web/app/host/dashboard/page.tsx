@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 const CLAIM_KEY = "tor-my-hosts";
 
 export function loadClaimed(): string[] {
@@ -72,7 +72,7 @@ export default function HostDashboardPage() {
       const d: any = await (await fetch(`${GATEWAY}/api/hosts/${addr}`)).json();
       if (d.error || d.registeredAt === 0) throw new Error();
     } catch {
-      setLookupMsg("no registered host at that address — check /network");
+      setLookupMsg("no registered host at that address, check /network");
       return;
     }
     const list = loadClaimed();
@@ -103,9 +103,9 @@ export default function HostDashboardPage() {
           <div className="flex flex-col items-center gap-3 rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-14 text-center">
             <p className="m-0 max-w-md text-sm leading-relaxed text-[#6E6E73]">
               {userId ? (
-                <>No hosts linked to this account yet — on your host machine run <span className="font-mono text-black">tor-host login</span> then <span className="font-mono text-black">tor-host link</span>, and they appear here in any browser.</>
+                <>No hosts linked to this account yet, on your host machine run <span className="font-mono text-black">tor-host login</span> then <span className="font-mono text-black">tor-host link</span>, and they appear here in any browser.</>
               ) : (
-                <>Log in to see your linked hosts anywhere, or paste an address to track it in this browser. Serving itself needs no account — every host is already public on <Link href="/network" className="text-[#2563EB] underline">/network</Link>.</>
+                <>Log in to see your linked hosts anywhere, or paste an address to track it in this browser. Serving itself needs no account, every host is already public on <Link href="/network" className="text-[#2563EB] underline">/network</Link>.</>
               )}
             </p>
             <div className="flex w-full max-w-md gap-2">
@@ -130,7 +130,7 @@ export default function HostDashboardPage() {
             <div className="flex flex-wrap items-end gap-6 rounded-[14px] border border-[#E5E5E0] p-5">
               <div><div className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Withdrawable earnings</div>
                 <div className="font-mono text-[28px]">{totalEarned.toString()} <span className="text-sm text-[#6E6E73]">units</span></div></div>
-              <p className="m-0 max-w-md font-mono text-[11px] leading-relaxed text-[#8F8F8F]">withdrawals need the host key — run <span className="text-black">cast send … withdraw()</span> where the key lives (Ledger-tapped over threshold). In-app withdraw lands with the security slice.</p>
+              <p className="m-0 max-w-md font-mono text-[11px] leading-relaxed text-[#8F8F8F]">withdrawals need the host key, run <span className="text-black">cast send … withdraw()</span> where the key lives (Ledger-tapped over threshold). In-app withdraw lands with the security slice.</p>
             </div>
             {detail.map((d: any) => {
               const toks = (d.receipts ?? []).reduce((a: number, r: any) => a + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0);
@@ -161,7 +161,7 @@ export default function HostDashboardPage() {
                     <span>heartbeat {d.lastHeartbeat ? new Date(d.lastHeartbeat * 1000).toISOString().slice(11, 16) + " UTC" : "—"}</span>
                     <span>region {d.region ?? "unreported"}</span>
                     <span>reliability {d.reliability === null || d.reliability === undefined ? "—" : `${(d.reliability * 100).toFixed(1)}%`}</span>
-                    {d.challenged ? <span className="text-[#DC2626]">CHALLENGED — under review</span> : null}
+                    {d.challenged ? <span className="text-[#DC2626]">CHALLENGED, under review</span> : null}
                   </div>
                 </div>
               );

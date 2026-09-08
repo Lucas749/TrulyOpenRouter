@@ -7,7 +7,7 @@ import { MOCK_TAPS, MOCK_TAPS_META } from "../../lib/mock";
 
 // Tap-gated action queue. Backend owns all trust: this UI renders the tap
 // list, shows the device instruction verbatim, and relays Verify/Execute.
-// It never signs anything — buttons say Verify / Execute, never "Sign".
+// It never signs anything, buttons say Verify / Execute, never "Sign".
 
 interface Tap {
   id: string;
@@ -175,7 +175,7 @@ export default function TapQueue({ mock }: { mock: boolean }) {
           ) : (
             <span className="font-mono text-xs text-[#8F8F8F]">—</span>
           )}
-          {ringBackend === "env" && <span className="text-[11px] text-[#8A5300]">No ring configured — falling back to the env key</span>}
+          {ringBackend === "env" && <span className="text-[11px] text-[#8A5300]">No ring configured, falling back to the env key</span>}
         </div>
       </section>
 

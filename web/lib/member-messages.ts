@@ -1,7 +1,7 @@
 // Canonical message formats + presentation helpers for team spend management.
 // CLIENT-SAFE: no fs, no viem, no secrets. Importable from both server routes
 // (via members.ts re-export) and browser components. The canonical strings here
-// are the trust root — server verifies signatures over EXACTLY these bytes.
+// are the trust root, server verifies signatures over EXACTLY these bytes.
 
 // --- Canonical messages (EIP-191 personal_sign via Privy useSignMessage) ------
 

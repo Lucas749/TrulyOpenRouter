@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
 interface Receipt {
   id: string;
@@ -100,7 +100,7 @@ export default function UsagePage() {
               ))
             ) : (
               <p className="rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-10 text-center text-sm text-[#8F8F8F]">
-                no wallet-attributed calls yet — web chats currently bill shared dev quota (wallet
+                no wallet-attributed calls yet, web chats currently bill shared dev quota (wallet
                 identity attaches next); per-key usage is under API keys
               </p>
             )}
@@ -119,7 +119,7 @@ export default function UsagePage() {
               ))
             ) : (
               <p className="rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-10 text-center text-sm text-[#8F8F8F]">
-                no API keys in this browser — <Link href="/api" className="text-[#2563EB] underline">create one</Link>
+                no API keys in this browser, <Link href="/api" className="text-[#2563EB] underline">create one</Link>
               </p>
             )}
           </>

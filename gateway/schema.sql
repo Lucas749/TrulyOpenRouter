@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS host_meta (
   owner_user_id text
 );
 CREATE INDEX IF NOT EXISTS host_meta_owner_idx ON host_meta (owner_user_id);
+ALTER TABLE host_meta ADD COLUMN IF NOT EXISTS geo text;
+ALTER TABLE host_meta ADD COLUMN IF NOT EXISTS geo_at bigint;
 
 -- Device-code login (CLI link flow, 10-min TTL).
 CREATE TABLE IF NOT EXISTS device_codes (

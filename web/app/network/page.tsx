@@ -11,7 +11,7 @@ const receiptUrl = (r: any): string => (r.debitTx ? txUrl(r.debitTx) : topicUrl(
 import { MockBanner, useMock } from "../components/mock";
 import { MOCK_HOSTS, type MockHost } from "../../lib/mock";
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
 interface Host {
   address: string;
@@ -187,12 +187,12 @@ export default function NetworkPage() {
                       <td className="px-4 py-3 font-mono text-xs"><Activity className="mr-1 inline h-3.5 w-3.5" />{h.calls24h ?? "—"}</td>
                       <td className="px-4 py-3 font-mono text-xs">{h.reliability === null || h.reliability === undefined ? "—" : `${(h.reliability * 100).toFixed(1)}%`}</td>
                       <td className="px-4 py-3 font-mono text-xs"><VerifyCell v={h.verification ?? null} /></td>
-                      <td className="px-4 py-3 font-mono text-xs">{h.region ?? "—"}</td>
+                      <td className="px-4 py-3 font-mono text-xs" title={h.geo ? "observed from host IP" : h.region ? "host self-report" : "unknown yet"}>{h.geo ?? h.region ?? "—"}</td>
                       <td className="px-4 py-3"><StatusDot active={h.active} /></td>
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-[#8F8F8F]">no hosts registered yet — <Link href="/host" className="text-[#2563EB] underline">be the first to serve</Link></td></tr>
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-[#8F8F8F]">no hosts registered yet, <Link href="/host" className="text-[#2563EB] underline">be the first to serve</Link></td></tr>
                 )}
               </tbody>
             </table>
@@ -211,7 +211,7 @@ export default function NetworkPage() {
                 </div>
               ))
             ) : (
-              <p className="flex items-center gap-2 rounded-xl border border-dashed border-[#E5E5E0] px-4 py-8 text-sm text-[#8F8F8F]"><Clock className="h-4 w-4" /> no settled calls yet — make the first one from /chat</p>
+              <p className="flex items-center gap-2 rounded-xl border border-dashed border-[#E5E5E0] px-4 py-8 text-sm text-[#8F8F8F]"><Clock className="h-4 w-4" /> no settled calls yet, make the first one from /chat</p>
             )}
           </div>
         )}

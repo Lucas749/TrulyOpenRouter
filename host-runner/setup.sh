@@ -91,4 +91,21 @@ else
 fi
 
 echo ""
+echo "==> account link (every host needs one: login links this host to your dashboard)"
+if command -v tor-host >/dev/null 2>&1; then
+  if [ "$DRY" = 1 ]; then
+    echo "would run: tor-host login (approve at /host/link) && tor-host link"
+  else
+    echo "This shows a code: approve it at /host/link while logged in (Privy email login)."
+    if tor-host login; then
+      tor-host link && echo "linked ✓ see it at /host/dashboard (any browser, once logged in)"
+    else
+      echo "login skipped — link later with: tor-host login && tor-host link"
+    fi
+  fi
+else
+  echo "install the CLI first (sh quickstart.sh step 1), then: tor-host login && tor-host link"
+fi
+
+echo ""
 echo "done — you're serving. Track earnings at /host/dashboard, leave anytime with: tor-host leave"

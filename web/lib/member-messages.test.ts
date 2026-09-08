@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { approvalMessage, memberActionMessage, parseActionMessage, shortId, spendBarState } from "../lib/member-messages";
 
-describe("canonical message formats (PINNED — drift breaks live signatures)", () => {
+describe("canonical message formats (PINNED, drift breaks live signatures)", () => {
   it("memberActionMessage sorts fields and appends expiry", () => {
     expect(memberActionMessage("member-add", { orgId: "o1", did: "d1", wallet: "0xabc", role: "member" }, 123)).toBe(
       ["tor-team:member-add", "did: d1", "orgId: o1", "role: member", "wallet: 0xabc", "expires: 123"].join("\n"),

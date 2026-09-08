@@ -16,7 +16,7 @@ export type MemberStatus = "active" | "removed";
 export interface Member {
   did: string; // Privy DID, stable identity
   email?: string;
-  walletAddress: string; // checksummed EVM address — approval signer identity
+  walletAddress: string; // checksummed EVM address, approval signer identity
   role: MemberRole;
   keyPrefix?: string; // bound tor API key prefix (spend attribution via receipts)
   allowanceCredits?: number; // per-period override; undefined = inherit org default
@@ -45,7 +45,7 @@ export interface IncreaseRequest {
   decidedByDid?: string;
   // Wallet-signature audit trail (owner personal_sign, verified server-side):
   decisionSignature?: string;
-  decisionSigner?: string; // recovered address — must equal owner's wallet
+  decisionSigner?: string; // recovered address, must equal owner's wallet
   decisionMessage?: string;
   decisionExpires?: number;
 }
@@ -59,7 +59,7 @@ interface MembersFile {
 // Postgres when DATABASE_URL is set (RDS in prod), else gitignored JSON.
 // Whole-state load/save keeps every function below identical on both backends;
 // teams are tiny (dozens of rows), so this stays fast. Same read-modify-write
-// race as the file version — acceptable at this scale, noted honestly.
+// race as the file version, acceptable at this scale, noted honestly.
 
 interface MemberBackend {
   load(): Promise<MembersFile>;
@@ -308,7 +308,7 @@ export async function verifyActionMessage(
   for (const [k, v] of Object.entries(expected)) {
     if (parsed.fields[k] !== v) throw new Error(`message does not bind ${k}`);
   }
-  if (now > parsed.expires) throw new Error("approval expired — sign again");
+  if (now > parsed.expires) throw new Error("approval expired, sign again");
   // EIP-191, same envelope Privy useSignMessage produces (viem roundtrip covers
   // CI; live embedded-wallet check is a manual TEST-LIST item).
   return recoverMessageAddress({ message, signature: signature as `0x${string}` });
@@ -371,7 +371,7 @@ export async function decideRequest(
     throw new Error("signature does not match this decision");
   }
   const exp = Number((message.match(/^expires: (\d+)$/m) ?? [])[1]);
-  if (!Number.isFinite(exp) || now > exp) throw new Error("approval expired — sign again");
+  if (!Number.isFinite(exp) || now > exp) throw new Error("approval expired, sign again");
   r.status = decision === "approve" ? "approved" : "denied";
   r.decidedAt = now;
   r.decidedByDid = decidedByDid;
@@ -381,7 +381,7 @@ export async function decideRequest(
   r.decisionExpires = exp;
   await write(s);
   if (r.status === "approved") {
-    // Fresh read/write inside (also resets the allowance period — documented).
+    // Fresh read/write inside (also resets the allowance period, documented).
     await setMemberAllowance(r.orgId, r.memberDid, r.amountCredits);
   }
   return r;

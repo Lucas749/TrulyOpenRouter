@@ -18,6 +18,7 @@ import { loadReferences, MemoryVerifier, PgVerifier, PROBES, spotCheck, type Che
 import { createPaidFetch } from "./payer.js";
 import { settleCall, type DebitFn } from "./settle.js";
 import { FileTapStore, PgTapStore, tapInstruction, type TapKind, type TapStatus, type TapStore, verifyTapTransfer } from "./taps.js";
+import { cachedGeo } from "./geo.js";
 import { createTapExecutor } from "./tap-exec.js";
 
 export interface GatewayOptions {
@@ -304,19 +305,23 @@ const ver = opts.verifier;
       // mapping, else DEFAULT_PAYER (dev/test), else "dev" (fails closed on vault debit).
       const payer =
         (keyPrefix && budgetAddressFor(keyPrefix)) || process.env.DEFAULT_PAYER || "dev";
-      const settled = opts.settle
-        ? await settleCall(
-            {
-              user: payer,
-              host,
-              promptTokens: tokensIn,
-              completionTokens: tokensOut,
-              // bytes32 link to the receipt: sha256 of the receipt id (ids are hex, not bytes).
-              receiptHash: receipt ? (`0x${sha256hex(receipt)}` as `0x${string}`) : (`0x${"00".repeat(32)}` as `0x${string}`),
-            },
-            opts.settle,
-          )
-        : { settled: false, amountCredits: 0n, hostShare: 0n };
+      // "dev" = anonymous demo call: no wallet to debit, so it serves free and
+      // unsettled by design (receipt still proves what was served). Real users
+      // bring a key (budget account) or DEFAULT_PAYER; both settle normally.
+      const settled =
+        opts.settle && payer !== "dev"
+          ? await settleCall(
+              {
+                user: payer,
+                host,
+                promptTokens: tokensIn,
+                completionTokens: tokensOut,
+                // bytes32 link to the receipt: sha256 of the receipt id (ids are hex, not bytes).
+                receiptHash: receipt ? (`0x${sha256hex(receipt)}` as `0x${string}`) : (`0x${"00".repeat(32)}` as `0x${string}`),
+              },
+              opts.settle,
+            )
+          : { settled: false, amountCredits: 0n, hostShare: 0n };
       if (opts.receipts && receipt) {
         await opts.receipts.annotate(receipt, {
           amountCredits: String(settled.amountCredits),
@@ -386,9 +391,10 @@ const ver = opts.verifier;
       data: await Promise.all(
         [...seen.values()].map(async (h) => {
           const success24h = all.filter((r) => r.host === h.address && now - r.ts < day).length;
-          const [fail24h, region, latencyMs, reliability, verification] = await Promise.all([
+          const [fail24h, region, geo, latencyMs, reliability, verification] = await Promise.all([
             opts.health?.fails24h(h.address) ?? 0,
             opts.meta?.regionOf(h.address) ?? null,
+            opts.meta ? cachedGeo(h.address, h.endpoint, opts.meta).catch(() => null) : null,
             opts.health?.latencyMs(h.address) ?? null,
             opts.health?.reliability(success24h, h.address) ?? null,
             opts.verifier?.verification(h.address) ?? null,
@@ -405,7 +411,8 @@ const ver = opts.verifier;
           lastHeartbeat: h.lastHeartbeat,
           calls24h: success24h,
           fail24h,
-          region, // self-reported, never verified geo
+          region, // self-reported slug (may be null)
+          geo, // observed IP geo (see geo.ts), null until first resolve
           latencyMs, // observed EMA, null until served
           reliability,
           verification,
@@ -563,6 +570,7 @@ const ver = opts.verifier;
       lastHeartbeat: found.lastHeartbeat,
       challenged: found.challenged ?? null,
       region: (await opts.meta?.regionOf(found.address)) ?? null,
+      geo: opts.meta ? await cachedGeo(found.address, found.endpoint, opts.meta).catch(() => null) : null,
       calls24h: success24h,
       fail24h: (await opts.health?.fails24h(found.address)) ?? 0,
       reliability: (await opts.health?.reliability(success24h, found.address)) ?? null,

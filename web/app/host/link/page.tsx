@@ -6,7 +6,7 @@ import { Suspense, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import LoginButton from "../../components/login-button";
 
-const GATEWAY = "/api/gw"; // same-origin proxy — never localhost (browser prompt + mixed content)
+const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
 function LinkInner() {
   const params = useSearchParams();
@@ -27,7 +27,7 @@ function LinkInner() {
       });
       if (!r.ok) throw new Error((await r.json()).error?.message ?? r.status);
       setState("done");
-      setMsg("host linked — back in your terminal, login completes automatically");
+      setMsg("host linked, back in your terminal, login completes automatically");
     } catch (e: any) {
       setState("error");
       setMsg(String(e?.message ?? e).slice(0, 160));
@@ -45,7 +45,7 @@ function LinkInner() {
       </header>
       <main className="mx-auto flex max-w-[720px] flex-col items-center gap-4 px-6 py-14 text-center">
         {!code ? (
-          <p className="text-sm text-[#6E6E73]">No code — run <span className="font-mono text-black">tor-host login</span> in your terminal, then open the link it prints.</p>
+          <p className="text-sm text-[#6E6E73]">No code, run <span className="font-mono text-black">tor-host login</span> in your terminal, then open the link it prints.</p>
         ) : !ready ? (
           <div className="h-10 w-48 animate-pulse rounded-full bg-[#F4F4F4]" />
         ) : !authenticated ? (
