@@ -7,7 +7,7 @@ import { createPublicClient, createWalletClient, custom, http, parseAbi } from "
 import { hederaTestnet } from "../../lib/hedera-chains";
 import { MockBanner, useMock } from "../components/mock";
 import { ApiKeysPanel } from "../api/page";
-import OrgMembers from "../team/members";
+import TeamOrgs from "../team/orgs";
 import TapQueue from "../security/taps";
 
 const VAULT = "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576";
@@ -23,12 +23,6 @@ interface VaultTx {
   ts: number;
   hbar: number;
   kind: string;
-}
-
-interface Org {
-  id: string;
-  display_name: string;
-  default_key_quorum_id: string;
 }
 
 const TABS = [
@@ -73,9 +67,6 @@ export default function AccountPage() {
   const [hederaId, setHederaId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-
-  // team orgs
-  const [orgs, setOrgs] = useState<Org[] | null>(null);
 
   useEffect(() => {
     if (!address) return;
@@ -177,18 +168,6 @@ export default function AccountPage() {
       }
     })();
   }, [address]);
-
-  useEffect(() => {
-    if (tab !== "team" || mock) return;
-    (async () => {
-      try {
-        const r: any = await (await fetch("/api/team/orgs")).json();
-        setOrgs(r.data ?? []);
-      } catch {
-        setOrgs([]);
-      }
-    })();
-  }, [tab, mock]);
 
   const shownName = savedName ?? displayName ?? email ?? (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Account");
   const initial = shownName.replace(/^did:privy:/, "").charAt(0).toUpperCase() || "?";
@@ -453,19 +432,9 @@ export default function AccountPage() {
                 <div className="flex flex-col gap-6">
                   <div>
                     <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">Team</h1>
-                    <p className="m-0 mt-1 text-sm text-[#6E6E73]">Shared wallets, member allowances, signed approvals. Owners see everything; members see their own caps.</p>
+                    <p className="m-0 mt-1 text-sm text-[#6E6E73]">Create teams (quorum → org → wallet + spending policy), invite members by Privy DID, set allowances, approve increases. Owners see everything; members see their own caps.</p>
                   </div>
-                  {(orgs ?? []).map((o) => (
-                    <div key={o.id} className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-4">
-                      <div className="flex flex-wrap items-center gap-x-3">
-                        <span className="text-sm font-medium">{o.display_name}</span>
-                        <span className="font-mono text-xs text-[#6E6E73]">{o.id}</span>
-                      </div>
-                      <OrgMembers orgId={o.id} me={me} mock={mock} />
-                    </div>
-                  ))}
-                  {orgs && !orgs.length && <p className="m-0 text-sm text-[#8F8F8F]">no teams yet — create one on the Teams page</p>}
-                  <Link href="/team" className="text-sm text-[#2563EB] underline">Open full Teams page →</Link>
+                  <TeamOrgs me={me} mock={mock} />
                 </div>
               )}
 
