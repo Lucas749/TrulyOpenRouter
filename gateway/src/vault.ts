@@ -12,6 +12,23 @@ export interface VaultConfig {
   operatorKey: Hex; // gateway role key (Key Ring in prod, env in dev)
 }
 
+/// @notice Read-only credit check (no key needed). Used to gate wallet calls
+/// BEFORE serving: 0 credits = 402 subscribe-first. Null when unreadable
+/// (vault unconfigured) — never blocks on infra failure.
+export async function readVaultCredits(rpcUrl: string, vault: Address, user: Address): Promise<bigint | null> {
+  try {
+    const publicClient = createPublicClient({ transport: http(rpcUrl) });
+    return (await publicClient.readContract({
+      address: vault,
+      abi: parseAbi(["function credits(address) view returns (uint256)"]),
+      functionName: "credits",
+      args: [user],
+    })) as bigint;
+  } catch {
+    return null;
+  }
+}
+
 /// @notice Real Vault debit for the gateway settle path. Test against anvil, run on testnet.
 export function createVaultDebit(cfg: VaultConfig): DebitFn {
   const publicClient = createPublicClient({ transport: http(cfg.rpcUrl) });

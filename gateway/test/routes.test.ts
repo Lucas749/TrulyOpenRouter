@@ -126,6 +126,89 @@ describe("routes", () => {
     expect(await (await fetch(`${base}/api/receipts/nope`)).status).toBe(404);
   });
 
+  it("402s wallet calls with zero vault credits, serves funded ones", async () => {
+    // viem eth_call goes through global fetch: answer credits, pass the rest through.
+    // Real nodes return 32-byte padded uint256; viem rejects short hex ("0x0").
+    const pad = (hex: string) => "0x" + hex.replace(/^0x/, "").padStart(64, "0");
+    const balances: Record<string, string> = {};
+    const orig = globalThis.fetch;
+    // viem batches JSON-RPC (arrays) — answer each item, in order. viem reads
+    // headers.get() + text()/body, so the stub must look like a real Response.
+    const jres = (data: unknown) => {
+      const text = JSON.stringify(data);
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => text,
+        json: async () => data,
+        body: new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode(text)); c.close(); } }),
+      } as any;
+    };
+    const answer = (item: any) => {
+      if (item.method === "eth_chainId") return { jsonrpc: "2.0", id: item.id, result: "0x128" };
+      if (item.method === "eth_call") {
+        // credits(address): user is the LAST 40 hex of calldata, not `to` (that's the vault).
+        const data: string = item.params?.[0]?.data ?? "";
+        const user = `0x${data.slice(-40)}`.toLowerCase();
+        return { jsonrpc: "2.0", id: item.id, result: pad(balances[user] ?? "0x0") };
+      }
+      return undefined;
+    };
+    (globalThis as any).fetch = async (url: any, init: any) => {
+      try {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (Array.isArray(body)) {
+          const out = body.map(answer);
+          if (out.every(Boolean)) return jres(out);
+        } else {
+          const one = answer(body);
+          if (one) return jres(one);
+        }
+      } catch {}
+      return orig(url, init);
+    };
+    const stub = express();
+    stub.use(express.json());
+    stub.post("/v1/chat/completions", (_req, res) => res.json({ choices: [{ message: { content: "ok" } }] }));
+    const stubSrv: Server = stub.listen(0);
+    const stubPort = (stubSrv.address() as any).port;
+    const app = createApp({
+      vaultAddress: "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576" as any,
+      rpcUrl: "http://127.0.0.1:1",
+      fallbackUpstream: `http://127.0.0.1:${stubPort}`,
+    });
+    const srv: Server = app.listen(0);
+    try {
+      const port = (srv.address() as any).port;
+      const chat = (handle: string, text: string) =>
+        fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "llama-3.1-8b", messages: [{ role: "user", content: text }], userHandle: handle }),
+        });
+      const broke = "0x0000000000000000000000000000000000000001";
+      const r402 = await chat(broke, "unfunded attempt");
+      expect(r402.status).toBe(402);
+      expect(((await r402.json()) as any).error.type).toBe("payment_required");
+      balances[broke] = "0x64"; // 100 credits (padded by the stub)
+      const r200 = await chat(broke, "funded attempt");
+      expect(r200.status).toBe(200);
+      // anonymous dev calls stay a free demo tier (no wallet to check).
+      // (this app has no receipt store, so assert served-status, not receipt)
+      const anon = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "llama-3.1-8b", messages: [{ role: "user", content: "anon demo" }] }),
+      });
+      expect(anon.status).toBe(200);
+    } finally {
+      globalThis.fetch = orig;
+      srv.close();
+      stubSrv.close();
+    }
+  });
+
   it("attributes browser calls to wallet handles (observability only)", async () => {
     const addr = "0x1234567890abcdef1234567890abcdef12345678";
     const chat: any = await (

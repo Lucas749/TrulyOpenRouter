@@ -8,7 +8,7 @@ import { allowanceExceeded, type CapStore, PgCapStore, SpendCapStore, sumSpent }
 import { buildReceipt, MemoryReceiptLog, PgReceiptLog, type ReceiptLog, sha256hex } from "./receipts.js";
 import { dbEnabled, ensureSchema } from "./db.js";
 import { type Health, MemoryHealth, PgHealth } from "./health.js";
-import { createVaultDebit } from "./vault.js";
+import { createVaultDebit, readVaultCredits } from "./vault.js";
 import { type HostMeta, MemoryHostMeta, PgHostMeta, validRegion } from "./hostmeta.js";
 import { logReceiptHcs, type HcsConfig } from "./hcs.js";
 import { budgetAddressFor } from "./budget.js";
@@ -267,6 +267,23 @@ export function createApp(opts: GatewayOptions = {}) {
         res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
+      }
+      // Wallet callers prepay via subscription: 0 vault credits = 402 before
+      // any inference is spent. Key callers enforce via caps (429); anonymous
+      // dev calls stay a free demo tier (can't identify them to charge).
+      // Unreadable vault (unconfigured/down) never blocks — fail open, settle decides.
+      if (walletHandle && !keyPrefix && opts.vaultAddress && opts.rpcUrl) {
+        const walletAddr = walletHandle.slice("wallet:".length) as Address;
+        const credits = await readVaultCredits(opts.rpcUrl, opts.vaultAddress, walletAddr);
+        if (credits !== null && credits <= 0n) {
+          res.status(402).json({
+            error: {
+              message: "out of credits — subscribe to continue",
+              type: "payment_required",
+            },
+          });
+          return;
+        }
       }
       emit("routed", { model });
       const { endpoint, host } = await selectUpstream(model, async () => {

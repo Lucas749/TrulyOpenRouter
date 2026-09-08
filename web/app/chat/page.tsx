@@ -14,6 +14,7 @@ interface Msg {
   content: string;
   receipt?: string;
   settled?: boolean;
+  subscribeCta?: boolean;
 }
 
 interface Thread {
@@ -135,9 +136,14 @@ export default function ChatPage() {
       const d = await r.json();
       apply({
         role: "assistant",
-        content: r.ok ? String(d.choices?.[0]?.message?.content ?? "…") : `Error: ${d.error?.message}`,
+        content: r.ok
+          ? String(d.choices?.[0]?.message?.content ?? "…")
+          : r.status === 402
+            ? "Out of credits — subscribe to keep chatting settled."
+            : `Error: ${d.error?.message}`,
         receipt: d.tor_receipt,
         settled: d.tor_settled,
+        subscribeCta: r.status === 402,
       });
     } catch (e) {
       apply({ role: "assistant", content: `Gateway unreachable (${GATEWAY}). Is it running?` });
@@ -240,6 +246,13 @@ export default function ChatPage() {
                   ) : (
                     <Link href="/onboarding" className="underline">demo reply — subscribe to settle onchain</Link>
                   )}
+                </p>
+              )}
+              {m.subscribeCta && (
+                <p className="m-0">
+                  <Link href="/onboarding" className="rounded-full bg-black px-4 py-1.5 text-xs text-white">
+                    Subscribe
+                  </Link>
                 </p>
               )}
             </div>
