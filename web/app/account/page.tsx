@@ -133,7 +133,7 @@ export default function AccountPage() {
             </div>
               <div className="flex flex-col gap-1.5 rounded-[14px] border border-[#E5E5E0] p-4">
                 <span className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Wallets</span>
-                <span className="break-all font-mono text-xs">EVM {address ?? "—"}</span>
+                <span className="break-all font-mono text-xs">{address ?? "—"}</span>
                 {hederaId ? (
                   <a
                     href={`https://hashscan.io/testnet/account/${hederaId}`}
@@ -177,6 +177,7 @@ export default function AccountPage() {
                 {busy ? "confirm in wallet…" : "Refund unused"}
               </button>
               <Link href="/api" className="flex h-10 flex-1 items-center justify-center rounded-full border border-black/10 text-sm">API keys</Link>
+              <Link href="/team" className="flex h-10 flex-1 items-center justify-center rounded-full border border-black/10 text-sm">Team pools</Link>
             </div>
             {msg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{msg}</p>}
             <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">balances read live from Hedera testnet (relay + vault {VAULT.slice(0, 10)}…)</p>
