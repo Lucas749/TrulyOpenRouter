@@ -82,7 +82,7 @@ export interface MockTeamMember {
   did: string;
   email: string | null;
   walletAddress: string | null;
-  role: "owner" | "member";
+  role: "owner" | "manager" | "member";
   keyPrefix: string | null;
   allowanceCredits: number | null;
   effectiveCredits: number | null;
