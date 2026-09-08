@@ -111,6 +111,33 @@ describe("allowance enforcement in chat flow", () => {
     }
   });
 
+  it("drip validates, refuses existing accounts, needs backend keys", async () => {
+    const app = createApp({ adminToken: "t" });
+    const srv = app.listen(0);
+    const port = (srv.address() as any).port;
+    const post = (body: unknown) =>
+      fetch(`http://127.0.0.1:${port}/api/admin/drip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer t" },
+        body: JSON.stringify(body),
+      });
+    try {
+      expect((await post({ address: "junk" })).status).toBe(400);
+      // Mirror stub: account exists -> 409, never touches keys.
+      const orig = globalThis.fetch;
+      (globalThis as any).fetch = async (url: any, init: any) =>
+        String(url).includes("mirrornode") ? ({ ok: true } as any) : orig(url, init);
+      try {
+        const dup = await post({ address: "0x1234567890abcdef1234567890abcdef12345678" });
+        expect(dup.status).toBe(409);
+      } finally {
+        globalThis.fetch = orig;
+      }
+    } finally {
+      srv.close();
+    }
+  });
+
   it("admin surface fails closed without a token and rejects bad tokens", async () => {
     delete process.env.GATEWAY_ADMIN_TOKEN;
     const app = createApp({ keys: new MemoryKeyStore(), spendCaps: new SpendCapStore() });

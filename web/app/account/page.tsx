@@ -155,7 +155,29 @@ export default function AccountPage() {
                     Hedera {hederaId} ↗
                   </a>
                 ) : (
-                    <span className="text-[11px] text-[#6E6E73]">Paste this address into <a href="https://faucet.hedera.com" target="_blank" rel="noreferrer" className="text-[#2563EB] underline">faucet.hedera.com</a>, the transfer itself creates your Hedera account.</span>
+                  <span className="flex flex-wrap items-center gap-2 text-[11px] text-[#6E6E73]">
+                    <button
+                      onClick={async () => {
+                        setMsg(null);
+                        try {
+                          const r = await fetch("/api/account/drip", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ address }),
+                          });
+                          const d: any = await r.json();
+                          if (!r.ok) throw new Error(d.error ?? r.status);
+                          setMsg(`account creating ✓ ${String(d.tx).slice(0, 18)}… — refresh in ~10s`);
+                        } catch (e: any) {
+                          setMsg(`drip failed: ${String(e?.message ?? e).slice(0, 160)}`);
+                        }
+                      }}
+                      className="rounded-full bg-black px-3 py-1 text-[11px] text-white"
+                    >
+                      Create my Hedera account
+                    </button>
+                    free, ~10s, then faucet for subscribe funds
+                  </span>
                 )}
               </div>
             {recentCalls.length > 0 && (

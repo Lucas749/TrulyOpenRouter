@@ -1,5 +1,5 @@
 import express from "express";
-import { createPublicClient, http, parseAbi, type Address } from "viem";
+import { createPublicClient, createWalletClient, http, parseAbi, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, fileChallenge, type HostInfo } from "./registry.js";
@@ -729,6 +729,37 @@ const ver = opts.verifier;
     }
     return true;
   }
+
+  // One-click Hedera account creation: sends 0.5 HBAR from the operator to a
+  // fresh EVM address, which auto-creates its 0.0.x account (HIP-583 hollow
+  // account). Only-if-nonexistent (mirror-checked) so each address drips once —
+  // self-limiting against drain. The 10 HBAR subscribe still needs the faucet;
+  // this just guarantees every user HAS a pasteable account id first.
+  app.post("/api/admin/drip", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const address = String(req.body?.address ?? "").toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(address)) {
+        return res.status(400).json({ error: { message: "address must be 0x + 40 hex", type: "invalid_request" } });
+      }
+      const mirror = process.env.MIRROR_URL ?? "https://testnet.mirrornode.hedera.com";
+      const exists = await fetch(`${mirror}/api/v1/accounts/${address}`).then((r) => r.ok).catch(() => true);
+      if (exists) return res.status(409).json({ error: { message: "account already exists — use the faucet", type: "already_created" } });
+      const rpcUrl = process.env.RPC_URL ?? "";
+      const operatorKey = process.env.OPERATOR_KEY ?? "";
+      if (!rpcUrl || !operatorKey) {
+        return res.status(501).json({ error: { message: "RPC_URL + OPERATOR_KEY required", type: "unavailable" } });
+      }
+      const { privateKeyToAccount } = await import("viem/accounts");
+      const account = privateKeyToAccount(operatorKey as `0x${string}`);
+      const wallet = createWalletClient({ account, transport: http(rpcUrl) });
+      // chainId auto-detected from RPC (viem eth_chainId); explicit undefined satisfies the type.
+      const hash = await wallet.sendTransaction({ to: address as `0x${string}`, value: 50000000n, chain: undefined });
+      res.json({ tx: hash, account: null, note: "account creates on confirmation — refresh in ~10s" });
+    } catch (e: any) {
+      res.status(502).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "upstream_error" } });
+    }
+  });
 
   app.post("/api/admin/caps", async (req, res) => {
     if (!requireAdmin(req, res)) return;
