@@ -38,7 +38,8 @@ export class MemoryOrgRules implements OrgRuleStore {
   }
 
   async orgsForHandle(handle: string): Promise<OrgRule[]> {
-    return [...this.rules.values()].filter((r) => r.handles.includes(handle));
+    const h = handle.toLowerCase();
+    return [...this.rules.values()].filter((r) => r.handles.some((x) => x.toLowerCase() === h));
   }
 }
 
@@ -75,7 +76,11 @@ export class PgOrgRules implements OrgRuleStore {
   }
 
   async orgsForHandle(handle: string): Promise<OrgRule[]> {
-    const { rows } = await this.q().query(`SELECT * FROM org_rules WHERE handles @> $1::jsonb`, [JSON.stringify([handle])]);
+    // Lower-compared so rows written before the write-time normalization still match.
+    const { rows } = await this.q().query(
+      `SELECT * FROM org_rules WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(handles) h WHERE lower(h) = lower($1))`,
+      [handle],
+    );
     return rows.map((r) => ({
       orgId: r.org_id,
       dailyCapCredits: r.daily_cap != null ? Number(r.daily_cap) : null,

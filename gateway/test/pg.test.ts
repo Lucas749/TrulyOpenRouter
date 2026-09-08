@@ -19,7 +19,7 @@ const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(
 pg("postgres backends", () => {
   beforeEach(async () => {
     await ensureSchema();
-    await db().query(`TRUNCATE receipts, api_keys, spend_caps, taps, host_meta, device_codes, verify_reports, host_fails, host_latency`);
+    await db().query(`TRUNCATE receipts, api_keys, spend_caps, taps, host_meta, device_codes, verify_reports, host_fails, host_latency, org_rules`);
   });
 
   it("receipts roundtrip + annotate", async () => {
