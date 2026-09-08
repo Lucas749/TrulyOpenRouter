@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { useWallets } from "@privy-io/react-auth";
 import LoginButton from "../components/login-button";
 
 const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What can you run on a laptop GPU?", "How do host payouts work?"];
@@ -34,6 +35,12 @@ function loadThreads(): Thread[] {
 }
 
 export default function ChatPage() {
+  const { wallets } = useWallets();
+  // Logged-in identity = first wallet. Server threads follow the login
+  // (any browser); logged-out keeps localStorage threads (this browser only).
+  const handle = wallets[0]?.address ?? null;
+  const handleRef = useRef<string | null>(null);
+  handleRef.current = handle;
   const [models, setModels] = useState<{ id: string }[]>([]);
   const [model, setModel] = useState("qwen2.5:0.5b");
   const [input, setInput] = useState("");
@@ -46,9 +53,19 @@ export default function ChatPage() {
 
   function persist(next: Thread[]) {
     setThreads(next);
-    try {
-      window.localStorage.setItem(THREADS_KEY, JSON.stringify(next.slice(0, 30)));
-    } catch {}
+    const h = handleRef.current;
+    if (h) {
+      // Server history (cross-browser). Fire-and-forget: chat never blocks on it.
+      fetch("/api/chat/threads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user: h, threads: next.slice(0, 30) }),
+      }).catch(() => {});
+    } else {
+      try {
+        window.localStorage.setItem(THREADS_KEY, JSON.stringify(next.slice(0, 30)));
+      } catch {}
+    }
   }
 
   function newChat() {
@@ -63,11 +80,15 @@ export default function ChatPage() {
   }, [msgs, busy]);
 
   useEffect(() => {
-    const existing = loadThreads();
-    setThreads(existing);
-    if (existing.length && !currentId) setCurrentId(existing[0].id);
+    (async () => {
+      const existing = handle
+        ? ((await (await fetch(`/api/chat/threads?user=${encodeURIComponent(handle)}`)).json().catch(() => ({}))) as any).threads ?? []
+        : loadThreads();
+      setThreads(existing);
+      setCurrentId(existing.length ? existing[0].id : null);
+    })().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handle]);
 
   useEffect(() => {
     fetch(`${GATEWAY}/v1/models`)
@@ -166,7 +187,9 @@ export default function ChatPage() {
               ),
           )}
         </div>
-        <p className="mt-auto px-2 font-mono text-[10px] leading-relaxed text-[#8F8F8F]">history lives in this browser only</p>
+        <p className="mt-auto px-2 font-mono text-[10px] leading-relaxed text-[#8F8F8F]">
+          {handle ? "history follows your login" : "log in to keep history across browsers"}
+        </p>
       </aside>
     <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-2xl flex-1 flex-col px-6">
       <div className="flex items-center justify-end py-3">

@@ -41,3 +41,24 @@ CREATE TABLE IF NOT EXISTS increase_requests (
   decision_expires bigint
 );
 CREATE INDEX IF NOT EXISTS increase_requests_org_idx ON increase_requests (org_id, created_at DESC);
+
+-- Chat threads (logged-in users, keyed by wallet address — client-claimed identity,
+-- own-history only, never authorization). Logged-out users keep localStorage threads.
+CREATE TABLE IF NOT EXISTS chat_threads (
+  user_handle text NOT NULL,
+  thread_id text NOT NULL,
+  title text NOT NULL DEFAULT 'New chat',
+  updated_at bigint NOT NULL,
+  PRIMARY KEY (user_handle, thread_id)
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  user_handle text NOT NULL,
+  thread_id text NOT NULL,
+  idx int NOT NULL,
+  role text NOT NULL,
+  content text NOT NULL,
+  receipt text,
+  settled boolean,
+  ts bigint NOT NULL,
+  PRIMARY KEY (user_handle, thread_id, idx)
+);
