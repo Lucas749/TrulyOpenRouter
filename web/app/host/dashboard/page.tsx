@@ -22,6 +22,36 @@ export function saveClaimed(list: string[]) {
   } catch {}
 }
 
+// Stake lifecycle runs where the host key lives (CLI), never in the browser:
+// copy-paste commands with the exact address filled in.
+function StakeCmds({ address, active }: { address: string; active: boolean }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const cmds: [string, string][] = active
+    ? [["Deregister", `cast send 0xa45461bdefef422a81b22f36ebfd0995c7642dc3 "deregister()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>  # stake unlocks after timelock, release via /security tap`]]
+    : [["Release stake", `cast send 0xa45461bdefef422a81b22f36ebfd0995c7642dc3 "release()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>  # only after deregister + timelock`]];
+  return (
+    <>
+      {cmds.map(([label, cmd]) => (
+        <button
+          key={label}
+          onClick={() => {
+            try {
+              navigator.clipboard?.writeText(cmd).catch(() => {});
+            } catch {}
+            setCopied(label);
+            setTimeout(() => setCopied(null), 1600);
+          }}
+          title={cmd}
+          className="rounded-full border border-black/10 px-3 py-1 font-mono text-[11px] hover:bg-black/5"
+        >
+          {copied === label ? "copied ✓ (swap in your key)" : label}
+        </button>
+      ))}
+      <span className="font-mono text-[10px] text-[#8F8F8F]">host key never leaves your machine</span>
+    </>
+  );
+}
+
 export default function HostDashboardPage() {
   const { user } = usePrivy();
   const userId = user?.id ?? null;
@@ -162,6 +192,10 @@ export default function HostDashboardPage() {
                     <span>region {d.region ?? "unreported"}</span>
                     <span>reliability {d.reliability === null || d.reliability === undefined ? "—" : `${(d.reliability * 100).toFixed(1)}%`}</span>
                     {d.challenged ? <span className="text-[#DC2626]">CHALLENGED, under review</span> : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 border-t border-[#E5E5E0] pt-3">
+                    <StakeCmds address={d.address} active={d.active} />
+                    <a href={`/network/host/${d.address}`} className="ml-auto font-mono text-[11px] text-[#2563EB] underline">receipts →</a>
                   </div>
                 </div>
               );

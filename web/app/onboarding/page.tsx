@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useConnectWallet, usePrivy, useWallets } from "@privy-io/react-auth";
 import { createPublicClient, createWalletClient, custom, http, parseAbi } from "viem";
 import { hederaTestnet } from "../../lib/hedera-chains";
 import LoginButton from "../components/login-button";
@@ -22,6 +22,7 @@ const VAULT_ABI = parseAbi([
 export default function OnboardingPage() {
   const { ready, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
+  const { connectWallet } = useConnectWallet();
   const [credits, setCredits] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -91,8 +92,13 @@ export default function OnboardingPage() {
             <p className="m-0 font-mono text-sm">{address}</p>
           ) : (
             <>
-              <p className="m-0 mb-3 text-sm text-[#6E6E73]">Email login, embedded wallet, no seed phrase.</p>
-              <LoginButton />
+              <p className="m-0 mb-3 text-sm text-[#6E6E73]">Email login, embedded wallet, no seed phrase. Or bring your own wallet.</p>
+              <div className="flex flex-wrap gap-2">
+                <LoginButton />
+                <button onClick={() => connectWallet()} className="flex h-10 items-center rounded-full border border-black/10 px-5 text-sm hover:bg-black/5">
+                  Connect a wallet
+                </button>
+              </div>
             </>
           )}
         </section>

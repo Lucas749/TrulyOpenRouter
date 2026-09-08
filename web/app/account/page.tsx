@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useExportWallet, useLinkAccount, usePrivy, useUnlinkWallet, useWallets } from "@privy-io/react-auth";
 import { createPublicClient, createWalletClient, custom, http, parseAbi } from "viem";
 import { hederaTestnet } from "../../lib/hedera-chains";
 import { MockBanner, useMock } from "../components/mock";
@@ -46,6 +46,10 @@ type TabKey = (typeof TABS)[number]["key"];
 export default function AccountPage() {
   const { ready, authenticated, user, logout } = usePrivy();
   const { wallets } = useWallets();
+  const { linkWallet } = useLinkAccount();
+  const { unlink } = useUnlinkWallet();
+  const { exportWallet } = useExportWallet();
+  const [walletMsg, setWalletMsg] = useState<string | null>(null);
   const [mock, toggleMock] = useMock();
   const [tab, setTab] = useState<TabKey>("profile");
 
@@ -278,7 +282,55 @@ export default function AccountPage() {
 
               {tab === "wallets" && (
                 <div className="flex flex-col gap-6">
-                  <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">Wallets</h1>
+                  <div>
+                    <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">Wallets</h1>
+                    <p className="m-0 mt-1 text-sm text-[#6E6E73]">Embedded wallet plus anything you link. Linking never moves funds.</p>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {wallets.map((w: any) => (
+                      <div key={w.address} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-[#E5E5E0] px-4 py-2.5">
+                        <span className="rounded-full bg-[#F4F4F4] px-2 py-0.5 font-mono text-[10px] text-[#5D5D5D]">
+                          {w.walletClientType === "privy" ? "embedded" : "linked"}
+                        </span>
+                        <span className="break-all font-mono text-xs">{w.address}</span>
+                        {wallets.length > 1 && w.address !== address && (
+                          <button
+                            onClick={async () => {
+                              setWalletMsg(null);
+                              try {
+                                await unlink({ address: w.address });
+                              } catch (e: any) {
+                                setWalletMsg(`unlink failed: ${String(e?.message ?? e).slice(0, 120)}`);
+                              }
+                            }}
+                            className="ml-auto text-[11px] text-[#6E6E73] underline"
+                          >
+                            Unlink
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => linkWallet()} className="rounded-full border border-black/10 px-4 py-1.5 text-xs hover:bg-black/5">
+                        Link a wallet
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setWalletMsg(null);
+                          try {
+                            await exportWallet();
+                          } catch (e: any) {
+                            setWalletMsg(`export failed: ${String(e?.message ?? e).slice(0, 120)}`);
+                          }
+                        }}
+                        className="rounded-full border border-black/10 px-4 py-1.5 text-xs hover:bg-black/5"
+                      >
+                        Export private key
+                      </button>
+                    </div>
+                    {walletMsg && <p className="m-0 font-mono text-xs text-[#B3261E]">{walletMsg}</p>}
+                    <p className="m-0 text-[11px] text-[#8F8F8F]">Export opens Privy secure iframe, the key never touches this page. Store it offline.</p>
+                  </div>
                   <div className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-4">
                     <div className="flex items-center gap-2">
                       <span className="shrink-0 rounded-full bg-black px-2 py-0.5 font-mono text-[10px] text-white">EVM</span>
@@ -386,6 +438,13 @@ export default function AccountPage() {
               {tab === "security" && (
                 <div className="flex flex-col gap-6">
                   <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">Security</h1>
+                  <div className="rounded-[14px] border border-dashed border-black/15 bg-[#F7F7F5] p-4">
+                    <p className="m-0 text-sm font-medium">Rotate key ring</p>
+                    <p className="m-0 mt-1 font-mono text-xs leading-relaxed text-[#5D5D5D]">
+                      wallet-cli ring destroy → ring init (one tap) → re-run gateway/scripts/ring-provision.sh → reboot gateway.
+                      Old ciphertext stops decrypting the moment the password changes. No button here on purpose: rotation touches the trustchain root.
+                    </p>
+                  </div>
                   <TapQueue mock={mock} />
                 </div>
               )}

@@ -316,6 +316,8 @@ export default function Landing() {
               <Link href="/network" className="text-[13px] text-[#2563EB]">Network explorer</Link>
               <Link href="/host" className="text-[13px] text-[#2563EB]">Host dashboard</Link>
               <Link href="/team" className="text-[13px] text-[#2563EB]">Team pools</Link>
+              <Link href="/account" className="text-[13px] text-[#2563EB]">Account settings</Link>
+              <Link href="/security" className="text-[13px] text-[#2563EB]">Security</Link>
             </div>
             <div className="flex flex-col gap-2.5">
               <div className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Build</div>
