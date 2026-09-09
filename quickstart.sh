@@ -109,6 +109,21 @@ if [ "$TUI" = 1 ]; then
     } > /dev/tty 2>/dev/null || true
   }
   st_set() { eval "ST_S_$1=\"$2\"; ST_M_$1=\"$3\""; SPIN_N=$((SPIN_N + 1)); render; }
+  # render_tick IDX — redraw ONLY the active row + tail zone (no screen clear,
+  # no flicker). Layout: header 8 rows, steps at 9..16, divider 18, tail 20...
+  render_tick() {
+    [ "$UI_LOG" = 1 ] || { render; return; }
+    {
+      _tr_row=$((9 + $1))
+      printf '\033[%s;1H\033[K  %s%s%s %s/%s %s  %s%s%s\r\n' "$_tr_row" "$YLW" "$(spin_f)" "$RST" "$1" "7" "$(title "$1")" "$DIM" "$(eval "echo \$ST_M_$1")" "$RST"
+      printf '\033[20;1H\033[J'
+      if [ -f "$QS_LOG" ]; then
+        tr '\r' '\n' < "$QS_LOG" 2>/dev/null | tail -8 | sed -E -e 's/(pulling [0-9a-f]{4})[0-9a-f]*: *([0-9]+%?).*/\1… \2/' | tail -5 | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /'
+      fi
+      if [ -n "$UI_FOOT" ]; then printf '\r\n  %s%s%s\r\n' "$DIM" "$UI_FOOT" "$RST"; fi
+    } > /dev/tty 2>/dev/null || true
+    SPIN_N=$((SPIN_N + 1))
+  }
   st_state() { eval "echo \$ST_S_$1"; }
   step() { CUR=$1; st_set "$1" run "$2"; UI_BODY=""; UI_LOG=0; UI_FOOT=""; render; }
   ok() { st_set "$CUR" ok "$1"; }
@@ -134,7 +149,7 @@ if [ "$TUI" = 1 ]; then
     st_set "$_lr_n" run "$_lr_msg"; UI_BODY=""; UI_LOG=1
     : > "$QS_LOG" || return 1
     "$@" > "$QS_LOG" 2>&1 & _lr_pid=$!
-    while kill -0 "$_lr_pid" 2>/dev/null; do SPIN_N=$((SPIN_N + 1)); render; sleep 0.4; done
+    while kill -0 "$_lr_pid" 2>/dev/null; do render_tick "$_lr_n"; sleep 0.4; done
     wait "$_lr_pid" && _lr_rc=0 || _lr_rc=$?
     UI_LOG=0
     return "$_lr_rc"
@@ -589,7 +604,7 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
       if [ "$TUI" = 1 ]; then
         UI_LOG=1
         fund_wait "$HOST_ADDR" > "$QS_LOG" 2>&1 & _fw_pid=$!
-        while kill -0 "$_fw_pid" 2>/dev/null; do SPIN_N=$((SPIN_N + 1)); render; sleep 2; done
+        while kill -0 "$_fw_pid" 2>/dev/null; do render_tick 7; sleep 2; done
         wait "$_fw_pid" && _fw_rc=0 || _fw_rc=$?
         UI_LOG=0
       else

@@ -85,6 +85,13 @@ function HostOnboardingInner() {
     }
   }, [valid, refresh]);
 
+  // Your terminal registers in the background — flip to live on its own.
+  useEffect(() => {
+    if (!valid || hostState === "live") return;
+    const t = setInterval(refresh, 10000);
+    return () => clearInterval(t);
+  }, [valid, hostState, refresh]);
+
   async function dripFunds() {
     if (!valid) return;
     setDrip("sending");
@@ -181,9 +188,10 @@ function HostOnboardingInner() {
           )}
           {!params.get("address") && owned.length === 0 && !valid ? (
             <div className="mb-3 rounded-lg bg-[#F7F7F5] p-3 text-sm text-[#5D5D5D]">
-              No address yet? Run this once locally — it prints your host address, then come back and paste it:
-              <p className="m-0 mt-2 rounded-lg bg-white p-2 font-mono text-xs">tor-host run --model qwen2.5:0.5b --endpoint https://…</p>
-              <p className="m-0 mt-2 font-mono text-xs text-[#8F8F8F]">looks like 0x91c3…DCE4e (42 chars, 0x + 40 hex)</p>
+              Nothing to paste — your quickstart terminal shows the host address when it needs
+              funds, and opens this page pre-filled automatically. Different machine? Run the
+              quickstart there.
+              <p className="m-0 mt-2 font-mono text-xs text-[#8F8F8F]">a host address looks like 0x91c3…DCE4e (0x + 40 hex)</p>
             </div>
           ) : (
             <p className="m-0 mb-3 text-sm text-[#6E6E73]">
@@ -243,10 +251,15 @@ function HostOnboardingInner() {
             </>
           ) : (
             <>
-              <p className="m-0 mb-3 text-sm text-[#6E6E73]">Back in your terminal — one command registers, stakes, and claims the host for this account:</p>
-              <p className="m-0 rounded-lg bg-[#F7F7F5] p-3 font-mono text-xs">tor-host run --model qwen2.5:0.5b --endpoint https://…</p>
+              <p className="m-0 mb-3 text-sm text-[#6E6E73]">
+                Waiting for your terminal — it registers, stakes, and claims automatically.
+                This flips ✓ on its own, then the dashboard opens.
+              </p>
+              <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">
+                watching {valid ? short(clean) : "…"} · rechecks every 10s
+              </p>
               <button onClick={refresh} disabled={!valid} className="mt-3 h-10 rounded-full border border-black/10 px-4 text-sm disabled:opacity-40">
-                Check registration
+                Check now
               </button>
             </>
           )}
