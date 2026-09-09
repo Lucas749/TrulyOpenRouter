@@ -60,20 +60,58 @@ function HostOnboardingInner() {
   const [drip, setDrip] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [msg, setMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [balances, setBalances] = useState<Record<string, string | null>>({});
+  const [checking, setChecking] = useState(false);
 
   const clean = addr.trim();
   const valid = /^0x[0-9a-fA-F]{40}$/.test(clean);
   const fromOwned = valid && owned.some((a) => a.toLowerCase() === clean.toLowerCase());
 
+  // Balances for every key on this account — one row per machine below.
+  useEffect(() => {
+    if (owned.length === 0) {
+      setBalances({});
+      return;
+    }
+    let stop = false;
+    const loadBal = async () => {
+      try {
+        const client = createPublicClient({ transport: http(RPC) });
+        const pairs = await Promise.all(
+          owned.map(async (a) => {
+            try {
+              const b = await client.getBalance({ address: a as `0x${string}` });
+              return [a.toLowerCase(), formatEther(b)] as const;
+            } catch {
+              return [a.toLowerCase(), null] as const;
+            }
+          }),
+        );
+        if (!stop) setBalances(Object.fromEntries(pairs));
+      } catch {
+        /* offline — rows show balance — */
+      }
+    };
+    void loadBal();
+    const t = setInterval(loadBal, 15000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+  }, [owned]);
+
   const refresh = useCallback(async () => {
     if (!valid) return;
     setMsg(null);
+    setChecking(true);
     try {
       const client = createPublicClient({ transport: http(RPC) });
       const b = await client.getBalance({ address: clean as `0x${string}` });
       setBalance(formatEther(b));
     } catch {
       setBalance(null);
+    } finally {
+      setChecking(false);
     }
     try {
       const r = await fetch(`${GW}/api/hosts/${clean}`);
@@ -159,14 +197,13 @@ function HostOnboardingInner() {
         <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">Serve a model, earn per request</h1>
 
         <section className={`rounded-[14px] border p-5 ${step === 1 ? "border-black" : "border-[#E5E5E0]"}`}>
-          <div className="mb-1 text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">1 · Login {!ready ? "" : authenticated ? "✓" : ""}</div>
+          <div className="mb-1 text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">1 · Your account — uses inference, receives earnings {!ready ? "" : authenticated ? "✓" : ""}</div>
           {!ready ? (
             <div className="h-8 w-40 animate-pulse rounded-full bg-[#F4F4F4]" />
           ) : authenticated ? (
             <p className="m-0 text-sm text-[#6E6E73]">
               Logged in{account ? <> as <span className="font-mono text-black">{short(account)}</span></> : null} —
-              earnings and dashboard attach to this account. Your <em>host key</em> below is a
-              separate machine address that pays the stake.
+              chat credits and host earnings attach here. Serving happens below, on host keys.
             </p>
           ) : (
             <>
@@ -178,29 +215,34 @@ function HostOnboardingInner() {
 
         <section className={`rounded-[14px] border p-5 ${step === 2 ? "border-black" : "border-[#E5E5E0]"} ${!authenticated ? "opacity-50" : ""}`}>
           <div className="mb-1 text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">
-            2 · Fund your host key {funded ? "✓" : ""}
+            2 · Your host keys — serve models, pay stake {funded ? "✓" : ""}
           </div>
-          <p className="m-0 mb-3 font-mono text-[11px] text-[#8F8F8F]">
-            two addresses: your login above receives earnings · the host key below pays stake
+          <p className="m-0 mb-3 text-sm text-[#6E6E73]">
+            One row per machine on this account — pick one to fund (≥ {STAKE_HBAR} HBAR registers it).
           </p>
-          {owned.length > 1 && (
-            <div className="mb-3 flex flex-wrap gap-2">
-              {owned.map((a) => (
-                <button
-                  key={a}
-                  onClick={() => {
-                    touchedRef.current = true;
-                    setAddr(a);
-                  }}
-                  className={`h-9 rounded-full border px-4 font-mono text-xs ${a.toLowerCase() === clean.toLowerCase() ? "border-black bg-black text-white" : "border-black/10 hover:bg-black/5"}`}
-                >
-                  {short(a)}
-                </button>
-              ))}
+          {owned.length > 0 && (
+            <div className="mb-3 flex flex-col gap-2">
+              {owned.map((a) => {
+                const bal = balances[a.toLowerCase()];
+                const ready = bal != null && Number(bal) >= STAKE_HBAR;
+                const active = a.toLowerCase() === clean.toLowerCase();
+                return (
+                  <button
+                    key={a}
+                    onClick={() => {
+                      touchedRef.current = true;
+                      setAddr(a);
+                    }}
+                    className={`flex h-11 items-center gap-3 rounded-lg border px-4 text-left ${active ? "border-black bg-black text-white" : "border-black/10 hover:bg-black/5"}`}
+                  >
+                    <span className="font-mono text-xs">{short(a)}</span>
+                    <span className={`ml-auto font-mono text-xs ${active ? "" : ready ? "text-[#0B7A5D]" : "text-[#8A5300]"}`}>
+                      {bal == null ? "balance —" : `${Number(bal).toFixed(2)} HBAR${ready ? " ✓" : ""}`}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          )}
-          {owned.length > 0 && valid && (
-            <p className="m-0 mb-3 font-mono text-[11px] text-[#0B7A5D]">found on your account ✓</p>
           )}
           {!params.get("address") && owned.length === 0 && !valid ? (
             <div className="mb-3 rounded-lg bg-[#F7F7F5] p-3 text-sm text-[#5D5D5D]">
@@ -226,8 +268,8 @@ function HostOnboardingInner() {
               spellCheck={false}
               className="h-10 min-w-[240px] flex-1 rounded-lg border border-black/10 px-3 font-mono text-sm"
             />
-            <button onClick={refresh} disabled={!valid} className="h-10 rounded-full border border-black/10 px-4 text-sm disabled:opacity-40">
-              Check
+            <button onClick={refresh} disabled={!valid || checking} className="h-10 rounded-full border border-black/10 px-4 text-sm disabled:opacity-40">
+              {checking ? "checking…" : "Check"}
             </button>
           </div>
           {valid && (
@@ -277,8 +319,8 @@ function HostOnboardingInner() {
               <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">
                 watching {valid ? short(clean) : "…"} · rechecks every 10s
               </p>
-              <button onClick={refresh} disabled={!valid} className="mt-3 h-10 rounded-full border border-black/10 px-4 text-sm disabled:opacity-40">
-                Check now
+              <button onClick={refresh} disabled={!valid || checking} className="mt-3 h-10 rounded-full border border-black/10 px-4 text-sm disabled:opacity-40">
+                {checking ? "checking…" : "Check now"}
               </button>
             </>
           )}

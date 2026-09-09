@@ -597,7 +597,8 @@ fund_wait() {
       echo "balance: ? (RPC unreachable — retrying, NOT counted as zero)"
     fi
     if [ -e /dev/tty ]; then
-      IFS= read -t 15 -r _ < /dev/tty 2>/dev/null || true
+      # Enter rechecks NOW — and says so, so the keypress is never silent.
+      if IFS= read -t 15 -r _ < /dev/tty 2>/dev/null; then echo "(rechecking…)"; fi
     else
       sleep 15
     fi
