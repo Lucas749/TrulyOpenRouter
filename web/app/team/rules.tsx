@@ -53,8 +53,9 @@ export default function OrgRules({
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [daily, setDaily] = useState("");
-  const [modelInput, setModelInput] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
   const [perTx, setPerTx] = useState("");
+  const [syncedNote, setSyncedNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (mock) {
@@ -114,7 +115,7 @@ export default function OrgRules({
       const d: any = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(typeof d.error === "string" ? d.error : r.status);
       setDaily("");
-      setModelInput("");
+      setPicked([]);
       setPerTx("");
       await load();
     } catch (e: any) {
@@ -144,6 +145,7 @@ export default function OrgRules({
       });
       const d: any = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(typeof d.error === "string" ? d.error : r.status);
+      setSyncedNote(d.gatewaySynced ? "enforced ✓ live on the gateway" : d.gatewayError ? `approved, gateway sync failed: ${d.gatewayError} (retry from inbox)` : null);
       await load();
     } catch (e: any) {
       setErr(String(e?.message ?? e).slice(0, 200));
@@ -190,25 +192,36 @@ export default function OrgRules({
               {busy === "daily" ? "signing…" : "Propose"}
             </button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <input
-              value={modelInput}
-              onChange={(e) => setModelInput(e.target.value)}
-              placeholder="allowed models, comma-separated (empty = all)"
-              className="h-8 min-w-[220px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs"
-            />
-            <button
-              onClick={() => {
-                const models = modelInput.trim() === "" ? null : modelInput.split(",").map((s) => s.trim()).filter(Boolean);
-                propose("models", { models }, "models");
-              }}
-              disabled={busy === "models" || !me?.wallet}
-              className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40"
-            >
-              {busy === "models" ? "signing…" : "Propose"}
-            </button>
+          <div className="flex flex-col gap-2">
+            <span className="text-[11px] text-[#6E6E73]">Allowed models (unticked = all models allowed)</span>
+            {models.length === 0 ? (
+              <span className="font-mono text-[11px] text-[#8F8F8F]">loading network models…</span>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {models.map((m) => {
+                  const on = picked.includes(m);
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => setPicked((p) => (on ? p.filter((x) => x !== m) : [...p, m]))}
+                      className={`rounded-full border px-3 py-1 font-mono text-[11px] ${on ? "border-black bg-black text-white" : "border-black/10 bg-white hover:bg-black/5"}`}
+                    >
+                      {m}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div>
+              <button
+                onClick={() => propose("models", { models: picked.length ? picked : null }, "models")}
+                disabled={busy === "models" || !me?.wallet}
+                className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40"
+              >
+                {busy === "models" ? "signing…" : picked.length ? `Propose (${picked.length} model${picked.length === 1 ? "" : "s"})` : "Propose (allow all)"}
+              </button>
+            </div>
           </div>
-          {models.length > 0 && <span className="font-mono text-[11px] text-[#8F8F8F]">on the network now: {models.join(", ")}</span>}
           <div className="flex flex-wrap gap-2">
             <input
               value={perTx}
@@ -264,6 +277,7 @@ export default function OrgRules({
           ))}
         </div>
       )}
+      {syncedNote && <p className="m-0 font-mono text-xs text-[#0B7A5D]">{syncedNote}</p>}
       {err && <p className="m-0 font-mono text-xs text-[#B3261E]">{err}</p>}
     </div>
   );
