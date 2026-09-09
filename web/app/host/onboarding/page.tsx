@@ -59,13 +59,18 @@ function HostOnboardingInner() {
   const [hostState, setHostState] = useState<"idle" | "missing" | "live">("idle");
   const [drip, setDrip] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [msg, setMsg] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [balances, setBalances] = useState<Record<string, string | null>>({});
   const [checking, setChecking] = useState(false);
 
   const clean = addr.trim();
   const valid = /^0x[0-9a-fA-F]{40}$/.test(clean);
   const fromOwned = valid && owned.some((a) => a.toLowerCase() === clean.toLowerCase());
+  const done = hostState === "live" && host != null;
+  // Focus the selected key; the rest of the account's keys sit behind a
+  // toggle (no gateway ordering guarantees, so no "latest" claims).
+  const [showAll, setShowAll] = useState(false);
+  const others = owned.filter((a) => a.toLowerCase() !== clean.toLowerCase());
+  const visibleOwned = valid ? (showAll ? owned : []) : owned;
 
   // Balances for every key on this account — one row per machine below.
   useEffect(() => {
@@ -170,18 +175,8 @@ function HostOnboardingInner() {
     }
   }
 
-  function copy() {
-    if (!valid) return;
-    (navigator.clipboard?.writeText(clean) ?? Promise.reject()).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      },
-      () => setMsg("copy failed — select the address manually"),
-    );
-  }
-
-  const funded = balance !== null && Number(balance) >= STAKE_HBAR;
+  // Live hosts read low (stake is locked) — done counts as funded.
+  const funded = done || (balance !== null && Number(balance) >= STAKE_HBAR);
   const step = !authenticated ? 1 : hostState === "live" ? 3 : 2;
 
   return (
@@ -220,29 +215,50 @@ function HostOnboardingInner() {
           <p className="m-0 mb-3 text-sm text-[#6E6E73]">
             One row per machine on this account — pick one to fund (≥ {STAKE_HBAR} HBAR registers it).
           </p>
-          {owned.length > 0 && (
+          {visibleOwned.length > 0 && (
             <div className="mb-3 flex flex-col gap-2">
-              {owned.map((a) => {
+              {visibleOwned.map((a) => {
                 const bal = balances[a.toLowerCase()];
                 const ready = bal != null && Number(bal) >= STAKE_HBAR;
                 const active = a.toLowerCase() === clean.toLowerCase();
                 return (
-                  <button
+                  <div
                     key={a}
-                    onClick={() => {
-                      touchedRef.current = true;
-                      setAddr(a);
-                    }}
-                    className={`flex h-11 items-center gap-3 rounded-lg border px-4 text-left ${active ? "border-black bg-black text-white" : "border-black/10 hover:bg-black/5"}`}
+                    className={`flex h-11 items-center gap-2 rounded-lg border px-4 ${active ? "border-black bg-black text-white" : "border-black/10"}`}
                   >
-                    <span className="font-mono text-xs">{short(a)}</span>
-                    <span className={`ml-auto font-mono text-xs ${active ? "" : ready ? "text-[#0B7A5D]" : "text-[#8A5300]"}`}>
-                      {bal == null ? "balance —" : `${Number(bal).toFixed(2)} HBAR${ready ? " ✓" : ""}`}
-                    </span>
-                  </button>
+                    <button
+                      onClick={() => {
+                        touchedRef.current = true;
+                        setAddr(a);
+                      }}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    >
+                      <span className="truncate font-mono text-xs">{short(a)}</span>
+                      <span className={`ml-auto shrink-0 font-mono text-xs ${active ? "" : ready ? "text-[#0B7A5D]" : "text-[#8A5300]"}`}>
+                        {bal == null ? "balance —" : `${Number(bal).toFixed(2)} HBAR${ready ? " ✓" : ""}`}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        (navigator.clipboard?.writeText(a) ?? Promise.reject()).then(
+                          () => setMsg(`copied ${short(a)} ✓`),
+                          () => setMsg("copy failed — select the address manually"),
+                        );
+                      }}
+                      title={`copy ${a}`}
+                      className={`shrink-0 rounded-full border px-2.5 py-1 font-mono text-[11px] ${active ? "border-white/30 hover:bg-white/10" : "border-black/10 hover:bg-black/5"}`}
+                    >
+                      ⧉
+                    </button>
+                  </div>
                 );
               })}
             </div>
+          )}
+          {valid && others.length > 0 && (
+            <button onClick={() => setShowAll((s) => !s)} className="mb-3 font-mono text-[11px] text-[#6E6E73] underline">
+              {showAll ? "hide" : `+${others.length} other key${others.length === 1 ? "" : "s"} on this account`}
+            </button>
           )}
           {!params.get("address") && owned.length === 0 && !valid ? (
             <div className="mb-3 rounded-lg bg-[#F7F7F5] p-3 text-sm text-[#5D5D5D]">
@@ -272,11 +288,8 @@ function HostOnboardingInner() {
               {checking ? "checking…" : "Check"}
             </button>
           </div>
-          {valid && (
+          {valid && !done && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button onClick={copy} className="h-9 rounded-full border border-black/10 px-4 font-mono text-xs">
-                {copied ? "copied ✓" : `copy ${short(clean)}`}
-              </button>
               <button onClick={dripFunds} disabled={drip === "sending"} className="h-9 rounded-full bg-black px-4 text-xs text-white disabled:opacity-40">
                 {drip === "sending" ? "dripping…" : "Drip 0.5 HBAR"}
               </button>
@@ -285,6 +298,9 @@ function HostOnboardingInner() {
               </a>
               <span className="font-mono text-sm">{balance === null ? "balance —" : `${Number(balance).toFixed(2)} HBAR`}</span>
             </div>
+          )}
+          {done && (
+            <p className="mb-0 mt-3 text-sm text-[#0B7A5D]">serving ✓ — earnings flow to your login wallet</p>
           )}
           {valid && balance !== null && !funded && (
             <p className="mb-0 mt-3 text-sm text-[#8A5300]">

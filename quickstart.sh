@@ -594,7 +594,7 @@ fi
 # RPC failures report as unknown (never as zero — a blind check must not claim
 # "not funded"). Enter rechecks immediately instead of waiting out the 15s tick.
 fund_wait() {
-  _fw_i=0
+  _fw_i=0; _fw_last=""
   while [ "$_fw_i" -lt "${FW_MAX:-600}" ]; do
     # cast's exit code first (a pipeline would report tr's) — blind ≠ zero.
     # < /dev/null: cast must not slurp Enters meant for the recheck read below.
@@ -607,10 +607,15 @@ fund_wait() {
     if [ "$_fw_ok" = 1 ]; then
       _fw_int=${_fw_wei%??????????????????}
       [ -z "$_fw_int" ] && _fw_int=0
-      echo "balance: ${_fw_int} HBAR / need ≥10 (Enter = recheck now)"
+      # One line per balance (tail shows a single updating status, not a stack).
+      if [ "$_fw_int" != "$_fw_last" ] || [ "$_fw_i" = 0 ]; then
+        echo "balance: ${_fw_int} HBAR / need ≥10 (Enter = recheck now)"
+        _fw_last="$_fw_int"
+      fi
       if [ "$_fw_int" -ge 10 ] 2>/dev/null; then return 0; fi
     else
       echo "balance: ? (RPC unreachable — retrying, NOT counted as zero)"
+      _fw_last="?"
     fi
     if [ -e /dev/tty ]; then
       # Enter rechecks NOW — and says so, so the keypress is never silent.
@@ -647,22 +652,36 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
         hint "copied to clipboard — paste at faucet.hedera.com"
       fi
       (open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || true)
-      if [ "$TUI" = 1 ]; then
-        UI_LOG=1
-        fund_wait "$HOST_ADDR" > "$QS_LOG" 2>&1 & _fw_pid=$!
-        while kill -0 "$_fw_pid" 2>/dev/null; do render_tick 7; sleep 2; done
-        wait "$_fw_pid" && _fw_rc=0 || _fw_rc=$?
-        UI_LOG=0
-      else
-        hint "watching $HOST_ADDR for stake (drip + faucet on the page, ~10 min max)…"
-        fund_wait "$HOST_ADDR" || _fw_rc=$?
-        _fw_rc=${_fw_rc:-0}
-      fi
-      if [ "${_fw_rc:-0}" = 0 ]; then
-        [ "$TUI" = 1 ] && { UI_BODY="  funded ✓ retrying register…\n"; render; } || ok "funded ✓ retrying register…"
-      else
-        pause "Still unfunded after 10 min — fund, then Enter retries ($tries/3)…"
-      fi
+      # Each 10-min window ends in keep-waiting-or-quit — the script never
+      # times out from under you. Only failed registers consume tries.
+      while :; do
+        if [ "$TUI" = 1 ]; then
+          UI_LOG=1
+          fund_wait "$HOST_ADDR" > "$QS_LOG" 2>&1 & _fw_pid=$!
+          while kill -0 "$_fw_pid" 2>/dev/null; do render_tick 7; sleep 2; done
+          wait "$_fw_pid" && _fw_rc=0 || _fw_rc=$?
+          UI_LOG=0
+        else
+          hint "watching $HOST_ADDR for stake (faucet payouts can lag minutes — keep this open)…"
+          fund_wait "$HOST_ADDR" || _fw_rc=$?
+          _fw_rc=${_fw_rc:-0}
+        fi
+        [ "$_fw_rc" = 0 ] && break
+        _wf_more=""
+        if [ "$TUI" = 1 ]; then
+          tui_yn "Still unfunded after 10 min — keep waiting?" && _wf_more=y || true
+        else
+          KEEPW=""
+          ask_tty KEEPW "Still unfunded — keep waiting 10 more min? (Enter = yes, q = quit)" "Y"
+          case "$KEEPW" in Y|y|"") _wf_more=y;; esac
+        fi
+        if [ "$_wf_more" = y ]; then
+          [ "$TUI" = 1 ] && { UI_BODY="  still watching $HOST_ADDR…\n"; render; } || hint "watching $HOST_ADDR for 10 more minutes…"
+        else
+          die "quit — fund $HOST_ADDR, then resume: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
+        fi
+      done
+      [ "$TUI" = 1 ] && { UI_BODY="  funded ✓ retrying register…\n"; render; } || ok "funded ✓ retrying register…"
     elif [ "$tries" -ge 3 ]; then
       die "run exited 3× — fund $HOST_ADDR (host key, not login wallet), then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
     else
@@ -700,10 +719,10 @@ fi
 # === done ======================================================================
 if [ "$TUI" = 1 ]; then
   i=0; while [ "$i" -le 7 ]; do eval "_s=\$ST_S_$i"; [ "$_s" = "run" ] && eval "ST_S_$i=ok"; i=$((i + 1)); done
-  UI_BODY="  dashboard  ${CYN}$PROD_WEB/host/dashboard${RST}\n  model      ${B}$MODEL_ID${RST}  ${DIM}via $ENDPOINT${RST}\n  status     ${DIM}tor-host status · stop: sh quickstart.sh --stop${RST}\n"
+  UI_BODY="  ${B}Welcome — you're serving $MODEL_ID${RST}\n  public URL ${CYN}$ENDPOINT${RST}\n  network    ${CYN}$PROD_WEB/network${RST}  (find yourself as traffic flows)\n  dashboard  ${CYN}$PROD_WEB/host/dashboard${RST}  (live calls + earnings, set prices in tor-host run)\n  status     ${DIM}tor-host status · stop: sh quickstart.sh --stop${RST}\n"
   UI_FOOT="press Enter to leave"; UI_LOG=0; render
   printf '\033[?25h' > /dev/tty 2>/dev/null || true
   IFS= read -r _ < /dev/tty 2>/dev/null || true
   tui_leave; trap - INT TERM
 fi
-printf "\n  dashboard  %s/host/dashboard\n  model      %s via %s\n  stop       sh quickstart.sh --stop\n" "$PROD_WEB" "$MODEL_ID" "$ENDPOINT"
+printf "\n  Welcome — you're serving %s\n  public URL %s\n  network    %s/network (find yourself as traffic flows)\n  dashboard  %s/host/dashboard (live calls + earnings)\n  stop       sh quickstart.sh --stop\n" "$MODEL_ID" "$ENDPOINT" "$PROD_WEB" "$PROD_WEB"
