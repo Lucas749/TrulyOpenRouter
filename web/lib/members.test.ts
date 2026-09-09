@@ -6,15 +6,19 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   addMember,
   approvalMessage,
+  claimInvite,
   createIncreaseRequest,
   decideRequest,
   effectiveAllowance,
   ensureOrg,
   getRequest,
+  inviteClaimMessage,
+  inviteMember,
   listRequests,
   periodStartFor,
   removeMember,
   setMemberAllowance,
+  setMemberWallet,
   setOrgCreator,
   setOrgDefault,
   verifyApprovalSignature,
@@ -135,5 +139,55 @@ describe("increase requests + wallet-signed decisions", () => {
     const sig = await OWNER.signMessage({ message: "hello tor" });
     expect(await verifyApprovalSignature("hello tor", sig, OWNER.address)).toBe(true);
     expect(await verifyApprovalSignature("hello tor", sig, MEMBER_WALLET)).toBe(false);
+  });
+});
+
+describe("email invites + claims", () => {
+  async function invite(email = "new@acme.test") {
+    await ensureOrg("org1");
+    await addMember("org1", { did: "did:o1", walletAddress: OWNER.address, role: "owner" });
+    return await inviteMember("org1", { email, role: "member", allowanceCredits: 50 });
+  }
+
+  it("invites by email with no wallet, then the invitee claims it", async () => {
+    const inv = await invite();
+    expect(inv.status).toBe("invited");
+    expect(inv.walletAddress).toBe("");
+    expect(inv.allowanceCredits).toBe(50);
+    // invited members resolve 0 spend (nothing to debit)
+    expect(effectiveAllowance(await ensureOrg("org1"), inv.did)).toBe(0);
+    // claim: invitee proves wallet ownership
+    const did = "did:privy:new1";
+    const expires = Date.now() + 300_000;
+    const message = inviteClaimMessage("org1", "new@acme.test", did, MEMBER_WALLET, expires);
+    const claimed = await claimInvite("org1", "new@acme.test", did, MEMBER_WALLET, await MEMBER.signMessage({ message }), message);
+    expect(claimed.status).toBe("active");
+    expect(claimed.did).toBe(did);
+    expect(claimed.walletAddress).toBe(MEMBER_WALLET);
+    expect(effectiveAllowance(await ensureOrg("org1"), did)).toBe(50);
+  });
+
+  it("rejects bad email, dupes, owner-role invites, and bad claims", async () => {
+    await invite();
+    await expect(inviteMember("org1", { email: "not-an-email", role: "member" })).rejects.toThrow("valid email");
+    await expect(inviteMember("org1", { email: "NEW@acme.test", role: "member" })).rejects.toThrow("already invited or active");
+    await expect(inviteMember("org1", { email: "boss@acme.test", role: "owner" })).rejects.toThrow("member|manager");
+    // unknown email
+    const msg = inviteClaimMessage("org1", "stranger@acme.test", "did:x", MEMBER_WALLET, Date.now() + 300_000);
+    await expect(claimInvite("org1", "stranger@acme.test", "did:x", MEMBER_WALLET, await MEMBER.signMessage({ message: msg }), msg)).rejects.toThrow("no pending invite");
+    // wrong signer (owner signs for the member's wallet)
+    const msg2 = inviteClaimMessage("org1", "new@acme.test", "did:y", MEMBER_WALLET, Date.now() + 300_000);
+    await expect(claimInvite("org1", "new@acme.test", "did:y", MEMBER_WALLET, await OWNER.signMessage({ message: msg2 }), msg2)).rejects.toThrow("must own");
+    // expired
+    const old = inviteClaimMessage("org1", "new@acme.test", "did:y", MEMBER_WALLET, Date.now() - 1000);
+    await expect(claimInvite("org1", "new@acme.test", "did:y", MEMBER_WALLET, await MEMBER.signMessage({ message: old }), old)).rejects.toThrow("expired");
+  });
+
+  it("owner can bind a wallet to an invited row (activates it)", async () => {
+    const inv = await invite("late@acme.test");
+    const bound = await setMemberWallet("org1", inv.did, MEMBER_WALLET);
+    expect(bound.status).toBe("active");
+    expect(bound.walletAddress).toBe(MEMBER_WALLET);
+    await expect(setMemberWallet("org1", inv.did, "0x123")).rejects.toThrow("0x + 40 hex");
   });
 });

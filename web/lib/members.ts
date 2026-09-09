@@ -21,7 +21,7 @@ export type MemberRole = "owner" | "manager" | "member";
 export function roleRank(role: MemberRole): number {
   return role === "owner" ? 2 : role === "manager" ? 1 : 0;
 }
-export type MemberStatus = "active" | "removed";
+export type MemberStatus = "active" | "invited" | "removed";
 
 export interface Member {
   did: string; // Privy DID, stable identity
@@ -274,11 +274,104 @@ export async function addMember(orgId: string, m: Omit<Member, "status" | "creat
   return meta.members.find((x) => x.did === m.did)!;
 }
 
+/// @notice Email-only invite: creates an "invited" row with no wallet. The invitee
+/// claims it later by proving wallet ownership (claimInvite), or the owner binds
+/// a wallet via setMemberWallet. Invited members resolve 0 spend (nothing to debit).
+export async function inviteMember(
+  orgId: string,
+  m: { email: string; role: MemberRole; allowanceCredits?: number },
+): Promise<Member> {
+  const email = m.email.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("valid email required");
+  const meta = await ensureOrg(orgId);
+  const bootstrapping = !meta.members.some((x) => x.role === "owner" && x.status === "active");
+  if (!bootstrapping && m.role !== "member" && m.role !== "manager") {
+    throw new Error("invites are member|manager (owners join by wallet)");
+  }
+  const did = `email:${email}`;
+  const existing = meta.members.find((x) => x.did === did || (x.email?.toLowerCase() === email && x.status !== "removed"));
+  if (existing) throw new Error("that email is already invited or active");
+  const member: Member = {
+    did,
+    email,
+    walletAddress: "",
+    role: m.role,
+    allowanceCredits: m.allowanceCredits,
+    periodStart: Date.now(),
+    status: "invited",
+    createdAt: Date.now(),
+  };
+  meta.members.push(member);
+  const s = await read();
+  s.orgs[orgId] = meta;
+  await write(s);
+  return member;
+}
+
+/// @notice Claim an email invite by proving wallet ownership (EIP-191 over the
+/// canonical claim message). Binds did + wallet, activates. Rejects if the
+/// wallet already belongs to an active member anywhere in the org.
+export async function claimInvite(
+  orgId: string,
+  email: string,
+  did: string,
+  walletAddress: string,
+  signature: string,
+  message: string,
+  now = Date.now(),
+): Promise<Member> {
+  const em = email.trim().toLowerCase();
+  const parsed = parseActionMessage(message);
+  if (!parsed || parsed.action !== "invite-claim") throw new Error("wrong action");
+  const expires = Number((message.match(/^expires: (\d+)$/m) ?? [])[1]);
+  if (message !== inviteClaimMessage(orgId, em, did, walletAddress, expires)) {
+    throw new Error("signature does not match this claim");
+  }
+  if (!Number.isFinite(expires) || now > expires) throw new Error("claim expired, sign again");
+  let signer: string;
+  try {
+    signer = await recoverMessageAddress({ message, signature: signature as `0x${string}` });
+  } catch {
+    throw new Error("bad signature");
+  }
+  if (signer.toLowerCase() !== walletAddress.toLowerCase()) throw new Error("signer must own the claimed wallet");
+  const s = await read();
+  const meta = s.orgs[orgId];
+  const inv = meta?.members.find((x) => x.status === "invited" && (x.email?.toLowerCase() === em || x.did === `email:${em}`));
+  if (!inv) throw new Error("no pending invite for that email");
+  if (meta.members.some((x) => x.status === "active" && x.walletAddress.toLowerCase() === walletAddress.toLowerCase())) {
+    throw new Error("wallet already active in this org");
+  }
+  if (meta.members.some((x) => x.did === did && x.status === "active")) throw new Error("did already active");
+  inv.did = did;
+  inv.walletAddress = walletAddress;
+  inv.status = "active";
+  inv.periodStart = Date.now();
+  await write(s);
+  return inv;
+}
+
+/// @notice Owner rebinds a member's wallet (e.g. invitee shares it late).
+/// Caller verifies owner rank.
+export async function setMemberWallet(orgId: string, did: string, walletAddress: string): Promise<Member> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(walletAddress)) throw new Error("wallet must be 0x + 40 hex");
+  const s = await read();
+  const m = s.orgs[orgId]?.members.find((x) => x.did === did && x.status !== "removed");
+  if (!m) throw new Error("member not found");
+  m.walletAddress = walletAddress;
+  if (m.status === "invited") {
+    m.status = "active";
+    m.periodStart = Date.now();
+  }
+  await write(s);
+  return m;
+}
+
 export async function setMemberAllowance(orgId: string, did: string, allowanceCredits: number | undefined): Promise<Member> {
   const s = await read();
   const meta = s.orgs[orgId];
-  const m = meta?.members.find((x) => x.did === did && x.status === "active");
-  if (!m) throw new Error("active member not found");
+  const m = meta?.members.find((x) => x.did === did && x.status !== "removed");
+  if (!m) throw new Error("member not found");
   m.allowanceCredits = allowanceCredits;
   m.periodStart = Date.now(); // new cap starts a fresh period (documented, Anthropic-style upsert)
   await write(s);
@@ -288,8 +381,8 @@ export async function setMemberAllowance(orgId: string, did: string, allowanceCr
 export async function setMemberRole(orgId: string, did: string, role: MemberRole): Promise<Member> {
   const s = await read();
   const meta = s.orgs[orgId];
-  const m = meta?.members.find((x) => x.did === did && x.status === "active");
-  if (!m) throw new Error("active member not found");
+  const m = meta?.members.find((x) => x.did === did && x.status !== "removed");
+  if (!m) throw new Error("member not found");
   if (m.role === "owner" && role === "member") {
     const otherOwners = meta.members.filter((x) => x.role === "owner" && x.did !== did && x.status === "active");
     if (otherOwners.length === 0) throw new Error("cannot demote the last owner");
@@ -301,8 +394,8 @@ export async function setMemberRole(orgId: string, did: string, role: MemberRole
 
 export async function removeMember(orgId: string, did: string): Promise<Member> {
   const s = await read();
-  const m = s.orgs[orgId]?.members.find((x) => x.did === did && x.status === "active");
-  if (!m) throw new Error("active member not found");
+  const m = s.orgs[orgId]?.members.find((x) => x.did === did && x.status !== "removed");
+  if (!m) throw new Error("member not found");
   if (m.role === "owner") {
     const otherOwners = s.orgs[orgId].members.filter((x) => x.role === "owner" && x.did !== did && x.status === "active");
     if (otherOwners.length === 0) throw new Error("cannot remove the last owner");
@@ -335,9 +428,9 @@ export function periodStartFor(meta: OrgMeta, did: string, now = Date.now()): nu
 // routes keep one import. Every member mutation is authorized by a Privy
 // embedded-wallet personal_sign over these bytes, verified server-side below.
 
-export { approvalMessage, memberActionMessage, parseActionMessage, ruleDecisionMessage, stableJson } from "./member-messages";
+export { approvalMessage, inviteClaimMessage, memberActionMessage, parseActionMessage, ruleDecisionMessage, stableJson } from "./member-messages";
 export type { DecisionSubject, RuleDecisionSubject } from "./member-messages";
-import { parseActionMessage, ruleDecisionMessage, stableJson } from "./member-messages";
+import { inviteClaimMessage, parseActionMessage, ruleDecisionMessage, stableJson } from "./member-messages";
 
 /// @notice Verifies signer + expiry + that every expected binding is present.
 /// Returns the recovered address on success, throws otherwise.

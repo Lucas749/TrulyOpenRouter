@@ -49,6 +49,14 @@ export function stableJson(v: unknown): string {
   return JSON.stringify(v) ?? "null";
 }
 
+/// @notice Invite claim: the invitee proves wallet ownership. Server matches the
+/// email against an invited row. Trust note: email is self-asserted — this binds
+/// a PROVEN wallet to an owner-approved email, acceptable for capped testnet
+/// spend; the owner can rebind via PATCH wallet at any time.
+export function inviteClaimMessage(orgId: string, email: string, did: string, wallet: string, expires: number): string {
+  return memberActionMessage("invite-claim", { orgId, email: email.toLowerCase(), did, wallet }, expires);
+}
+
 export interface RuleDecisionSubject {
   id: string;
   orgId: string;

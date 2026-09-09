@@ -26,7 +26,7 @@ export default function TeamOrgs({
   me,
   mock,
 }: {
-  me: { did: string; wallet: string | null } | null;
+  me: { did: string; wallet: string | null; email: string | null } | null;
   mock: boolean;
 }) {
   const [orgs, setOrgs] = useState<TeamOrg[] | null>(null);

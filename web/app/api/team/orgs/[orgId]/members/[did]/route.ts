@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMember, memberByWallet, removeMember, roleRank, setMemberAllowance, setMemberRole, verifyActionMessage } from "../../../../../../../lib/members";
+import { getMember, memberByWallet, removeMember, roleRank, setMemberAllowance, setMemberRole, setMemberWallet, verifyActionMessage } from "../../../../../../../lib/members";
 import type { Member, MemberRole } from "../../../../../../../lib/members";
 import { clearCap, syncCap } from "../../../../../../../lib/gateway-admin";
 
@@ -47,12 +47,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
     const body = (await req.json().catch(() => ({}))) as {
       allowanceCredits?: number | null;
       role?: string;
+      walletAddress?: string;
       signature?: string;
       message?: string;
       signerWallet?: string;
     };
-    if (body.allowanceCredits === undefined && body.role === undefined) {
-      return NextResponse.json({ error: "allowanceCredits and/or role required" }, { status: 400 });
+    if (body.allowanceCredits === undefined && body.role === undefined && body.walletAddress === undefined) {
+      return NextResponse.json({ error: "allowanceCredits and/or role and/or walletAddress required" }, { status: 400 });
     }
     if (body.allowanceCredits !== undefined && body.allowanceCredits !== null && (!Number.isFinite(body.allowanceCredits) || body.allowanceCredits < 0)) {
       return NextResponse.json({ error: "allowanceCredits must be a non-negative number or null (inherit)" }, { status: 400 });
@@ -62,10 +63,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
     }
     const target = await getMember(orgId, targetDid);
     if (!target) return NextResponse.json({ error: "member not found" }, { status: 404 });
-    // Role changes are owner-only; allowance changes are owner+manager.
-    const authed = body.role !== undefined
-      ? await requireOwner(orgId, body, { orgId, did: targetDid }, "member-set")
-      : await requireMinRole(orgId, body, { orgId, did: targetDid }, "member-set", 1);
+    // Role + wallet changes are owner-only; allowance changes are owner+manager.
+    // Wallet rebinds bind the new wallet into the signed message.
+    const ownerOnly = body.role !== undefined || body.walletAddress !== undefined;
+    const bind: Record<string, string> = { orgId, did: targetDid };
+    if (body.walletAddress !== undefined) bind.wallet = body.walletAddress.toLowerCase();
+    const authed = ownerOnly
+      ? await requireOwner(orgId, body, bind, "member-set")
+      : await requireMinRole(orgId, body, bind, "member-set", 1);
     if ("error" in authed) return authed.error;
     // Role changes apply locally (no gateway surface); allowance changes sync first.
     // null = inherit org default -> clear any gateway override so nothing stale enforces.
@@ -79,6 +84,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
       }
     }
     if (body.allowanceCredits !== undefined) await setMemberAllowance(orgId, targetDid, body.allowanceCredits ?? undefined);
+    if (body.walletAddress !== undefined) {
+      try {
+        await setMemberWallet(orgId, targetDid, body.walletAddress);
+      } catch (e: any) {
+        return NextResponse.json({ error: String(e?.message ?? e).slice(0, 160) }, { status: 409 });
+      }
+    }
     if (body.role) {
       try {
         await setMemberRole(orgId, targetDid, body.role as MemberRole);

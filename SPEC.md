@@ -143,6 +143,8 @@ Base: PoC `packages/service` (Express + `@x402/express`, `@x402/hedera`, `@x402/
   host-runner image changes; cross-stack mismatches are signal, not proof.
 - Same battery/format works for exo-chained company fleets (identical chat interface) —
   only the reference set differs per modelId. See design doc §9.
+- Cut: Fireblocks operator treasury (no sponsor, no integration — every dependency must serve
+  a prize leg; operator keys stay in Key Ring).
 
 ## 8. Sponsor implementation guides (WHAT + HOW + qual checklist)
 

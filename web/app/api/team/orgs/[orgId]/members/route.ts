@@ -4,6 +4,7 @@ import {
   effectiveAllowance,
   ensureOrg,
   getOrgMeta,
+  inviteMember,
   memberByWallet,
   periodStartFor,
   removeMember,
@@ -33,16 +34,17 @@ export async function GET(_req: Request, { params }: { params: Promise<{ orgId: 
     const meta = (await getOrgMeta(orgId)) ?? (await ensureOrg(orgId));
     const rows = await Promise.all(
       meta.members
-        .filter((m) => m.status === "active")
+        .filter((m) => m.status !== "removed")
         .map(async (m) => ({
           did: m.did,
           email: m.email ?? null,
-          walletAddress: m.walletAddress,
+          walletAddress: m.walletAddress || null,
           role: m.role,
+          status: m.status,
           keyPrefix: m.keyPrefix ?? null,
           allowanceCredits: m.allowanceCredits ?? null,
           effectiveCredits: effectiveAllowance(meta, m.did) === Infinity ? null : effectiveAllowance(meta, m.did),
-          spentCredits: await gatewaySpend(m.keyPrefix),
+          spentCredits: m.status === "active" ? await gatewaySpend(m.keyPrefix) : null,
           periodStart: periodStartFor(meta, m.did),
           periodDays: meta.periodDays,
           createdAt: m.createdAt,
@@ -91,6 +93,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       if (!owner) return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
       const updated = await setOrgDefault(orgId, Number(body.setDefault));
       return NextResponse.json({ defaultAllowanceCredits: updated.defaultAllowanceCredits ?? null });
+    }
+    // Email-only invite: no wallet yet. Owner/manager signs action "member-invite"
+    // binding {orgId, email, role}; the invitee claims it on first login by
+    // proving wallet ownership (POST members/claim). Invites are member|manager.
+    if (body.member?.email && !body.member?.walletAddress && !body.member?.did) {
+      const email = body.member.email.trim().toLowerCase();
+      const bootMeta = await ensureOrg(orgId);
+      const bootstrapping = !bootMeta.members.some((m) => m.role === "owner" && m.status === "active");
+      const requested = bootstrapping ? "owner" : body.member.role === "manager" ? "manager" : "member";
+      if (!body.signature || !body.message || !body.signerWallet) {
+        return NextResponse.json({ error: "signature + message + signerWallet required" }, { status: 400 });
+      }
+      let signer: string;
+      try {
+        signer = await verifyActionMessage(body.message, body.signature, "member-invite", {
+          orgId,
+          email,
+          role: requested,
+        });
+      } catch (e: any) {
+        return NextResponse.json({ error: `bad signature: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 401 });
+      }
+      if (!bootstrapping) {
+        const authed = await memberByWallet(orgId, signer);
+        if (!authed || roleRank(authed.role) < 1) {
+          return NextResponse.json({ error: "signer is not an owner or manager" }, { status: 403 });
+        }
+        if (roleRank(requested) > roleRank(authed.role)) {
+          return NextResponse.json({ error: "cannot grant a role above your own" }, { status: 403 });
+        }
+      }
+      try {
+        const inv = await inviteMember(orgId, {
+          email,
+          role: requested as "owner" | "manager" | "member",
+          allowanceCredits: body.member.allowanceCredits,
+        });
+        return NextResponse.json({ member: inv, invited: true });
+      } catch (e: any) {
+        return NextResponse.json({ error: String(e?.message ?? e).slice(0, 160) }, { status: 409 });
+      }
     }
     // did is optional: owners invite by email + wallet, and the did defaults to
     // wallet:<address>. Login matching already works by wallet, so invited members

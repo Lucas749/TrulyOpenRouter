@@ -9,7 +9,7 @@ export default function TeamPage() {
   const { user } = usePrivy();
   const { wallets } = useWallets();
   const [mock, toggleMock] = useMock();
-  const me = user ? { did: user.id, wallet: wallets[0]?.address ?? user?.wallet?.address ?? null } : null;
+  const me = user ? { did: user.id, wallet: wallets[0]?.address ?? user?.wallet?.address ?? null, email: (user as any)?.email?.address ?? (user as any)?.google?.email ?? null } : null;
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">

@@ -1,0 +1,10 @@
+{
+  "name": "ledger-wallet-cli",
+  "cliVersion": "2.1.0",
+  "contentHash": "ac42c5ad4a7752cfdc7f080e238a31c0772d564e63f5bb5ef1119742549acce7",
+  "files": {
+    "SKILL.md": "e78e18112e2bfa9689047fe0756eb193ca2894d21c170d00f567f423307fcf56",
+    "references/business-logic.md": "0a854a4004bf141c1b7136da9c6a189ba46ff10713e89648672aac7892febd1f"
+  },
+  "installedAt": "2026-09-07T11:16:01.105Z"
+}

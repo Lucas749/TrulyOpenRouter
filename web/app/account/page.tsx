@@ -49,7 +49,7 @@ export default function AccountPage() {
 
   const address = (user?.wallet?.address ?? wallets[0]?.address) as `0x${string}` | undefined;
   const email = (user as any)?.email?.address ?? (user as any)?.google?.email ?? null;
-  const me = user ? { did: user.id, wallet: wallets[0]?.address ?? user?.wallet?.address ?? null } : null;
+  const me = user ? { did: user.id, wallet: wallets[0]?.address ?? user?.wallet?.address ?? null, email } : null;
 
   // profile (display name lives server-side; email/login come from Privy)
   const [displayName, setDisplayName] = useState("");

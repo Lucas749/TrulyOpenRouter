@@ -3,7 +3,7 @@
 import { apiError } from "../../lib/api-error";
 import { useCallback, useEffect, useState } from "react";
 import { useSignMessage } from "@privy-io/react-auth";
-import { approvalMessage, memberActionMessage, shortId, spendBarState } from "../../lib/member-messages";
+import { approvalMessage, inviteClaimMessage, memberActionMessage, shortId, spendBarState } from "../../lib/member-messages";
 import { MOCK_TEAM_MEMBERS, MOCK_TEAM_ORG, MOCK_TEAM_REQUESTS } from "../../lib/mock";
 
 // Members & spend for one team org. Spend-org identity = the Privy org id.
@@ -17,6 +17,7 @@ interface Member {
   email: string | null;
   walletAddress: string | null;
   role: "owner" | "manager" | "member";
+  status: "active" | "invited";
   keyPrefix: string | null;
   allowanceCredits: number | null;
   effectiveCredits: number | null; // null = unlimited
@@ -92,7 +93,7 @@ export default function OrgMembers({
   mock,
 }: {
   orgId: string;
-  me: { did: string; wallet: string | null } | null;
+  me: { did: string; wallet: string | null; email: string | null } | null;
   mock: boolean;
 }) {
   const { signMessage } = useSignMessage();
@@ -110,6 +111,8 @@ export default function OrgMembers({
   // per-row edit
   const [editDid, setEditDid] = useState<string | null>(null);
   const [editCap, setEditCap] = useState("");
+  const [bindDid, setBindDid] = useState<string | null>(null);
+  const [bindWallet, setBindWallet] = useState("");
   const [confirmRm, setConfirmRm] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [newDefault, setNewDefault] = useState("");
@@ -146,6 +149,11 @@ export default function OrgMembers({
     (m) => m.role === "owner" && (m.did === me?.did || sameWallet(m.walletAddress, me?.wallet)),
   );
   const myMembership = members?.find((m) => m.did === me?.did || sameWallet(m.walletAddress, me?.wallet)) ?? null;
+  // Pending email invite for my login address (matched client-side from the
+  // Privy session; the server still requires my wallet signature to claim).
+  const myInvite = !myMembership && me?.email
+    ? members?.find((m) => m.status === "invited" && m.email?.toLowerCase() === me.email!.toLowerCase()) ?? null
+    : null;
   // Managers share invite / cap / inbox powers; removal, defaults, and roles stay owner-only.
   // Empty org + connected wallet = founding flow (server bootstraps the first
   // member as owner): show invite even to non-members, or nobody could start.
@@ -177,14 +185,18 @@ export default function OrgMembers({
   }
 
   async function invite() {
-    if (!invWallet.trim() || !myWallet) return;
-    // DID optional: defaults to wallet:<address>, and login matches by wallet,
-    // so invitees just work when they log in. No DID archaeology required.
-    const did = invDid.trim() || `wallet:${invWallet.trim().toLowerCase()}`;
+    if (!invEmail.trim() || !myWallet) return;
+    // Email-only (no wallet yet): server creates an "invited" row the invitee
+    // claims on first login. With a wallet: immediate active member (wallet did).
+    const emailOnly = !invWallet.trim();
+    const did = emailOnly ? "" : invDid.trim() || `wallet:${invWallet.trim().toLowerCase()}`;
     const role = (members?.length ?? 0) === 0 ? "owner" : invRole; // first member founds as owner
     const expires = Date.now() + 300_000;
-    const fields: Record<string, string> = { orgId, did, wallet: invWallet.trim(), role };
-    const message = memberActionMessage("member-add", fields, expires);
+    const action = emailOnly ? "member-invite" : "member-add";
+    const fields: Record<string, string> = emailOnly
+      ? { orgId, email: invEmail.trim().toLowerCase(), role }
+      : { orgId, did, wallet: invWallet.trim(), role };
+    const message = memberActionMessage(action, fields, expires);
     let signature: string;
     try {
       signature = await sign(message);
@@ -194,7 +206,9 @@ export default function OrgMembers({
     }
     const cap = invCap.trim() ? Number(invCap) : undefined;
     const d = await post(`/api/team/orgs/${orgId}/members`, {
-      member: { did, walletAddress: invWallet.trim(), email: invEmail.trim() || null, role, allowanceCredits: cap },
+      member: emailOnly
+        ? { email: invEmail.trim(), role, allowanceCredits: cap }
+        : { did, walletAddress: invWallet.trim(), email: invEmail.trim() || null, role, allowanceCredits: cap },
       signature,
       message,
       signerWallet: myWallet,
@@ -204,6 +218,54 @@ export default function OrgMembers({
       setInvWallet("");
       setInvEmail("");
       setInvCap("");
+    }
+  }
+
+  // Claim my own email invite: I prove wallet ownership; the server matches the
+  // email and activates me. My login email comes from the Privy session.
+  async function claimInvite(email: string) {
+    if (!me?.wallet || !me?.did) return;
+    const expires = Date.now() + 300_000;
+    const message = inviteClaimMessage(orgId, email, me.did, me.wallet, expires);
+    let signature: string;
+    try {
+      signature = await sign(message);
+    } catch (e: any) {
+      setErr(`signing rejected: ${String(e?.message ?? e).slice(0, 120)}`);
+      return;
+    }
+    const d = await post(`/api/team/orgs/${orgId}/members/claim`, {
+      email, did: me.did, walletAddress: me.wallet, signature, message,
+    }, "claim");
+    if (d) await load();
+  }
+
+  // Owner binds a wallet to an invited row (invitee shared it out-of-band).
+  async function bindInvitedWallet(did: string) {
+    if (!myWallet || !/^0x[0-9a-fA-F]{40}$/.test(bindWallet.trim())) {
+      setErr("wallet must be 0x + 40 hex");
+      return;
+    }
+    const expires = Date.now() + 300_000;
+    const message = memberActionMessage("member-set", { orgId, did, wallet: bindWallet.trim().toLowerCase() }, expires);
+    let signature: string;
+    try {
+      signature = await sign(message);
+    } catch (e: any) {
+      setErr(`signing rejected: ${String(e?.message ?? e).slice(0, 120)}`);
+      return;
+    }
+    const r = await fetch(`/api/team/orgs/${orgId}/members/${encodeURIComponent(did)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ walletAddress: bindWallet.trim(), signature, message, signerWallet: myWallet }),
+    });
+    const d: any = await r.json().catch(() => ({}));
+    if (!r.ok) setErr(apiError(d, r.status).slice(0, 200));
+    else {
+      setBindDid(null);
+      setBindWallet("");
+      await load();
     }
   }
 
@@ -335,6 +397,7 @@ export default function OrgMembers({
         const initial = (m.email ?? didLabel).charAt(0).toUpperCase();
         const open = expanded === m.did;
         const spend = toSpend(m);
+        const invited = m.status === "invited";
         return (
           <div key={m.did} className="flex flex-col gap-2 rounded-lg bg-[#F7F7F5] p-3">
             <button onClick={() => setExpanded(open ? null : m.did)} className="flex items-center gap-2.5 text-left">
@@ -342,10 +405,11 @@ export default function OrgMembers({
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{m.email ?? shortId(didLabel, 18)}</span>
                 <span className="block truncate font-mono text-[11px] tabular-nums text-[#6E6E73]">
-                  {spend === null ? "—" : spend.cap === null ? `${spend.used} credits used` : `${spend.used}/${spend.cap} credits`}
+                  {invited ? "invited — no wallet yet" : spend === null ? "—" : spend.cap === null ? `${spend.used} credits used` : `${spend.used}/${spend.cap} credits`}
                 </span>
               </span>
               <span className="shrink-0"><RoleChip role={m.role} /></span>
+              {invited && <span className="shrink-0 rounded-full border border-dashed border-black/25 px-2 py-0.5 text-[11px] text-[#6E6E73]">invited</span>}
               <span className={`shrink-0 font-mono text-xs text-[#8F8F8F] transition-transform ${open ? "rotate-90" : ""}`}>›</span>
             </button>
             {open && (
@@ -355,8 +419,31 @@ export default function OrgMembers({
                   {m.keyPrefix ? <span>key {shortId(m.keyPrefix, 8)}</span> : <span className="text-[#B3261E]">no key, headless only</span>}
                   {m.walletAddress && <span>{shortId(m.walletAddress, 10)}</span>}
                 </div>
+                {invited ? (
+                  <div className="flex flex-wrap items-center gap-2 pl-[38px]">
+                    <span className="text-[11px] text-[#6E6E73]">waiting on {m.email ?? "invitee"} — they claim it by logging in, or bind their wallet:</span>
+                    {isOwner && !mock && (bindDid === m.did ? (
+                      <>
+                        <input value={bindWallet} onChange={(e) => setBindWallet(e.target.value)} placeholder="wallet 0x…" className="h-8 w-52 rounded-lg border border-black/10 bg-white px-2.5 font-mono text-xs" />
+                        <button onClick={() => bindInvitedWallet(m.did)} className="rounded-full bg-black px-3 py-1 text-[11px] text-white">Bind</button>
+                        <button onClick={() => { setBindDid(null); setBindWallet(""); }} className="text-[11px] text-[#6E6E73] underline">cancel</button>
+                      </>
+                    ) : (
+                      <button onClick={() => { setBindDid(m.did); setBindWallet(""); setConfirmRm(null); setEditDid(null); }} className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px]">Bind wallet</button>
+                    ))}
+                    {isOwner && !mock && (confirmRm === m.did ? (
+                      <>
+                        <button onClick={() => remove(m.did)} className="rounded-full bg-[#B3261E] px-3 py-1 text-[11px] text-white">Confirm rescind</button>
+                        <button onClick={() => setConfirmRm(null)} className="text-[11px] text-[#6E6E73] underline">keep</button>
+                      </>
+                    ) : (
+                      <button onClick={() => { setConfirmRm(m.did); setBindDid(null); }} className="text-[11px] text-[#6E6E73] underline">Rescind</button>
+                    ))}
+                  </div>
+                ) : (
                 <div className="pl-[38px]"><SpendBar spend={spend} /></div>
-                {canManage && !mock && (
+                )}
+                {!invited && canManage && !mock && (
                   <div className="flex flex-wrap items-center gap-2 pl-[38px]">
                     {editDid === m.did ? (
                       <>
@@ -387,6 +474,16 @@ export default function OrgMembers({
       })}
       {members && !members.length && <p className="m-0 text-sm text-[#8F8F8F]">no members yet, invite the first below</p>}
 
+      {myInvite && !mock && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-black/15 bg-white p-3">
+          <span className="text-xs">You&apos;re invited as <span className="font-medium">{myInvite.email}</span> ({myInvite.role}, {myInvite.allowanceCredits ?? defCap ?? "default"} credits).</span>
+          <button onClick={() => claimInvite(myInvite.email!)} disabled={busy === "claim" || !me?.wallet} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
+            {busy === "claim" ? "signing…" : "Accept invite"}
+          </button>
+          {!me?.wallet && <span className="text-[11px] text-[#B3261E]">connect your wallet to accept</span>}
+        </div>
+      )}
+
       {myMembership && myMembership.role !== "owner" && !mock && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-black/15 p-3">
           <span className="text-xs text-[#5D5D5D]">Need headroom?</span>
@@ -400,20 +497,22 @@ export default function OrgMembers({
 
       {canInvite && !mock && (
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-black/15 p-3">
-          <span className="text-xs font-medium">{canFound && !canManage ? "No members yet — add yourself as founding owner" : "Invite member — email + wallet is enough"}</span>
+          <span className="text-xs font-medium">{canFound && !canManage ? "No members yet — add yourself as founding owner" : "Invite by email — they join when they sign up"}</span>
           <div className="flex flex-wrap gap-2">
             <input value={invEmail} onChange={(e) => setInvEmail(e.target.value)} placeholder="email" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 text-xs" />
-            <input value={invWallet} onChange={(e) => setInvWallet(e.target.value)} placeholder="wallet 0x…" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
+            <input value={invWallet} onChange={(e) => setInvWallet(e.target.value)} placeholder="wallet 0x… (optional, adds them immediately)" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
           </div>
           <div className="flex flex-wrap gap-2">
-            <input value={invDid} onChange={(e) => setInvDid(e.target.value)} placeholder="Privy DID, optional (defaults to wallet)" className="h-8 min-w-[200px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
+            {!invWallet.trim() ? null : (
+              <input value={invDid} onChange={(e) => setInvDid(e.target.value)} placeholder="Privy DID, optional (defaults to wallet)" className="h-8 min-w-[200px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
+            )}
             <select value={invRole} onChange={(e) => setInvRole(e.target.value as "owner" | "manager" | "member")} title={ROLE_HELP[invRole]} className="h-8 rounded-lg border border-black/10 bg-white px-2 text-xs">
               <option value="member" title={ROLE_HELP.member}>Member</option>
               <option value="manager" title={ROLE_HELP.manager}>Manager</option>
               <option value="owner" title={ROLE_HELP.owner}>Owner</option>
             </select>
             <input value={invCap} onChange={(e) => setInvCap(e.target.value)} placeholder="cap, empty = default" className="h-8 w-36 rounded-lg border border-black/10 px-2.5 font-mono text-xs" inputMode="numeric" />
-            <button onClick={invite} disabled={busy === "invite" || !invWallet.trim() || !myWallet} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
+            <button onClick={invite} disabled={busy === "invite" || !invEmail.trim() || !myWallet} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
               {busy === "invite" ? "signing…" : (members?.length ?? 0) === 0 ? "Add founding owner" : "Invite"}
             </button>
           </div>
