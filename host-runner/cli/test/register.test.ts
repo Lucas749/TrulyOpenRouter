@@ -3,7 +3,7 @@ import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { loadConfig } from "../src/config.js";
-import { ensureHostKey, shouldRegister } from "../src/run.js";
+import { ensureHostKey, shouldRegister, stakeShortfall } from "../src/run.js";
 
 describe("shouldRegister (idempotent re-runs)", () => {
   it("registers fresh keys", () => {
@@ -16,6 +16,20 @@ describe("shouldRegister (idempotent re-runs)", () => {
 
   it("re-registers inactive records (deregistered/expired)", () => {
     expect(shouldRegister({ active: false, stake: 0n })).toBe(true);
+  });
+});
+
+describe("stakeShortfall (stake + gas headroom)", () => {
+  const HBAR = 10n ** 18n;
+  it("exactly-staked keys are still short (gas has nowhere to come from)", () => {
+    expect(stakeShortfall(10n * HBAR, 10)).toBe(1n * HBAR);
+  });
+  it("zero balance needs stake + headroom", () => {
+    expect(stakeShortfall(0n, 10)).toBe(11n * HBAR);
+  });
+  it("covered balances return zero", () => {
+    expect(stakeShortfall(11n * HBAR, 10)).toBe(0n);
+    expect(stakeShortfall(100n * HBAR, 10)).toBe(0n);
   });
 });
 

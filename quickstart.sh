@@ -138,7 +138,7 @@ if [ "$TUI" = 1 ]; then
   die() {
     st_set "$CUR" fail "$1"
     if [ -f "$QS_LOG" ]; then
-      UI_BODY="  ${DIM}last output:${RST}\n$(tail -8 "$QS_LOG" 2>/dev/null | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /')\n"
+      UI_BODY="  ${DIM}last output:${RST}\n$(tail -12 "$QS_LOG" 2>/dev/null | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /')\n"
     else
       UI_BODY=""
     fi
@@ -212,7 +212,7 @@ else
   fail() { printf "  ✗ %s\n" "$1"; }
   hint() { printf "  %s\n" "$1"; }
   cmd() { printf "  %s\n" "$1"; }
-  die() { fail "$1"; if [ -f "$QS_LOG" ]; then echo "--- last output:"; tail -8 "$QS_LOG" 2>/dev/null || true; fi; exit 1; }
+  die() { fail "$1"; if [ -f "$QS_LOG" ]; then echo "--- last output:"; tail -12 "$QS_LOG" 2>/dev/null || true; fi; exit 1; }
   run_logged() { "$@" < /dev/tty; }
   pause() { printf "\n  %s [Enter] " "$1"; IFS= read -r _ < /dev/tty 2>/dev/null || true; }
   ask_tty() {
@@ -589,8 +589,10 @@ if [ "$TUI" = 1 ]; then
 else
   hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
 fi
-# fund_wait ADDR — poll testnet balance until ≥10 HBAR (stake). Exact integer
-# math in shell (strip 18 wei digits — float64 can't hold HBAR scale). 0 = funded.
+# fund_wait ADDR — poll testnet balance until ≥11 HBAR (10 stake + ~1 gas:
+# exactly-10 keys fail the register tx itself, gas has nowhere to come from).
+# Exact integer math in shell (strip 18 wei digits — float64 can't hold HBAR
+# scale). 0 = funded.
 # RPC failures report as unknown (never as zero — a blind check must not claim
 # "not funded"). Enter rechecks immediately instead of waiting out the 15s tick.
 fund_wait() {
@@ -609,10 +611,10 @@ fund_wait() {
       [ -z "$_fw_int" ] && _fw_int=0
       # One line per balance (tail shows a single updating status, not a stack).
       if [ "$_fw_int" != "$_fw_last" ] || [ "$_fw_i" = 0 ]; then
-        echo "balance: ${_fw_int} HBAR / need ≥10 (Enter = recheck now)"
+        echo "balance: ${_fw_int} HBAR / need ≥11 (10 stake + gas — Enter = recheck now)"
         _fw_last="$_fw_int"
       fi
-      if [ "$_fw_int" -ge 10 ] 2>/dev/null; then return 0; fi
+      if [ "$_fw_int" -ge 11 ] 2>/dev/null; then return 0; fi
     else
       echo "balance: ? (RPC unreachable — retrying, NOT counted as zero)"
       _fw_last="?"
@@ -646,18 +648,20 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
     if [ -n "$HOST_ADDR" ]; then
       printf '%s' "$HOST_ADDR" | pbcopy 2>/dev/null || printf '%s' "$HOST_ADDR" | xclip -selection clipboard 2>/dev/null || true
       if [ "$TUI" = 1 ]; then
-        UI_BODY="  fund THIS address (≥10 HBAR stake) — your host key, not your login wallet:\n  ${B}$HOST_ADDR${RST}\n  (copied to clipboard — paste at faucet.hedera.com)\n"; UI_FOOT="watching it live below — Enter rechecks, funding auto-continues"; render
+        UI_BODY="  fund THIS address (≥11 HBAR = 10 stake + gas) — your host key, not your login wallet:\n  ${B}$HOST_ADDR${RST}\n  (copied to clipboard — paste at faucet.hedera.com)\n"; UI_FOOT="watching it live below — Enter rechecks, funding auto-continues"; render
       else
-        ok "fund THIS address (≥10 HBAR stake) — host key, not login wallet: $HOST_ADDR"
+        ok "fund THIS address (≥11 HBAR = 10 stake + gas) — host key, not login wallet: $HOST_ADDR"
         hint "copied to clipboard — paste at faucet.hedera.com"
       fi
       (open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || true)
       # Each 10-min window ends in keep-waiting-or-quit — the script never
       # times out from under you. Only failed registers consume tries.
       while :; do
-        if [ "$TUI" = 1 ]; then
-          UI_LOG=1
-          fund_wait "$HOST_ADDR" > "$QS_LOG" 2>&1 & _fw_pid=$!
+      if [ "$TUI" = 1 ]; then
+        UI_LOG=1
+        # Append: truncating here would wipe the failed run's output above,
+        # leaving the die card blind (exactly what happened in the wild).
+        fund_wait "$HOST_ADDR" >> "$QS_LOG" 2>&1 & _fw_pid=$!
           while kill -0 "$_fw_pid" 2>/dev/null; do render_tick 7; sleep 2; done
           wait "$_fw_pid" && _fw_rc=0 || _fw_rc=$?
           UI_LOG=0

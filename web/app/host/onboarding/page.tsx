@@ -11,6 +11,9 @@ import { contractUrl } from "../../../lib/chain";
 const RPC = "https://testnet.hashio.io/api";
 const GW = "/api/gw"; // same-origin proxy, never localhost
 const STAKE_HBAR = 10; // registry minimum stake, mirrored from tor-host run
+// Users fund STAKE + 1 gas headroom: exactly-10 keys fail the register tx
+// itself (stake locks in full, gas has nowhere to come from).
+const NEED_HBAR = STAKE_HBAR + 1;
 
 function short(a: string) {
   return `${a.slice(0, 10)}…${a.slice(-4)}`;
@@ -176,7 +179,7 @@ function HostOnboardingInner() {
   }
 
   // Live hosts read low (stake is locked) — done counts as funded.
-  const funded = done || (balance !== null && Number(balance) >= STAKE_HBAR);
+  const funded = done || (balance !== null && Number(balance) >= NEED_HBAR);
   const step = !authenticated ? 1 : hostState === "live" ? 3 : 2;
 
   return (
@@ -213,13 +216,13 @@ function HostOnboardingInner() {
             2 · Your host keys — serve models, pay stake {funded ? "✓" : ""}
           </div>
           <p className="m-0 mb-3 text-sm text-[#6E6E73]">
-            One row per machine on this account — pick one to fund (≥ {STAKE_HBAR} HBAR registers it).
+            One row per machine on this account — pick one to fund (≥ {NEED_HBAR} HBAR = {STAKE_HBAR} stake + gas).
           </p>
           {visibleOwned.length > 0 && (
             <div className="mb-3 flex flex-col gap-2">
               {visibleOwned.map((a) => {
                 const bal = balances[a.toLowerCase()];
-                const ready = bal != null && Number(bal) >= STAKE_HBAR;
+                const ready = bal != null && Number(bal) >= NEED_HBAR;
                 const active = a.toLowerCase() === clean.toLowerCase();
                 return (
                   <div
@@ -269,7 +272,7 @@ function HostOnboardingInner() {
             </div>
           ) : (
             <p className="m-0 mb-3 text-sm text-[#6E6E73]">
-              Registration stakes {STAKE_HBAR} HBAR on Hedera testnet. Get test HBAR below, then back in your terminal.
+              Registration stakes {STAKE_HBAR} HBAR on Hedera testnet (+ ~1 gas). Get test HBAR below, then back in your terminal.
             </p>
           )}
           <div className="flex flex-wrap gap-2">
@@ -304,7 +307,7 @@ function HostOnboardingInner() {
           )}
           {valid && balance !== null && !funded && (
             <p className="mb-0 mt-3 text-sm text-[#8A5300]">
-              Needs ≥ {STAKE_HBAR} HBAR to register (drip covers account creation, the faucet covers stake).
+              Needs ≥ {NEED_HBAR} HBAR to register (drip covers account creation, the faucet covers stake + gas).
               {fromOwned && hostState !== "live" ? " Attached to your account ✓ — fund it, then register from your terminal." : ""}
             </p>
           )}

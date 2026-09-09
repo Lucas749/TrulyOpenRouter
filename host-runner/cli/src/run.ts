@@ -27,6 +27,14 @@ export function shouldRegister(existing: OnchainHost | null): boolean {
   return !existing || !existing.active;
 }
 
+/// @notice Funding shortfall in wei, or 0n when covered. Covered means
+/// stake + 1 HBAR gas headroom: exactly-staked keys fail the register tx
+/// itself (stake locks in full, gas has nowhere to come from).
+export function stakeShortfall(balanceWei: bigint, stakeHbar: number): bigint {
+  const need = BigInt(Math.round(Number(stakeHbar))) * 10n ** 18n + 10n ** 18n;
+  return balanceWei >= need ? 0n : need - balanceWei;
+}
+
 export interface RunOptions {
   gateway: string;
   model: string;
@@ -143,13 +151,13 @@ export async function run(o: RunOptions): Promise<void> {
     const account = privateKeyToAccount(loadConfig().hostKey as `0x${string}`);
     console.log(ok(`host ${account.address}`));
 
-    // 6. funded? (stake + fees)
+    // 6. funded? (stake + 1 HBAR gas headroom — see stakeShortfall)
     spin.start("checking stake funding");
-    const stakeWei = BigInt(Math.round(Number(o.stakeHbar ?? 10))) * BigInt(1e18);
     const pub = createPublicClient({ transport: http(rpcUrl) });
     const balance = await pub.getBalance({ address: account.address });
-    if (balance < stakeWei) {
-      const need = ((stakeWei - balance) / BigInt(1e18)).toString();
+    const shortfall = stakeShortfall(balance, Number(o.stakeHbar ?? 10));
+    if (shortfall > 0n) {
+      const need = ((shortfall + BigInt(1e18) - 1n) / BigInt(1e18)).toString(); // ceil HBAR
       spin.stop();
       throw new Error(`underfunded: send ≥ ${need} HBAR testnet to ${account.address} (faucet.hedera.com), then re-run`);
     }
@@ -168,6 +176,7 @@ export async function run(o: RunOptions): Promise<void> {
     } else {
       spin.start("registering onchain");
       const wallet = createWalletClient({ account, transport: http(rpcUrl) });
+      const stakeWei = BigInt(Math.round(Number(o.stakeHbar ?? 10))) * BigInt(1e18);
       const minStake = (await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: "MIN_STAKE" })) as bigint;
       if (stakeWei < minStake) throw new Error(`stake below registry minimum`);
       const hash = await wallet.writeContract({
