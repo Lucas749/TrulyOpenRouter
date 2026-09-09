@@ -36,6 +36,10 @@ export async function clearCap(prefix: string): Promise<void> {
 export interface OrgRuleSync {
   dailyCapCredits: number | null;
   allowedModels: string[] | null;
+  allowedRegions: string[] | null;
+  requireVerified: boolean;
+  rateLimitPerMin: number | null;
+  pinnedHosts: string[] | null;
   handles: string[];
 }
 

@@ -52,6 +52,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
         await syncOrgRules(orgId, {
           dailyCapCredits: rules.dailyCapCredits ?? null,
           allowedModels: rules.allowedModels ?? null,
+          allowedRegions: rules.allowedRegions ?? null,
+          requireVerified: rules.requireVerified ?? false,
+          rateLimitPerMin: rules.rateLimitPerMin ?? null,
+          pinnedHosts: rules.pinnedHosts ?? null,
           handles,
         });
         gatewaySynced = true;

@@ -23,7 +23,7 @@ describe("org rules", () => {
     await expect(s.set({ orgId: "", dailyCapCredits: null, allowedModels: null, handles: [] })).rejects.toThrow("orgId required");
   });
 
-  it("blocks disallowed models (403) and breached daily ceilings (429)", async () => {
+  it("blocks disallowed models (403 plain language) and breached daily ceilings (429)", async () => {
     const stub = express();
     stub.use(express.json());
     stub.post("/v1/chat/completions", (_req, res) => res.json({ choices: [{ message: { content: "ok" } }] }));
@@ -42,10 +42,12 @@ describe("org rules", () => {
         body: JSON.stringify({ model, messages: [{ role: "user", content: text }], ...(handle ? { userHandle: handle } : {}) }),
       });
     try {
-      // wrong model -> 403 even with budget left
+      // wrong model -> 403 in plain words even with budget left
       const bad = await chat("qwen2.5:0.5b", "0x0000000000000000000000000000000000000abc");
       expect(bad.status).toBe(403);
-      expect(((await bad.json()) as any).error.type).toBe("model_not_allowed");
+      const badBody: any = await bad.json();
+      expect(badBody.error.type).toBe("org_policy");
+      expect(badBody.error.message).toContain("Not allowed in your organization");
       // right model, under ceiling -> 200
       expect((await chat("llama-3.1-8b", "0x0000000000000000000000000000000000000abc", "one")).status).toBe(200);
       // spend 20 (over the 15 ceiling) then next call 429s
@@ -56,6 +58,85 @@ describe("org rules", () => {
       // strangers (no org) serve normally
       expect((await chat("llama-3.1-8b", undefined, "stranger")).status).toBe(200);
     } finally {
+      srv.close();
+      stubSrv.close();
+    }
+  });
+
+  it("routes within allowed regions, 403s outside in plain language", async () => {
+    const stub = express();
+    stub.use(express.json());
+    stub.post("/v1/chat/completions", (_req, res) => res.json({ choices: [{ message: { content: "ok" } }] }));
+    const stubSrv: Server = stub.listen(0);
+    const stubPort = (stubSrv.address() as any).port;
+    const { MemoryHostMeta } = await import("../src/hostmeta.js");
+    const meta = new MemoryHostMeta();
+    await meta.setGeo("0xhost1", "us-oregon");
+    const orgRules = new MemoryOrgRules();
+    const member = "0x0000000000000000000000000000000000000bbb";
+    await orgRules.set({ orgId: "o2", dailyCapCredits: null, allowedModels: null, allowedRegions: ["us-oregon"], requireVerified: false, handles: [`wallet:${member}`] });
+    process.env.HOSTS_JSON = JSON.stringify([{ address: "0xhost1", endpoint: `http://127.0.0.1:${stubPort}`, modelId: "m", pricePerReq: 1 }]);
+    const app = createApp({ meta, orgRules });
+    const srv: Server = app.listen(0);
+    const port = (srv.address() as any).port;
+    const chat = () =>
+      fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "x" }], userHandle: member }),
+      });
+    try {
+      // host geo us-oregon ∈ allowed → served
+      expect((await chat()).status).toBe(200);
+      // tighten to eu-west → same host now excluded → plain 403
+      await orgRules.set({ orgId: "o2", dailyCapCredits: null, allowedModels: null, allowedRegions: ["eu-west"], requireVerified: false, handles: [`wallet:${member}`] });
+      const denied = await chat();
+      expect(denied.status).toBe(403);
+      expect(((await denied.json()) as any).error.message).toContain("Not allowed in your organization");
+    } finally {
+      delete process.env.HOSTS_JSON;
+      srv.close();
+      stubSrv.close();
+    }
+  });
+
+  it("rate-limits orgs and pins hosts", async () => {
+    const stub = express();
+    stub.use(express.json());
+    stub.post("/v1/chat/completions", (_req, res) => res.json({ choices: [{ message: { content: "ok" } }] }));
+    const stubSrv: Server = stub.listen(0);
+    const stubPort = (stubSrv.address() as any).port;
+    const receipts = new MemoryReceiptLog();
+    const orgRules = new MemoryOrgRules();
+    const member = "0x0000000000000000000000000000000000000ccc";
+    const host = "0x0000000000000000000000000000000000000ddd";
+    await orgRules.set({ orgId: "o3", dailyCapCredits: null, allowedModels: null, allowedRegions: null, requireVerified: false, rateLimitPerMin: 1, pinnedHosts: [host], handles: [`wallet:${member}`] });
+    process.env.HOSTS_JSON = JSON.stringify([
+      { address: host, endpoint: `http://127.0.0.1:${stubPort}`, modelId: "m", pricePerReq: 1 },
+      { address: "0x0000000000000000000000000000000000000eee", endpoint: `http://127.0.0.1:${stubPort}`, modelId: "m", pricePerReq: 1 },
+    ]);
+    const app = createApp({ receipts, orgRules });
+    const srv: Server = app.listen(0);
+    const port = (srv.address() as any).port;
+    const chat = (text: string) =>
+      fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "m", messages: [{ role: "user", content: text }], userHandle: member }),
+      });
+    try {
+      expect((await chat("first")).status).toBe(200);
+      // second call inside the minute -> 429
+      const limited = await chat("second");
+      expect(limited.status).toBe(429);
+      expect(((await limited.json()) as any).error.type).toBe("quota_exceeded");
+      // pin to a host that doesn't exist -> routing pool empties -> plain 403
+      await orgRules.set({ orgId: "o3", dailyCapCredits: null, allowedModels: null, allowedRegions: null, requireVerified: false, rateLimitPerMin: null, pinnedHosts: ["0x0000000000000000000000000000000000000fff"], handles: [`wallet:${member}`] });
+      const pinned = await chat("third");
+      expect(pinned.status).toBe(403);
+      expect(((await pinned.json()) as any).error.message).toContain("Not allowed in your organization");
+    } finally {
+      delete process.env.HOSTS_JSON;
       srv.close();
       stubSrv.close();
     }

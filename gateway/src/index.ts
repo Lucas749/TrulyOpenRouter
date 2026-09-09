@@ -22,6 +22,14 @@ import { FileTapStore, PgTapStore, tapInstruction, type TapKind, type TapStatus,
 import { cachedGeo } from "./geo.js";
 import { createTapExecutor } from "./tap-exec.js";
 
+/// @notice Thrown when an org rule blocks a call. Caught by the chat handler
+/// into a plain-language 403 (module scope: the catch lives outside try).
+class OrgPolicyDenied extends Error {
+  constructor(why: string) {
+    super(`Not allowed in your organization (${why})`);
+  }
+}
+
 export interface GatewayOptions {
   payTo?: string; // Hedera service account; empty = dev mode (x402 gate off)
   registry?: Address;
@@ -259,18 +267,32 @@ export function createApp(opts: GatewayOptions = {}) {
           }
         }
       }
-      // Org rules gate (firm policy): model allowlist (403) + daily org ceiling (429).
-      // Handle = key:<prefix> for keyed calls, wallet:<addr> for browser calls.
+      // Org rules gate (firm policy). Handle = key:<prefix> for keyed calls,
+      // wallet:<addr> for browser calls. Blocks speak plainly: the caller asked
+      // for something their org disallows — never a stack trace.
+      let orgRegionAllow: string[] | null = null; // intersected across caller orgs
+      let orgVerifiedOnly = false;
+      let orgPinnedHosts: string[] | null = null; // union: any pinned host serves
+      let orgRateLimit: number | null = null; // strictest (min) across caller orgs
+      let orgRateHandles: string[] = [];
       if (opts.orgRules) {
         const handle = keyPrefix ? `key:${keyPrefix}` : walletHandle;
         if (handle) {
           const orgs = await opts.orgRules.orgsForHandle(handle);
           for (const o of orgs) {
             if (o.allowedModels && !o.allowedModels.includes(model)) {
-              res.status(403).json({
-                error: { message: `model ${model} not allowed by org policy`, type: "model_not_allowed" },
-              });
-              return;
+              throw new OrgPolicyDenied(`model ${model} not allowed`);
+            }
+            if (o.allowedRegions) {
+              orgRegionAllow = orgRegionAllow ? orgRegionAllow.filter((r) => o.allowedRegions!.includes(r)) : [...o.allowedRegions];
+            }
+            if (o.requireVerified) orgVerifiedOnly = true;
+            if (o.pinnedHosts) {
+              orgPinnedHosts = orgPinnedHosts ? [...new Set([...orgPinnedHosts, ...o.pinnedHosts])] : [...o.pinnedHosts];
+            }
+            if (o.rateLimitPerMin != null) {
+              orgRateLimit = orgRateLimit == null ? o.rateLimitPerMin : Math.min(orgRateLimit, o.rateLimitPerMin);
+              for (const h of o.handles) if (!orgRateHandles.includes(h)) orgRateHandles.push(h);
             }
             if (o.dailyCapCredits != null) {
               const dayStart = new Date().setUTCHours(0, 0, 0, 0);
@@ -284,6 +306,21 @@ export function createApp(opts: GatewayOptions = {}) {
               }
             }
           }
+        }
+      }
+      // Org rate limit: calls in the trailing 60s across member handles.
+      if (orgRateLimit != null) {
+        const receipts = (await opts.receipts?.list(10_000)) ?? [];
+        const since = Date.now() - 60_000;
+        const recent = orgRateHandles.reduce(
+          (a, h) => a + receipts.filter((r) => r.user === h && r.ts >= since).length,
+          0,
+        );
+        if (recent >= orgRateLimit) {
+          res.status(429).json({
+            error: { message: `org rate limit reached (${orgRateLimit}/min) — retry in a few seconds`, type: "quota_exceeded" },
+          });
+          return;
         }
       }
       const fallback = opts.fallbackUpstream ?? process.env.UPSTREAM_URL;
@@ -319,10 +356,37 @@ export function createApp(opts: GatewayOptions = {}) {
         const hosts = await resolveHosts(opts, model);
         // Failing verification = out of rotation until it recovers. The directory
         // still lists the host (with its failing status) — exclusion is routing-only.
-const ver = opts.verifier;
-        if (!ver) return hosts;
-        const checks = await Promise.all(hosts.map(async (h) => ({ h, failing: (await ver.verification(h.address)).failing })));
-        return checks.filter((c) => !c.failing).map((c) => c.h);
+        const ver = opts.verifier;
+        let pool = hosts;
+        if (ver) {
+          const checks = await Promise.all(hosts.map(async (h) => ({ h, failing: (await ver.verification(h.address)).failing })));
+          pool = checks.filter((c) => !c.failing).map((c) => c.h);
+        }
+        // Org routing policy: pinned hosts, allowed regions (observed geo,
+        // self-report fallback), verified-only. Empty pool = explicit org
+        // denial, not a silent 404.
+        if (orgRegionAllow || orgVerifiedOnly || orgPinnedHosts) {
+          const meta = opts.meta;
+          const kept: typeof pool = [];
+          for (const h of pool) {
+            if (orgPinnedHosts && !orgPinnedHosts.some((a) => a.toLowerCase() === h.address.toLowerCase())) continue;
+            if (orgRegionAllow) {
+              const geo = meta ? await cachedGeo(h.address, h.endpoint, meta).catch(() => null) : null;
+              const region = meta ? await meta.regionOf(h.address).catch(() => null) : null;
+              if (![geo, region].filter(Boolean).some((r) => orgRegionAllow!.includes(r as string))) continue;
+            }
+            if (orgVerifiedOnly && ver) {
+              const v = await ver.verification(h.address);
+              if (!(v.checks > 0 && !v.failing)) continue;
+            }
+            kept.push(h);
+          }
+          if (kept.length === 0 && pool.length > 0) {
+            throw new OrgPolicyDenied("no host matches org region/host policy");
+          }
+          pool = kept;
+        }
+        return pool;
       }, fallback);
       selectedHost = host;
       emit("submitted", { endpoint });
@@ -411,8 +475,12 @@ const ver = opts.verifier;
         } catch {}
         return;
       }
+      if (e instanceof OrgPolicyDenied) {
+        res.status(403).json({ error: { message: e.message, type: "org_policy" } });
+        return;
+      }
       const code = String(e?.message ?? "").startsWith("no hosts") ? 404 : 502;
-      res.status(code).json({ error: { message: String(e?.message ?? e), type: "upstream_error" } });
+      res.status(code).json({ error: { message: String(e?.message ?? e).slice(0, 200), type: "upstream_error" } });
     }
   });
 
@@ -860,7 +928,8 @@ const ver = opts.verifier;
 
   // Org rules mirror (synced from web team management after signed approval).
   // Same trust shape as caps: caller holds the wallet signature, this hop is
-  // token-authed. Body: { orgId, dailyCapCredits|null, allowedModels|null, handles[] }.
+  // token-authed. Body: { orgId, dailyCapCredits|null, allowedModels|null,
+  // allowedRegions|null, requireVerified?, handles[] }.
   app.post("/api/admin/org-rules", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     if (!opts.orgRules) {
@@ -868,7 +937,7 @@ const ver = opts.verifier;
       return;
     }
     try {
-      const { orgId, dailyCapCredits, allowedModels, handles } = req.body ?? {};
+      const { orgId, dailyCapCredits, allowedModels, allowedRegions, requireVerified, rateLimitPerMin, pinnedHosts, handles } = req.body ?? {};
       if (!orgId || typeof orgId !== "string") throw new Error("orgId required");
       if (dailyCapCredits !== null && dailyCapCredits !== undefined && (!Number.isFinite(Number(dailyCapCredits)) || Number(dailyCapCredits) < 0)) {
         throw new Error("dailyCapCredits must be a non-negative number or null");
@@ -876,10 +945,23 @@ const ver = opts.verifier;
       if (allowedModels !== null && allowedModels !== undefined && (!Array.isArray(allowedModels) || !allowedModels.every((m: unknown) => typeof m === "string"))) {
         throw new Error("allowedModels must be a string array or null");
       }
+      if (allowedRegions !== null && allowedRegions !== undefined && (!Array.isArray(allowedRegions) || !allowedRegions.every((m: unknown) => typeof m === "string"))) {
+        throw new Error("allowedRegions must be a string array or null");
+      }
+      if (rateLimitPerMin !== null && rateLimitPerMin !== undefined && (!Number.isInteger(rateLimitPerMin) || rateLimitPerMin <= 0)) {
+        throw new Error("rateLimitPerMin must be a positive integer or null");
+      }
+      if (pinnedHosts !== null && pinnedHosts !== undefined && (!Array.isArray(pinnedHosts) || !pinnedHosts.every((m: unknown) => typeof m === "string"))) {
+        throw new Error("pinnedHosts must be a string array or null");
+      }
       const rule = {
         orgId,
         dailyCapCredits: dailyCapCredits ?? null,
         allowedModels: allowedModels ?? null,
+        allowedRegions: allowedRegions ?? null,
+        requireVerified: !!requireVerified,
+        rateLimitPerMin: rateLimitPerMin ?? null,
+        pinnedHosts: pinnedHosts ?? null,
         handles: Array.isArray(handles) ? handles.filter((h: unknown) => typeof h === "string") : [],
       };
       await opts.orgRules.set(rule);

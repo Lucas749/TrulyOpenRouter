@@ -89,8 +89,16 @@ CREATE TABLE IF NOT EXISTS org_rules (
   org_id text PRIMARY KEY,
   daily_cap double precision,
   allowed_models jsonb,
+  allowed_regions jsonb,
+  require_verified boolean NOT NULL DEFAULT false,
+  rate_limit_per_min int,
+  pinned_hosts jsonb,
   handles jsonb NOT NULL DEFAULT '[]'
 );
+ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS allowed_regions jsonb;
+ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS require_verified boolean NOT NULL DEFAULT false;
+ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS rate_limit_per_min int;
+ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS pinned_hosts jsonb;
 
 -- PENDING_TAP queue (L4 device-gated actions).
 CREATE TABLE IF NOT EXISTS taps (

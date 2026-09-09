@@ -438,12 +438,16 @@ export async function decideRequest(
 // Kinds: daily_cap {credits|null}, models {models: string[]|null},
 // per_tx_cap {usd|null} (display mirror; the Privy per-tx policy is set at creation).
 
-export type RuleKind = "daily_cap" | "models" | "per_tx_cap";
+export type RuleKind = "daily_cap" | "models" | "regions" | "verified" | "rate_limit" | "hosts" | "per_tx_cap";
 
 export interface OrgRules {
   orgId: string;
   dailyCapCredits?: number;
   allowedModels?: string[] | null;
+  allowedRegions?: string[] | null;
+  requireVerified?: boolean;
+  rateLimitPerMin?: number;
+  pinnedHosts?: string[] | null;
   perTxCapUsd?: number;
   updatedAt: number;
 }
@@ -467,7 +471,7 @@ export interface RuleChange {
   decisionExpires?: number;
 }
 
-const RULE_KINDS: RuleKind[] = ["daily_cap", "models", "per_tx_cap"];
+const RULE_KINDS: RuleKind[] = ["daily_cap", "models", "regions", "verified", "rate_limit", "hosts", "per_tx_cap"];
 
 export function validateRulePayload(kind: string, payload: Record<string, unknown>): void {
   if (!(RULE_KINDS as string[]).includes(kind)) throw new Error(`unknown rule kind (want ${RULE_KINDS.join("|")})`);
@@ -481,6 +485,27 @@ export function validateRulePayload(kind: string, payload: Record<string, unknow
     const m = payload.models;
     if (m !== null && m !== undefined && (!Array.isArray(m) || !(m as unknown[]).every((x) => typeof x === "string" && x))) {
       throw new Error("models.models must be a string array or null (all models)");
+    }
+  }
+  if (kind === "regions") {
+    const r = payload.regions;
+    if (r !== null && r !== undefined && (!Array.isArray(r) || !(r as unknown[]).every((x) => typeof x === "string" && /^[a-z]{2}-[a-z]+$/.test(x)))) {
+      throw new Error("regions.regions must be an array of cc-name slugs (e.g. us-oregon) or null (all regions)");
+    }
+  }
+  if (kind === "verified") {
+    if (typeof payload.only !== "boolean") throw new Error("verified.only must be true or false");
+  }
+  if (kind === "rate_limit") {
+    const p = payload.perMin;
+    if (p !== null && p !== undefined && (!Number.isInteger(p as number) || (p as number) <= 0)) {
+      throw new Error("rate_limit.perMin must be a positive integer or null (unlimited)");
+    }
+  }
+  if (kind === "hosts") {
+    const h = payload.hosts;
+    if (h !== null && h !== undefined && (!Array.isArray(h) || !(h as unknown[]).every((x) => typeof x === "string" && /^0x[0-9a-fA-F]{40}$/.test(x)))) {
+      throw new Error("hosts.hosts must be an array of 0x host addresses or null (any host)");
     }
   }
   if (kind === "per_tx_cap") {
@@ -514,6 +539,10 @@ async function readRules(): Promise<RulesFile> {
       orgId: r.org_id,
       dailyCapCredits: r.daily_cap_credits != null ? Number(r.daily_cap_credits) : undefined,
       allowedModels: r.allowed_models == null ? undefined : (typeof r.allowed_models === "string" ? JSON.parse(r.allowed_models) : r.allowed_models),
+      allowedRegions: r.allowed_regions == null ? undefined : (typeof r.allowed_regions === "string" ? JSON.parse(r.allowed_regions) : r.allowed_regions),
+      requireVerified: r.require_verified ?? undefined,
+      rateLimitPerMin: r.rate_limit_per_min != null ? Number(r.rate_limit_per_min) : undefined,
+      pinnedHosts: r.pinned_hosts == null ? undefined : (typeof r.pinned_hosts === "string" ? JSON.parse(r.pinned_hosts) : r.pinned_hosts),
       perTxCapUsd: r.per_tx_cap_usd != null ? Number(r.per_tx_cap_usd) : undefined,
       updatedAt: Number(r.updated_at),
     };
@@ -556,12 +585,17 @@ async function writeRules(s: RulesFile): Promise<void> {
   const q = db();
   for (const [id, o] of Object.entries(s.rules)) {
     await q.query(
-      `INSERT INTO org_rules (org_id, daily_cap_credits, allowed_models, per_tx_cap_usd, updated_at)
-       VALUES ($1,$2,$3,$4,$5)
+      `INSERT INTO org_rules (org_id, daily_cap_credits, allowed_models, allowed_regions, require_verified, rate_limit_per_min, pinned_hosts, per_tx_cap_usd, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        ON CONFLICT (org_id) DO UPDATE SET daily_cap_credits = EXCLUDED.daily_cap_credits,
-         allowed_models = EXCLUDED.allowed_models, per_tx_cap_usd = EXCLUDED.per_tx_cap_usd,
+         allowed_models = EXCLUDED.allowed_models, allowed_regions = EXCLUDED.allowed_regions,
+         require_verified = EXCLUDED.require_verified, rate_limit_per_min = EXCLUDED.rate_limit_per_min,
+         pinned_hosts = EXCLUDED.pinned_hosts, per_tx_cap_usd = EXCLUDED.per_tx_cap_usd,
          updated_at = EXCLUDED.updated_at`,
-      [id, o.dailyCapCredits ?? null, o.allowedModels === undefined ? null : JSON.stringify(o.allowedModels), o.perTxCapUsd ?? null, o.updatedAt],
+      [id, o.dailyCapCredits ?? null, o.allowedModels === undefined ? null : JSON.stringify(o.allowedModels),
+        o.allowedRegions === undefined ? null : JSON.stringify(o.allowedRegions), o.requireVerified ?? null,
+        o.rateLimitPerMin ?? null, o.pinnedHosts === undefined ? null : JSON.stringify(o.pinnedHosts),
+        o.perTxCapUsd ?? null, o.updatedAt],
     );
   }
   for (const [id, r] of Object.entries(s.changes)) {
@@ -596,6 +630,10 @@ function applyRule(o: OrgRules, kind: RuleKind, payload: Record<string, unknown>
   const next: OrgRules = { ...o, updatedAt: Date.now() };
   if (kind === "daily_cap") next.dailyCapCredits = (payload.credits as number | null) ?? undefined;
   if (kind === "models") next.allowedModels = (payload.models as string[] | null) ?? undefined;
+  if (kind === "regions") next.allowedRegions = (payload.regions as string[] | null) ?? undefined;
+  if (kind === "verified") next.requireVerified = (payload.only as boolean) ?? undefined;
+  if (kind === "rate_limit") next.rateLimitPerMin = (payload.perMin as number | null) ?? undefined;
+  if (kind === "hosts") next.pinnedHosts = (payload.hosts as string[] | null) ?? undefined;
   if (kind === "per_tx_cap") next.perTxCapUsd = (payload.usd as number | null) ?? undefined;
   return next;
 }

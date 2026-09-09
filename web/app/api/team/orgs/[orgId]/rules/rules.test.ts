@@ -27,6 +27,23 @@ beforeEach(async () => {
 });
 
 describe("org rules", () => {
+  it("validates the full rule catalog", () => {
+    validateRulePayload("regions", { regions: ["us-oregon", "eu-west"] });
+    validateRulePayload("regions", { regions: null });
+    validateRulePayload("verified", { only: true });
+    validateRulePayload("verified", { only: false });
+    validateRulePayload("rate_limit", { perMin: 20 });
+    validateRulePayload("rate_limit", { perMin: null });
+    validateRulePayload("hosts", { hosts: ["0x0000000000000000000000000000000000000001"] });
+    validateRulePayload("hosts", { hosts: null });
+    expect(() => validateRulePayload("regions", { regions: ["USA!!"] })).toThrow("cc-name slugs");
+    expect(() => validateRulePayload("regions", { regions: "us-oregon" })).toThrow("cc-name");
+    expect(() => validateRulePayload("verified", { only: "yes" })).toThrow("true or false");
+    expect(() => validateRulePayload("rate_limit", { perMin: 0 })).toThrow("positive integer");
+    expect(() => validateRulePayload("rate_limit", { perMin: 1.5 })).toThrow("positive integer");
+    expect(() => validateRulePayload("hosts", { hosts: ["nope"] })).toThrow("0x host addresses");
+  });
+
   it("validates payloads per kind", () => {
     validateRulePayload("daily_cap", { credits: 100 });
     validateRulePayload("daily_cap", { credits: null });

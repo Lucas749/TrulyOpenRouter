@@ -59,9 +59,17 @@ CREATE TABLE IF NOT EXISTS org_rules (
   org_id text PRIMARY KEY,
   daily_cap_credits double precision,
   allowed_models jsonb,
+  allowed_regions jsonb,
+  require_verified boolean,
+  rate_limit_per_min int,
+  pinned_hosts jsonb,
   per_tx_cap_usd double precision,
   updated_at bigint NOT NULL
 );
+ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS allowed_regions jsonb;
+ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS require_verified boolean;
+ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS rate_limit_per_min int;
+ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS pinned_hosts jsonb;
 
 -- Rule-change intents: propose (owner/manager-signed) -> decide (owner-signed)
 -- -> applied + synced to gateway. Same audit-trail shape as increase requests.

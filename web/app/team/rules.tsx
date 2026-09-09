@@ -13,6 +13,10 @@ interface Rules {
   orgId: string;
   dailyCapCredits?: number;
   allowedModels?: string[] | null;
+  allowedRegions?: string[] | null;
+  requireVerified?: boolean;
+  rateLimitPerMin?: number;
+  pinnedHosts?: string[] | null;
   perTxCapUsd?: number;
   updatedAt: number;
 }
@@ -41,11 +45,16 @@ export default function OrgRules({
   me: { did: string; wallet: string | null } | null;
   mock: boolean;
 }) {
+  // Rule catalog (prescribed, every option enforced — nothing free-typed except
+  // numbers): daily ceiling · allowed models · allowed regions · verified-only.
+
   // Role gates need the member list; one extra read per org card (shared cache
   // would couple this to OrgMembers internals — correctness over cleverness).
   const [isOwner, setIsOwner] = useState(false);
   const [canManage, setCanManage] = useState(false);
   const [models, setModels] = useState<string[]>([]);
+  const [regions, setRegions] = useState<string[]>([]);
+  const [hosts, setHosts] = useState<{ address: string; modelId: string }[]>([]);
   const { signMessage } = useSignMessage();
   const [rules, setRules] = useState<Rules | null>(null);
   const [pending, setPending] = useState<RuleChange[]>([]);
@@ -54,6 +63,9 @@ export default function OrgRules({
   const [busy, setBusy] = useState<string | null>(null);
   const [daily, setDaily] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
+  const [pickedRegions, setPickedRegions] = useState<string[]>([]);
+  const [pickedHosts, setPickedHosts] = useState<string[]>([]);
+  const [rate, setRate] = useState("");
   const [perTx, setPerTx] = useState("");
   const [syncedNote, setSyncedNote] = useState<string | null>(null);
 
@@ -69,6 +81,18 @@ export default function OrgRules({
     try {
       const g: any = await (await fetch(`/api/gw/v1/models`)).json().catch(() => ({}));
       setModels(((g.data ?? []) as any[]).map((x) => x.id).filter(Boolean));
+    } catch {}
+    try {
+      const h: any = await (await fetch(`/api/gw/api/hosts`)).json().catch(() => ({}));
+      const seen = new Set<string>();
+      const hl: { address: string; modelId: string }[] = [];
+      for (const x of (h.data ?? []) as any[]) {
+        if (x.geo) seen.add(x.geo);
+        if (x.region) seen.add(x.region);
+        if (x.address) hl.push({ address: x.address, modelId: x.modelId ?? "?" });
+      }
+      setRegions([...seen].sort());
+      setHosts(hl);
     } catch {}
     try {
       const m: any = await (await fetch(`/api/team/orgs/${orgId}/members`)).json();
@@ -116,6 +140,8 @@ export default function OrgRules({
       if (!r.ok) throw new Error(typeof d.error === "string" ? d.error : r.status);
       setDaily("");
       setPicked([]);
+      setPickedHosts([]);
+      setRate("");
       setPerTx("");
       await load();
     } catch (e: any) {
@@ -155,6 +181,7 @@ export default function OrgRules({
   }
 
   const currentModels = rules?.allowedModels ?? null;
+  const currentRegions = rules?.allowedRegions ?? null;
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-[#E5E5E0] px-4 py-3">
@@ -164,7 +191,11 @@ export default function OrgRules({
           {rules ? (
             <>
               daily {rules.dailyCapCredits == null ? "unlimited" : `${rules.dailyCapCredits} credits`} · models{" "}
-              {currentModels == null ? "all" : currentModels.length ? currentModels.join(", ") : "none"}
+              {currentModels == null ? "all" : currentModels.length ? currentModels.join(", ") : "none"} · regions{" "}
+              {currentRegions == null ? "all" : currentRegions.length ? currentRegions.join(", ") : "none"}
+              {rules.requireVerified ? " · verified hosts only" : ""} · rate{" "}
+              {rules.rateLimitPerMin == null ? "unlimited" : `${rules.rateLimitPerMin}/min`} · hosts{" "}
+              {rules.pinnedHosts == null ? "any" : rules.pinnedHosts.length ? `${rules.pinnedHosts.length} pinned` : "none"}
               {rules.perTxCapUsd != null && <> · per-tx {usd(rules.perTxCapUsd)}</>}
             </>
           ) : (
@@ -219,6 +250,96 @@ export default function OrgRules({
                 className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40"
               >
                 {busy === "models" ? "signing…" : picked.length ? `Propose (${picked.length} model${picked.length === 1 ? "" : "s"})` : "Propose (allow all)"}
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-[11px] text-[#6E6E73]">Allowed regions (unticked = all regions; observed IP geo, self-report fallback)</span>
+            {regions.length === 0 ? (
+              <span className="font-mono text-[11px] text-[#8F8F8F]">no host locations on the network yet</span>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {regions.map((r) => {
+                  const on = pickedRegions.includes(r);
+                  return (
+                    <button
+                      key={r}
+                      onClick={() => setPickedRegions((p) => (on ? p.filter((x) => x !== r) : [...p, r]))}
+                      className={`rounded-full border px-3 py-1 font-mono text-[11px] ${on ? "border-black bg-black text-white" : "border-black/10 bg-white hover:bg-black/5"}`}
+                    >
+                      {r}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div>
+              <button
+                onClick={() => propose("regions", { regions: pickedRegions.length ? pickedRegions : null }, "regions")}
+                disabled={busy === "regions" || !me?.wallet || regions.length === 0}
+                className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40"
+              >
+                {busy === "regions" ? "signing…" : pickedRegions.length ? `Propose (${pickedRegions.length} region${pickedRegions.length === 1 ? "" : "s"})` : "Propose (all regions)"}
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-[#6E6E73]">Only hosts passing model checks (cheat hosts excluded even when healthy)</span>
+            <button
+              onClick={() => propose("verified", { only: !(rules?.requireVerified ?? false) }, "verified")}
+              disabled={busy === "verified" || !me?.wallet}
+              className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40"
+            >
+              {busy === "verified" ? "signing…" : rules?.requireVerified ? "Propose (allow all)" : "Propose (verified only)"}
+            </button>
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-[11px] text-[#6E6E73]">Pinned hosts (unticked = any host; pin spend to hosts you trust)</span>
+            {hosts.length === 0 ? (
+              <span className="font-mono text-[11px] text-[#8F8F8F]">no hosts on the network yet</span>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {hosts.map((h) => {
+                  const on = pickedHosts.includes(h.address);
+                  return (
+                    <button
+                      key={h.address}
+                      onClick={() => setPickedHosts((p) => (on ? p.filter((x) => x !== h.address) : [...p, h.address]))}
+                      title={`${h.address} · ${h.modelId}`}
+                      className={`rounded-full border px-3 py-1 font-mono text-[11px] ${on ? "border-black bg-black text-white" : "border-black/10 bg-white hover:bg-black/5"}`}
+                    >
+                      {h.address.slice(0, 10)}… · {h.modelId}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div>
+              <button
+                onClick={() => propose("hosts", { hosts: pickedHosts.length ? pickedHosts : null }, "hosts")}
+                disabled={busy === "hosts" || !me?.wallet}
+                className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40"
+              >
+                {busy === "hosts" ? "signing…" : pickedHosts.length ? `Propose (${pickedHosts.length} host${pickedHosts.length === 1 ? "" : "s"})` : "Propose (any host)"}
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-[11px] text-[#6E6E73]">Rate limit, calls per minute across the org (stops runaway agents)</span>
+            <div className="flex flex-wrap gap-2">
+              <input
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+                placeholder="e.g. 20 (empty = unlimited)"
+                className="h-8 min-w-[220px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs"
+                inputMode="numeric"
+              />
+              <button
+                onClick={() => propose("rate_limit", { perMin: rate.trim() === "" ? null : Number(rate) }, "rate")}
+                disabled={busy === "rate" || !me?.wallet}
+                className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40"
+              >
+                {busy === "rate" ? "signing…" : "Propose"}
               </button>
             </div>
           </div>
