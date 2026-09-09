@@ -154,18 +154,31 @@ export default function OnboardingPage() {
             One onchain payment (10 HBAR) on Hedera testnet. Fund the wallet first, then subscribe.
           </p>
           {address && (
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <button onClick={copy} className="h-9 rounded-full border border-black/10 px-4 font-mono text-xs">
-                {copied ? "copied ✓" : `copy ${address.slice(0, 10)}…`}
-              </button>
-              <button onClick={dripFunds} disabled={drip === "sending"} className="h-9 rounded-full bg-black px-4 text-xs text-white disabled:opacity-40">
-                {drip === "sending" ? "dripping…" : "Drip 0.5 HBAR"}
-              </button>
-              <a href="https://faucet.hedera.com" target="_blank" rel="noreferrer" className="flex h-9 items-center rounded-full border border-black/10 px-4 text-xs hover:bg-black/5">
-                faucet.hedera.com ↗
-              </a>
-              <span className="font-mono text-sm">{hbar === null ? "balance —" : `${Number(hbar).toFixed(2)} HBAR`}</span>
-            </div>
+            <>
+              <div className="mb-1 flex items-baseline justify-between font-mono text-sm">
+                <span>{hbar === null ? "balance —" : `${Number(hbar).toFixed(2)} / 10 HBAR`}</span>
+                {hbar !== null && Number(hbar) >= 10 && <span className="text-[#0B7A5D]">funded ✓</span>}
+              </div>
+              <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-black/10">
+                <div
+                  className="h-full rounded-full bg-black transition-all"
+                  style={{ width: `${hbar === null ? 0 : Math.min(100, (Number(hbar) / 10) * 100)}%` }}
+                />
+              </div>
+              <div className="mb-4 flex flex-wrap gap-2">
+                <button onClick={copy} className="h-9 rounded-full border border-black/10 px-4 font-mono text-xs hover:bg-black/5">
+                  {copied ? "copied ✓" : `copy ${address.slice(0, 10)}…`}
+                </button>
+                {drip !== "done" && !(drip === "error" && msg?.includes("already exists")) && (
+                  <button onClick={dripFunds} disabled={drip === "sending"} className="h-9 rounded-full border border-black/10 px-4 text-xs hover:bg-black/5 disabled:opacity-40">
+                    {drip === "sending" ? "dripping…" : "Drip 0.5 HBAR"}
+                  </button>
+                )}
+                <a href="https://faucet.hedera.com" target="_blank" rel="noreferrer" className="flex h-9 items-center rounded-full border border-black/10 px-4 text-xs hover:bg-black/5">
+                  faucet.hedera.com ↗
+                </a>
+              </div>
+            </>
           )}
           <div className="flex flex-wrap items-center gap-3">
             <button
@@ -174,9 +187,9 @@ export default function OnboardingPage() {
               title={hbar !== null && Number(hbar) < 10 ? "needs 10 HBAR first — drip + faucet above" : undefined}
               className="flex h-10 items-center rounded-full bg-black px-5 text-sm text-white disabled:opacity-40"
             >
-              {busy ? "confirm in wallet…" : hbar !== null && Number(hbar) < 10 ? `Fund first (${Number(hbar).toFixed(1)} HBAR)` : "Subscribe $10"}
+              {busy ? "confirm in wallet…" : hbar !== null && Number(hbar) < 10 ? `Needs ${(10 - Number(hbar)).toFixed(1)} more HBAR` : "Subscribe $10"}
             </button>
-            <button onClick={refresh} disabled={!authenticated} className="h-10 rounded-full border border-black/10 px-4 text-sm disabled:opacity-40">Check credits</button>
+            <button onClick={refresh} disabled={!authenticated} className="h-10 rounded-full border border-black/10 px-4 text-sm disabled:opacity-40">Check</button>
             {credits !== null && <span className="font-mono text-sm">{credits} credits</span>}
           </div>
           {msg && <p className="mb-0 mt-3 font-mono text-xs text-[#6E6E73]">{msg}</p>}
