@@ -10,9 +10,8 @@ import { contractUrl } from "../../../lib/chain";
 
 const RPC = "https://testnet.hashio.io/api";
 const GW = "/api/gw"; // same-origin proxy, never localhost
-const STAKE_HBAR = 10; // registry minimum stake, mirrored from tor-host run
-// Users fund STAKE + 1 gas headroom: exactly-10 keys fail the register tx
-// itself (stake locks in full, gas has nowhere to come from).
+const STAKE_HBAR = 5; // default stake, mirrored from tor-host run (onchain MIN_STAKE is dust)
+// Users fund STAKE + 1 gas headroom in a single faucet trip (faucet pays 10).
 const NEED_HBAR = STAKE_HBAR + 1;
 
 function short(a: string) {

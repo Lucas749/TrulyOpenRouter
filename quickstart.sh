@@ -21,6 +21,9 @@ export TOR_QUIET=1
 PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
 MODEL_ID="${MODEL_ID:-}" # env pin; step 2 fills it. Declared here so set -u never trips.
+STAKE_HBAR="${STAKE_HBAR:-5}" # onchain MIN_STAKE is dust; faucet pays 10, so 5 + 1 gas fits one trip.
+case "$STAKE_HBAR" in ''|*[!0-9]*) STAKE_HBAR=5;; esac
+FUND_NEED=$((STAKE_HBAR + 1))
 QS_SESS=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo "session")
 QS_REV=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 # Brand mark (TOR block glyphs — widths verified 19 cols, keep aligned).
@@ -589,7 +592,7 @@ if [ "$TUI" = 1 ]; then
 else
   hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
 fi
-# fund_wait ADDR — poll testnet balance until ≥11 HBAR (10 stake + ~1 gas:
+# fund_wait ADDR — poll testnet balance until ≥$FUND_NEED HBAR (stake + ~1 gas:
 # exactly-10 keys fail the register tx itself, gas has nowhere to come from).
 # Exact integer math in shell (strip 18 wei digits — float64 can't hold HBAR
 # scale). 0 = funded.
@@ -611,10 +614,10 @@ fund_wait() {
       [ -z "$_fw_int" ] && _fw_int=0
       # One line per balance (tail shows a single updating status, not a stack).
       if [ "$_fw_int" != "$_fw_last" ] || [ "$_fw_i" = 0 ]; then
-        echo "balance: ${_fw_int} HBAR / need ≥11 (10 stake + gas — Enter = recheck now)"
+        echo "balance: ${_fw_int} HBAR / need ≥${FUND_NEED:-6} (${STAKE_HBAR:-5} stake + gas — Enter = recheck now)"
         _fw_last="$_fw_int"
       fi
-      if [ "$_fw_int" -ge 11 ] 2>/dev/null; then return 0; fi
+      if [ "$_fw_int" -ge "${FUND_NEED:-6}" ] 2>/dev/null; then return 0; fi
     else
       echo "balance: ? (RPC unreachable — retrying, NOT counted as zero)"
       _fw_last="?"
@@ -648,9 +651,9 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
     if [ -n "$HOST_ADDR" ]; then
       printf '%s' "$HOST_ADDR" | pbcopy 2>/dev/null || printf '%s' "$HOST_ADDR" | xclip -selection clipboard 2>/dev/null || true
       if [ "$TUI" = 1 ]; then
-        UI_BODY="  fund THIS address (≥11 HBAR = 10 stake + gas) — your host key, not your login wallet:\n  ${B}$HOST_ADDR${RST}\n  (copied to clipboard — paste at faucet.hedera.com)\n"; UI_FOOT="watching it live below — Enter rechecks, funding auto-continues"; render
+        UI_BODY="  fund THIS address (≥${FUND_NEED:-6} HBAR = ${STAKE_HBAR:-5} stake + gas) — your host key, not your login wallet:\n  ${B}$HOST_ADDR${RST}\n  (copied to clipboard — paste at faucet.hedera.com)\n"; UI_FOOT="watching it live below — Enter rechecks, funding auto-continues"; render
       else
-        ok "fund THIS address (≥11 HBAR = 10 stake + gas) — host key, not login wallet: $HOST_ADDR"
+        ok "fund THIS address (≥${FUND_NEED:-6} HBAR = ${STAKE_HBAR:-5} stake + gas) — host key, not login wallet: $HOST_ADDR"
         hint "copied to clipboard — paste at faucet.hedera.com"
       fi
       (open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || true)

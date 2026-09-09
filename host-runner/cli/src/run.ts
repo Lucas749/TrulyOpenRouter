@@ -35,6 +35,11 @@ export function stakeShortfall(balanceWei: bigint, stakeHbar: number): bigint {
   return balanceWei >= need ? 0n : need - balanceWei;
 }
 
+/// @notice Default stake (HBAR). Faucet pays 10/trip, so 5 + 1 gas headroom
+/// keeps onboarding to a single faucet visit. Onchain MIN_STAKE is dust —
+/// this default is policy, not consensus.
+export const DEFAULT_STAKE_HBAR = 5;
+
 export interface RunOptions {
   gateway: string;
   model: string;
@@ -155,7 +160,7 @@ export async function run(o: RunOptions): Promise<void> {
     spin.start("checking stake funding");
     const pub = createPublicClient({ transport: http(rpcUrl) });
     const balance = await pub.getBalance({ address: account.address });
-    const shortfall = stakeShortfall(balance, Number(o.stakeHbar ?? 10));
+    const shortfall = stakeShortfall(balance, Number(o.stakeHbar ?? DEFAULT_STAKE_HBAR));
     if (shortfall > 0n) {
       const need = ((shortfall + BigInt(1e18) - 1n) / BigInt(1e18)).toString(); // ceil HBAR
       spin.stop();
@@ -176,7 +181,7 @@ export async function run(o: RunOptions): Promise<void> {
     } else {
       spin.start("registering onchain");
       const wallet = createWalletClient({ account, transport: http(rpcUrl) });
-      const stakeWei = BigInt(Math.round(Number(o.stakeHbar ?? 10))) * BigInt(1e18);
+      const stakeWei = BigInt(Math.round(Number(o.stakeHbar ?? DEFAULT_STAKE_HBAR))) * BigInt(1e18);
       const minStake = (await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: "MIN_STAKE" })) as bigint;
       if (stakeWei < minStake) throw new Error(`stake below registry minimum`);
       const hash = await wallet.writeContract({

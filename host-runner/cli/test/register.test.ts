@@ -3,7 +3,7 @@ import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { loadConfig } from "../src/config.js";
-import { ensureHostKey, shouldRegister, stakeShortfall } from "../src/run.js";
+import { DEFAULT_STAKE_HBAR, ensureHostKey, shouldRegister, stakeShortfall } from "../src/run.js";
 
 describe("shouldRegister (idempotent re-runs)", () => {
   it("registers fresh keys", () => {
@@ -16,6 +16,13 @@ describe("shouldRegister (idempotent re-runs)", () => {
 
   it("re-registers inactive records (deregistered/expired)", () => {
     expect(shouldRegister({ active: false, stake: 0n })).toBe(true);
+  });
+});
+
+describe("stake default (one faucet trip covers it)", () => {
+  it("defaults to 5 HBAR (faucet pays 10)", () => {
+    expect(DEFAULT_STAKE_HBAR).toBe(5);
+    expect(stakeShortfall(0n, DEFAULT_STAKE_HBAR)).toBe(6n * 10n ** 18n);
   });
 });
 
