@@ -1,20 +1,18 @@
 #!/bin/sh
-# TrulyOpenRouter quickstart: one command in, live dashboard out. Localhost, ~15 min.
-# Detects your hardware, lets you pick a model, starts everything (gateway + web
-# run themselves — no extra terminals), walks you through Ledger, links your
-# account, and optionally registers you as a public host.
+# TrulyOpenRouter quickstart: one command in, serving host out. ~15 min.
+# Your machine only ever runs the serving side (ollama + guard). The gateway,
+# web, and chain are hosted — this script points your host at them, walks you
+# through Ledger, links your account, and registers you on the network.
 # Usage: sh quickstart.sh [--stop]   (MODEL_ID=… env pins the model, non-interactive)
 # Nothing here costs money (testnet + faucet funds only).
 set -eu
 cd "$(dirname "$0")"
 
+# Hosted backend. Override for dev (PROD_GW=http://127.0.0.1:4121 PROD_WEB=http://localhost:3002).
+PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
+PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
+
 if [ "${1:-}" = "--stop" ] || [ "${1:-}" = "stop" ]; then
-  for s in gateway web; do
-    if [ -f ".local/qs-$s.pid" ]; then
-      kill "$(cat ".local/qs-$s.pid")" 2>/dev/null && echo "stopped $s" || echo "$s already down"
-      rm -f ".local/qs-$s.pid"
-    fi
-  done
   docker compose -f host-runner/docker-compose.yml down 2>/dev/null || true
   echo "stack down — re-run sh quickstart.sh anytime"
   exit 0
@@ -49,16 +47,16 @@ ask_tty() {
     eval "$1=\$3"
   fi
 }
-# menu_pick "line1\nline2\n…" DEFAULT — arrow-key menu on /dev/tty (↑↓ + Enter,
-# 1-9 jumps), numbered fallback when no tty. Echoes the 1-based index.
+# menu_pick "line1\nline2\n…" DEFAULT [TITLE] [SUB] — fullscreen picker on the
+# alternate screen (Claude/Codex style: owns the display, updates in place, no
+# scroll; ↑↓ + Enter, 1-9 jumps). Numbered fallback without a usable console.
+# Echoes the 1-based index.
 menu_pick() {
-  _mp_list=$1; _mp_i=${2:-1}
+  _mp_list=$1; _mp_i=${2:-1}; _mp_title=${3:-pick}; _mp_sub=${4:-}
   _mp_n=$(printf '%s\n' "$_mp_list" | grep -c .)
   # A usable console = /dev/tty opens AND answers stty (containers have a
   # dead /dev/tty node that opens but blocks forever — never trust -r alone).
-  if (exec 3<>/dev/tty && stty -g <&3 >/dev/null 2>&1) 2>/dev/null; then
-    : # usable console below
-  else
+  if [ "${TERM:-dumb}" = "dumb" ] || ! (exec 3<>/dev/tty && stty -g <&3 >/dev/null 2>&1) 2>/dev/null; then
     printf "  pick [1-%s, default %s]: " "$_mp_n" "$_mp_i"
     IFS= read -r _mp_val 2>/dev/null || _mp_val=""
     echo "${_mp_val:-$_mp_i}"
@@ -66,26 +64,30 @@ menu_pick() {
   fi
   _mp_old=$(stty -g < /dev/tty 2>/dev/null || echo "")
   _mp_cleanup() {
+    printf '\033[?1049l\033[?25h' > /dev/tty 2>/dev/null || true
     stty "$_mp_old" < /dev/tty 2>/dev/null || stty sane < /dev/tty 2>/dev/null || true
-    printf '\033[?25h' > /dev/tty 2>/dev/null || true
   }
   trap _mp_cleanup INT TERM
-  printf '\033[?25l' > /dev/tty 2>/dev/null || true
+  printf '\033[?1049h\033[?25l' > /dev/tty 2>/dev/null || true
   stty -icanon -echo < /dev/tty 2>/dev/null || true
-  _mp_k=1
-  while [ "$_mp_k" -le "$_mp_n" ]; do printf '\n' > /dev/tty; _mp_k=$((_mp_k + 1)); done
-  while :; do
-    printf '\033[%sA' "$_mp_n" > /dev/tty 2>/dev/null || true
+  _mp_draw() {
+    printf "\033[H\033[J\r\n  ${B}%s${RST}\r\n" "$_mp_title" > /dev/tty 2>/dev/null || true
+    if [ -n "$_mp_sub" ]; then printf "  ${DIM}%s${RST}\r\n" "$_mp_sub" > /dev/tty 2>/dev/null || true; fi
+    printf "\r\n" > /dev/tty 2>/dev/null || true
     _mp_k=1
     while [ "$_mp_k" -le "$_mp_n" ]; do
       _mp_line=$(printf '%s\n' "$_mp_list" | sed -n "${_mp_k}p")
       if [ "$_mp_k" -eq "$_mp_i" ]; then
-        printf '\r\033[K  ${B}>${RST} %s\n' "$_mp_line" > /dev/tty
+        printf "  ${GRN}❯${RST} ${B}%s${RST}\r\n" "$_mp_line" > /dev/tty 2>/dev/null || true
       else
-        printf '\r\033[K    %s\n' "$_mp_line" > /dev/tty
+        printf "     %s\r\n" "$_mp_line" > /dev/tty 2>/dev/null || true
       fi
       _mp_k=$((_mp_k + 1))
     done
+    printf "\r\n  ${DIM}↑↓ move · Enter select · 1-%s jump${RST}\r\n" "$_mp_n" > /dev/tty 2>/dev/null || true
+  }
+  while :; do
+    _mp_draw
     _mp_key=$(dd bs=1 count=1 < /dev/tty 2>/dev/null)
     if [ "$_mp_key" = "$(printf '\033')" ]; then
       _mp_seq=$(dd bs=2 count=1 < /dev/tty 2>/dev/null)
@@ -150,6 +152,7 @@ else
   GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "no discrete GPU (CPU inference)")
 fi
 DISK_FREE=$(df -m "$HOME" 2>/dev/null | awk 'NR==2 {print int($4/1024)}' || echo "?")
+HW_SUM="$OS · $RAM_GB""GB RAM · $CPU_N cpu · ${DISK_FREE}GB free · $GPU"
 printf "  ${B}%s${RST} · ${B}%sGB RAM${RST} · %s cpu · %sGB free · %s\n" "$OS" "$RAM_GB" "$CPU_N" "$DISK_FREE" "$GPU"
 # catalog: id|sizeGB|minRAM|blurb
 MODELS="qwen2.5:0.5b|0.4|2|tiny · instant · best for testing
@@ -179,14 +182,13 @@ EOF
     if [ "$RAM_GB" -ge "$min" ]; then fit="${GRN}✓ fits${RST}"; else fit="${RED}✗ tight${RST}"; fi
     if [ "$n" -eq "$def_n" ]; then star=" ${YLW}★${RST}"; else star=""; fi
     # shellcheck disable=SC2059
-    rows="$rows$(printf '%-14s %4sGB · needs %sGB+  %b%s %s' "$id" "$size" "$min" "$fit" "$star" "$blurb")
+    rows="$rows$(printf "${DIM}%s${RST} %-14s %4sGB · needs %sGB+  %b%s %s" "$n" "$id" "$size" "$min" "$fit" "$star" "$blurb")
 "
   done <<EOF
 $MODELS
 EOF
   rows=$(printf '%s' "$rows" | sed -e '$ { /^$/ d; }')
-  hint "↑↓ to move · Enter to select · 1-6 to jump"
-  PICK=$(menu_pick "$rows" "$def_n")
+  PICK=$(menu_pick "$rows" "$def_n" "pick a model" "$HW_SUM")
   MODEL_ID=$(printf '%s\n' "$MODELS" | sed -n "${PICK:-$def_n}p" | cut -d'|' -f1)
   [ -n "$MODEL_ID" ] || MODEL_ID="qwen2.5:0.5b"
   ok "serving $MODEL_ID"
@@ -207,15 +209,10 @@ warn "pulling $MODEL_ID (one-time download, a few minutes)…"
 docker exec "$(docker ps -q --filter ancestor=ollama/ollama | head -1)" ollama pull "$MODEL_ID"
 ok "guard :4122 · $MODEL_ID ready"
 
-step "4/7" "gateway + web (starting them for you)"
-mkdir -p .local
-(cd gateway && nohup env PORT=4121 UPSTREAM_URL=http://127.0.0.1:11434 \
-  HOSTS_JSON="[{\"endpoint\":\"http://127.0.0.1:4122\",\"modelId\":\"$MODEL_ID\"}]" \
-  npx tsx src/index.ts > ../.local/qs-gateway.log 2>&1 & echo $! > ../.local/qs-gateway.pid)
-(cd web && nohup env PORT=3002 npm run dev > ../.local/qs-web.log 2>&1 & echo $! > ../.local/qs-web.pid)
-wait_for "gateway :4121" "http://127.0.0.1:4121/health" 60 || die "gateway never came up — see .local/qs-gateway.log, then re-run"
-wait_for "web :3002" "http://127.0.0.1:3002/" 120 || die "web never came up — see .local/qs-web.log, then re-run"
-hint "logs: .local/qs-gateway.log · .local/qs-web.log · stop all: sh quickstart.sh --stop"
+step "4/7" "hosted backend (nothing to run — just checking it's reachable)"
+wait_for "gateway $PROD_GW" "$PROD_GW/health" 60 || die "hosted gateway unreachable — check your net, then re-run"
+wait_for "web $PROD_WEB" "$PROD_WEB/" 60 || die "hosted web unreachable — check your net, then re-run"
+hint "gateway + web + chain are hosted; your machine only serves models"
 
 step "5/7" "Ledger (security + redeem — do this now, it protects everything below)"
 if ! have wallet-cli; then
@@ -247,42 +244,42 @@ fi
 
 step "6/7" "your account (one login, one click)"
 hint "opening onboarding — log in, subscribe \$10, come back…"
-(open http://localhost:3002/onboarding 2>/dev/null || xdg-open http://localhost:3002/onboarding 2>/dev/null || true)
+(open "$PROD_WEB/onboarding" 2>/dev/null || xdg-open "$PROD_WEB/onboarding" 2>/dev/null || true)
 pause "Logged in and subscribed? Continue…"
 if have tor-host; then
   hint "linking this machine — the approval page opens by itself, one click…"
-  if tor-host login < /dev/tty > /dev/tty 2>&1; then
-    if tor-host link 2>/dev/null; then
-      ok "linked — dashboard live at http://localhost:3002/host/dashboard"
-      (open http://localhost:3002/host/dashboard 2>/dev/null || xdg-open http://localhost:3002/host/dashboard 2>/dev/null || true)
-    else
-      # link needs a registered host (tor-host run); localhost-only setups
-      # don't have one yet. Account login still done — link completes at step 7.
-      ok "logged in — no host registered yet, so nothing to claim (dashboard shows your account)"
-      hint "go public at step 7 and the claim runs automatically"
-    fi
+  if tor-host login --gateway="$PROD_GW" < /dev/tty > /dev/tty 2>&1; then
+    ok "logged in — the claim runs automatically once your host registers below"
   else
-    warn "login skipped — run later: tor-host login"
+    warn "login skipped — run later: tor-host login --gateway=$PROD_GW"
   fi
 else
-  warn "tor-host not on PATH — run later: tor-host login"
+  warn "tor-host not on PATH — run later: tor-host login --gateway=$PROD_GW"
 fi
 
-step "7/7" "serve (optional — join the public network as a paid host)"
-hint "localhost already works (chat below). Going public needs a reachable"
-hint "endpoint + testnet HBAR for stake. One command does it all:"
-ask_tty GO_PUBLIC "Register as a public host now?" "n"
-case "$GO_PUBLIC" in Y|y)
-  hint "setup.sh asks for endpoint, Hedera id, host key, stake (testnet only)…"
-  MODEL_ID="$MODEL_ID" sh host-runner/setup.sh < /dev/tty > /dev/tty 2>&1 || warn "setup exited — re-run: sh host-runner/setup.sh"
-  ;;
-*) hint "skipped — go public anytime: sh host-runner/setup.sh";;
-esac
+step "7/7" "serve (register on the network, earn per request)"
+hint "this generates your host key, registers onchain (testnet stake),"
+hint "starts serving $MODEL_ID, and claims the host for your account."
+hint "the network must reach your guard — LAN won't route, so either expose"
+hint ":4122 (ngrok / cloudflared / public IP) or serve LAN-only for now."
+ask_tty ENDPOINT "Your guard's public URL (empty = http://<lan-ip>:4122, LAN-only)" ""
+if [ -z "$ENDPOINT" ]; then
+  hint "LAN-only: you serve, but the public network can't route to you yet."
+  hint "re-run with a tunnel URL anytime: tor-host run --endpoint https://… --model $MODEL_ID"
+fi
+if tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" ${ENDPOINT:+--endpoint="$ENDPOINT"} < /dev/tty > /dev/tty 2>&1; then
+  ok "serving $MODEL_ID on the network — dashboard live at $PROD_WEB/host/dashboard"
+  (open "$PROD_WEB/host/dashboard" 2>/dev/null || xdg-open "$PROD_WEB/host/dashboard" 2>/dev/null || true)
+else
+  warn "run exited (underfunded host key is the usual cause — it prints the faucet address)"
+  hint "fund it, then re-run just this step:"
+  cmd "tor-host run --gateway=$PROD_GW --model $MODEL_ID ${ENDPOINT:+--endpoint=$ENDPOINT}"
+fi
 
 printf "\n${B}╭────────────────────────────────────────╮${RST}\n"
 printf "${B}│  ${GRN}✓${B} TrulyOpenRouter is live               │${RST}\n"
 printf "${B}╰────────────────────────────────────────╯${RST}\n"
-printf "  chat       ${CYN}http://localhost:3002/chat${RST}\n"
-printf "  dashboard  ${CYN}http://localhost:3002/host/dashboard${RST}\n"
+printf "  dashboard  ${CYN}%s/host/dashboard${RST}\n" "$PROD_WEB"
 printf "  model      ${B}%s${RST}\n" "$MODEL_ID"
+printf "  status     ${DIM}tor-host status${RST}\n"
 printf "  stop       ${DIM}sh quickstart.sh --stop${RST}\n"

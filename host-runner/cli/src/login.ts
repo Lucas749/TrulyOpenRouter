@@ -10,7 +10,14 @@ export async function login(gateway: string, opts?: { pollMs?: number; timeoutMs
   spin.start("requesting link code");
   const { code, expiresAt } = await api(gateway, "/api/device/code", { method: "POST" });
   spin.stop();
-  const url = `${gateway.replace(/:\d+$/, ":3002")}/host/link?code=${code}`;
+  // Web base for the approval page: explicit env wins; localhost gateways map
+  // to the local web; anything else is the hosted stack (CLI talks to it via
+  // the /api/gw proxy, which is stripped here back to the site origin).
+  const web = (process.env.TOR_WEB_URL?.replace(/\/+$/, "")
+    ?? (/127\.0\.0\.1|localhost/.test(gateway)
+      ? gateway.replace(/:\d+$/, ":3002")
+      : gateway.replace(/\/api\/gw\/?$/, "")));
+  const url = `${web}/host/link?code=${code}`;
   const show = opts?.onCode ?? ((c: string) => console.log(box("Link this host", [`open:  ${url}`, ``, `code:   ${c}`])));
   show(code);
   // Open the approval page for them — one click while logged in, no typing.
