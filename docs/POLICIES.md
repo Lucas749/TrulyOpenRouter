@@ -137,6 +137,31 @@ contract would make violations *impossible* instead of *detectable*, at a price
 we'd feel on every call. Deliberate split, documented here so it stays
 deliberate.
 
+## 7. Who pays? (team money vs individual money)
+
+Today: **every member pays individually.** The browser sends the member's own
+wallet as `userHandle`; the gateway settles by debiting that wallet's own
+vault credits — the subscription *they* funded (e.g. 10 HBAR → 10k credits).
+Zero personal balance → `402 payment_required`.
+
+Team allowances are **ceilings, not a pool**: they gate keyed (API) calls per
+key prefix, and keyed calls settle against a derived budget account — not
+against any shared org balance. A wallet-handle chat call is, per the code
+comment, granted nothing by membership: caps "enforce exclusively via keys".
+
+The org's Privy team wallet (created at team setup, with the per-tx policy)
+exists but is **not wired as a payer** — nothing in the inference path debits
+it. So there is currently no such thing as company money being spent; there
+are only individual balances with team ceilings on top.
+
+To make it company money, the missing piece is payer derivation with org
+context: the request must say "member X acting for org Y", the gateway must
+check Y's pool balance (funded once by the company) and X's allowance against
+it, and settle debits Y's pool. Design decision sitting behind that: shared
+pool (members draw freely up to caps) vs stipends (company tops up individual
+balances). Either way the allowance machinery already exists — only the
+funding source changes.
+
 ## Mental model
 
 ```
