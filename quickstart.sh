@@ -12,6 +12,13 @@ cd "$(dirname "$0")"
 
 PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
+QS_SESS=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo "session")
+# Brand mark (TOR block glyphs — widths verified 19 cols, keep aligned).
+QS_MARK="█████   ███   ████
+  █    █   █  █   █
+  █    █   █  ████
+  █    █   █  █ █
+  █     ███   █  █"
 
 if [ "${1:-}" = "--stop" ] || [ "${1:-}" = "stop" ]; then
   [ -f .local/qs-tunnel.pid ] && kill "$(cat .local/qs-tunnel.pid)" 2>/dev/null && echo "tunnel down" || true
@@ -64,7 +71,9 @@ if [ "$TUI" = 1 ]; then
   render() {
     {
       printf '\033[H\033[J'
-      printf '  %sTrulyOpenRouter%s %squickstart · testnet, free%s\r\n\r\n' "$B" "$RST" "$DIM" "$RST"
+      printf '%s\n' "$QS_MARK" | sed 's/^/  /' | while IFS= read -r _ml; do printf '  %s%s%s\r\n' "$B" "$_ml" "$RST"; done
+      printf '  %sTrulyOpenRouter%s %squickstart%s\r\n' "$B" "$RST" "$DIM" "$RST"
+      printf '  %sSession %s · testnet, free%s\r\n\r\n' "$DIM" "$QS_SESS" "$RST"
       _ri=0
       while [ "$_ri" -le 7 ]; do
         eval "_rs=\$ST_S_$_ri; _rm=\$ST_M_$_ri"
@@ -170,6 +179,10 @@ else
   live_run() { _n=$1; _m=$2; shift 2; "$@" > /dev/null 2>&1; }
   tui_yn() { return 1; }
   CUR=0
+fi
+
+if [ "$TUI" = 0 ]; then
+  printf '\n%s\n%sTrulyOpenRouter%s · quickstart · Session %s\n\n' "$QS_MARK" "$B" "$RST" "$QS_SESS"
 fi
 
 # --- menu_pick: fullscreen select (nests on our screen under TOR_ALT) --------

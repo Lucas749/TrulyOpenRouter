@@ -49,8 +49,14 @@ export function box(title: string, lines: string[], width = 56): string {
   return `${C.gray}${top}${C.reset}\n${body}\n${C.gray}${bottom}${C.reset}`;
 }
 
+const MARK = ["█████   ███   ████ ", "  █    █   █  █   █", "  █    █   █  ████ ", "  █    █   █  █ █  ", "  █     ███   █  █ "];
+
+export function mark(): string {
+  return MARK.map((l) => `${C.bold}${l}${C.reset}`).join("\n");
+}
+
 export function banner(): string {
-  return `${C.bold}TrulyOpenRouter${C.reset} ${C.dim}· host CLI · like OpenRouter, except open${C.reset}`;
+  return `${mark()}\n${C.bold}TrulyOpenRouter${C.reset} ${C.dim}· host CLI · like OpenRouter, except open${C.reset}`;
 }
 
 export function ok(msg: string): string {

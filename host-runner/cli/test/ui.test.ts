@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { box, frames, renderSteps, stepIcon } from "../src/ui.js";
+import { banner, box, frames, mark, renderSteps, stepIcon } from "../src/ui.js";
 
 describe("ui kit", () => {
   it("renders steps with state icons", () => {
@@ -25,5 +25,13 @@ describe("ui kit", () => {
   it("exposes spinner frames", () => {
     expect(frames()).toHaveLength(10);
     expect(new Set(frames()).size).toBe(10);
+  });
+
+  it("brand mark rows share one width, banner keeps name + tagline", () => {
+    const rows = mark().replace(/\x1b\[[0-9;]*m/g, "").split("\n");
+    expect(rows).toHaveLength(5);
+    expect(new Set(rows.map((r) => [...r].length)).size).toBe(1);
+    expect(banner()).toContain("TrulyOpenRouter");
+    expect(banner()).toContain("except open");
   });
 });
