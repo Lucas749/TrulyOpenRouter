@@ -9,7 +9,11 @@
 # Nothing here costs money (testnet + faucet funds only).
 set -eu
 cd "$(dirname "$0")"
-mkdir -p .local # live_run logs + pids land here; fresh clones lack it (.local is gitignored)
+# All runtime files (step log, tunnel log) live in a temp dir — the script
+# must work on a bare machine with zero repo state. Nothing depends on .local.
+QS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/tor-qs.XXXXXX")
+QS_LOG="$QS_TMP/step.log"
+QS_TUNLOG="$QS_TMP/tunnel.log"
 
 PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
@@ -30,8 +34,7 @@ qs_brand_head() {
 }
 
 if [ "${1:-}" = "--stop" ] || [ "${1:-}" = "stop" ]; then
-  [ -f .local/qs-tunnel.pid ] && kill "$(cat .local/qs-tunnel.pid)" 2>/dev/null && echo "tunnel down" || true
-  rm -f .local/qs-tunnel.pid
+  pkill -f "cloudflared tunnel --url http://127.0.0.1:4122" 2>/dev/null && echo "tunnel down" || true
   docker compose -f host-runner/docker-compose.yml down 2>/dev/null || true
   echo "stack down — re-run sh quickstart.sh anytime"
   exit 0
@@ -95,8 +98,8 @@ if [ "$TUI" = 1 ]; then
         _ri=$((_ri + 1))
       done
       printf '\r\n  %s────────────────────────────────────────%s\r\n' "$DIM" "$RST"
-      if [ "$UI_LOG" = 1 ] && [ -f .local/qs-step.log ]; then
-        tr '\r' '\n' < .local/qs-step.log 2>/dev/null | tail -5 | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /'
+      if [ "$UI_LOG" = 1 ] && [ -f "$QS_LOG" ]; then
+        tr '\r' '\n' < "$QS_LOG" 2>/dev/null | tail -5 | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /'
       elif [ -n "$UI_BODY" ]; then
         printf '%b' "$UI_BODY"
       fi
@@ -113,8 +116,8 @@ if [ "$TUI" = 1 ]; then
   cmd() { UI_BODY="${UI_BODY}  ${CYN}$1${RST}\n"; render; }
   die() {
     st_set "$CUR" fail "$1"
-    if [ -f .local/qs-step.log ]; then
-      UI_BODY="  ${DIM}last output:${RST}\n$(tail -8 .local/qs-step.log 2>/dev/null | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /')\n"
+    if [ -f "$QS_LOG" ]; then
+      UI_BODY="  ${DIM}last output:${RST}\n$(tail -8 "$QS_LOG" 2>/dev/null | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /')\n"
     else
       UI_BODY=""
     fi
@@ -127,9 +130,8 @@ if [ "$TUI" = 1 ]; then
   live_run() {
     _lr_n=$1; _lr_msg=$2; shift 2
     st_set "$_lr_n" run "$_lr_msg"; UI_BODY=""; UI_LOG=1
-    mkdir -p .local
-    : > .local/qs-step.log || return 1
-    "$@" > .local/qs-step.log 2>&1 & _lr_pid=$!
+    : > "$QS_LOG" || return 1
+    "$@" > "$QS_LOG" 2>&1 & _lr_pid=$!
     while kill -0 "$_lr_pid" 2>/dev/null; do SPIN_N=$((SPIN_N + 1)); render; sleep 0.4; done
     wait "$_lr_pid" && _lr_rc=0 || _lr_rc=$?
     UI_LOG=0
@@ -433,10 +435,10 @@ if have wallet-cli; then
   fi
   if [ "$TUI" = 1 ]; then
     UI_BODY="  provisioning ring — approve ONCE on the device…\n"; render
-    if WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w) wallet-cli ring init > .local/qs-step.log 2>&1; then
+    if WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w) wallet-cli ring init > "$QS_LOG" 2>&1; then
       ok "ring live — host key and taps are device-backed"
     else
-      warn "ring init failed — see .local/qs-step.log (LEDGER-WALKTHROUGH step 2)"
+      warn "ring init failed — see $QS_LOG (LEDGER-WALKTHROUGH step 2)"
     fi
     UI_BODY=""; render
   else
@@ -496,28 +498,27 @@ if have cloudflared; then ok "cloudflared present"; else
   fi
 fi
 if have cloudflared; then
-  mkdir -p .local
-  nohup cloudflared tunnel --url http://127.0.0.1:4122 > .local/qs-tunnel.log 2>&1 &
-  echo $! > .local/qs-tunnel.pid
+  nohup cloudflared tunnel --url http://127.0.0.1:4122 > "$QS_TUNLOG" 2>&1 &
+  TUNNEL_PID=$!
   if [ "$TUI" = 1 ]; then
     UI_BODY=""; UI_LOG=0
     i=0; TUNNEL_URL=""
     while [ "$i" -lt 60 ]; do
-      TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' .local/qs-tunnel.log 2>/dev/null | head -1 || true)
+      TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$QS_TUNLOG" 2>/dev/null | head -1 || true)
       if [ -n "$TUNNEL_URL" ]; then break; fi
       SPIN_N=$((SPIN_N + 1)); st_set 7 run "opening tunnel…"; sleep 2; i=$((i + 2))
     done
-    if [ -n "$TUNNEL_URL" ]; then ok "public guard URL: $TUNNEL_URL"; else warn "tunnel never printed a URL — see .local/qs-tunnel.log"; kill "$(cat .local/qs-tunnel.pid)" 2>/dev/null || true; fi
+    if [ -n "$TUNNEL_URL" ]; then ok "public guard URL: $TUNNEL_URL"; else warn "tunnel never printed a URL — see $QS_TUNLOG"; kill "$TUNNEL_PID" 2>/dev/null || true; fi
   else
     printf "  opening tunnel"
     i=0
     while [ "$i" -lt 60 ]; do
-      TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' .local/qs-tunnel.log 2>/dev/null | head -1 || true)
+      TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$QS_TUNLOG" 2>/dev/null | head -1 || true)
       if [ -n "$TUNNEL_URL" ]; then break; fi
       printf "."; sleep 2; i=$((i + 2))
     done
     printf "\n"
-    [ -n "$TUNNEL_URL" ] && ok "public guard URL: $TUNNEL_URL" || { warn "tunnel never printed a URL — see .local/qs-tunnel.log"; kill "$(cat .local/qs-tunnel.pid)" 2>/dev/null || true; }
+    [ -n "$TUNNEL_URL" ] && ok "public guard URL: $TUNNEL_URL" || { warn "tunnel never printed a URL — see $QS_TUNLOG"; kill "$TUNNEL_PID" 2>/dev/null || true; }
   fi
 fi
 ask_tty ENDPOINT "Guard public URL (Enter = tunnel above, or paste your own)" "${TUNNEL_URL:-}"
