@@ -27,6 +27,18 @@ describe("ui kit", () => {
     expect(new Set(frames()).size).toBe(10);
   });
 
+  it("banner goes quiet under TOR_QUIET (orchestrated runs)", () => {
+    const prev = process.env.TOR_QUIET;
+    process.env.TOR_QUIET = "1";
+    try {
+      expect(banner()).toBe("");
+    } finally {
+      if (prev === undefined) delete process.env.TOR_QUIET;
+      else process.env.TOR_QUIET = prev;
+    }
+    expect(banner()).toContain("TrulyOpenRouter");
+  });
+
   it("brand mark rows share one width, banner keeps name + tagline", () => {
     const rows = mark().replace(/\x1b\[[0-9;]*m/g, "").split("\n");
     expect(rows).toHaveLength(5);

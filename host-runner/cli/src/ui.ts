@@ -56,6 +56,9 @@ export function mark(): string {
 }
 
 export function banner(): string {
+  // TOR_QUIET=1 when orchestrated (quickstart owns the screen already) —
+  // the link box, spinners and results still print, just no second banner.
+  if (process.env.TOR_QUIET) return "";
   return `${mark()}\n${C.bold}TrulyOpenRouter${C.reset} ${C.dim}· host CLI · like OpenRouter, except open${C.reset}`;
 }
 

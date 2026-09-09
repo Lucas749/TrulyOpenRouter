@@ -14,6 +14,9 @@ cd "$(dirname "$0")"
 QS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/tor-qs.XXXXXX")
 QS_LOG="$QS_TMP/step.log"
 QS_TUNLOG="$QS_TMP/tunnel.log"
+# tor-host prints its own TOR banner on every command — the app frame already
+# carries the brand, so nested runs stay quiet (boxes/spinners still print).
+export TOR_QUIET=1
 
 PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
