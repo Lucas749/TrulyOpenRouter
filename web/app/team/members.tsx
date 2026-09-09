@@ -111,6 +111,7 @@ export default function OrgMembers({
   const [editDid, setEditDid] = useState<string | null>(null);
   const [editCap, setEditCap] = useState("");
   const [confirmRm, setConfirmRm] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [newDefault, setNewDefault] = useState("");
   const [reqAmount, setReqAmount] = useState("");
 
@@ -329,45 +330,57 @@ export default function OrgMembers({
       </div>
 
       {(members ?? []).map((m) => {
-        const initial = (m.email ?? m.did).replace(/^did:privy:/, "").charAt(0).toUpperCase();
+        // Wallet-derived dids display as the address, not "wallet:0x…".
+        const didLabel = m.did.startsWith("wallet:") ? m.did.slice("wallet:".length) : m.did.replace(/^did:privy:/, "");
+        const initial = (m.email ?? didLabel).charAt(0).toUpperCase();
+        const open = expanded === m.did;
+        const spend = toSpend(m);
         return (
           <div key={m.did} className="flex flex-col gap-2 rounded-lg bg-[#F7F7F5] p-3">
-            <div className="flex items-center gap-2.5">
+            <button onClick={() => setExpanded(open ? null : m.did)} className="flex items-center gap-2.5 text-left">
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-black text-xs font-medium text-white">{initial}</span>
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-medium">{m.email ?? shortId(m.did, 18)}</span>
-                <span className="block truncate font-mono text-[11px] text-[#6E6E73]">{m.did}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{m.email ?? shortId(didLabel, 18)}</span>
+                <span className="block truncate font-mono text-[11px] tabular-nums text-[#6E6E73]">
+                  {spend === null ? "—" : spend.cap === null ? `${spend.used} credits used` : `${spend.used}/${spend.cap} credits`}
+                </span>
               </span>
-              <span className="ml-auto shrink-0"><RoleChip role={m.role} /></span>
-            </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-[38px] font-mono text-xs text-[#6E6E73]">
-              {m.keyPrefix ? <span>key {shortId(m.keyPrefix, 8)}</span> : <span className="text-[#B3261E]">no key, headless only</span>}
-              {m.walletAddress && <span>{shortId(m.walletAddress, 10)}</span>}
-            </div>
-            <div className="pl-[38px]"><SpendBar spend={toSpend(m)} /></div>
-            {canManage && !mock && (
-              <div className="flex flex-wrap items-center gap-2 pl-[38px]">
-                {editDid === m.did ? (
-                  <>
-                    <input value={editCap} onChange={(e) => setEditCap(e.target.value)} placeholder="credits, empty = org default" className="h-8 w-52 rounded-lg border border-black/10 bg-white px-2.5 font-mono text-xs" inputMode="numeric" />
-                    <button onClick={() => saveCap(m.did)} className="rounded-full bg-black px-3 py-1 text-[11px] text-white">Save</button>
-                    <button onClick={() => setEditDid(null)} className="text-[11px] text-[#6E6E73] underline">cancel</button>
-                  </>
-                ) : confirmRm === m.did ? (
-                  <>
-                    <span className="text-[11px] text-[#B3261E]">Remove {shortId(m.did, 14)}? spend → 0 deny.</span>
-                    <button onClick={() => remove(m.did)} className="rounded-full bg-[#B3261E] px-3 py-1 text-[11px] text-white">Confirm remove</button>
-                    <button onClick={() => setConfirmRm(null)} className="text-[11px] text-[#6E6E73] underline">keep</button>
-                  </>
-                ) : (
-                  <>
-                    <button onClick={() => { setEditDid(m.did); setEditCap(m.allowanceCredits === null ? "" : String(m.allowanceCredits)); setConfirmRm(null); }} className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px]">Edit cap</button>
-                    {isOwner && (
-                      <button onClick={() => { setConfirmRm(m.did); setEditDid(null); }} className="text-[11px] text-[#6E6E73] underline">Remove</button>
+              <span className="shrink-0"><RoleChip role={m.role} /></span>
+              <span className={`shrink-0 font-mono text-xs text-[#8F8F8F] transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+            </button>
+            {open && (
+              <>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-[38px] font-mono text-xs text-[#6E6E73]">
+                  <span className="break-all">{m.did}</span>
+                  {m.keyPrefix ? <span>key {shortId(m.keyPrefix, 8)}</span> : <span className="text-[#B3261E]">no key, headless only</span>}
+                  {m.walletAddress && <span>{shortId(m.walletAddress, 10)}</span>}
+                </div>
+                <div className="pl-[38px]"><SpendBar spend={spend} /></div>
+                {canManage && !mock && (
+                  <div className="flex flex-wrap items-center gap-2 pl-[38px]">
+                    {editDid === m.did ? (
+                      <>
+                        <input value={editCap} onChange={(e) => setEditCap(e.target.value)} placeholder="credits, empty = org default" className="h-8 w-52 rounded-lg border border-black/10 bg-white px-2.5 font-mono text-xs" inputMode="numeric" />
+                        <button onClick={() => saveCap(m.did)} className="rounded-full bg-black px-3 py-1 text-[11px] text-white">Save</button>
+                        <button onClick={() => setEditDid(null)} className="text-[11px] text-[#6E6E73] underline">cancel</button>
+                      </>
+                    ) : confirmRm === m.did ? (
+                      <>
+                        <span className="text-[11px] text-[#B3261E]">Remove {shortId(m.did, 14)}? spend → 0 deny.</span>
+                        <button onClick={() => remove(m.did)} className="rounded-full bg-[#B3261E] px-3 py-1 text-[11px] text-white">Confirm remove</button>
+                        <button onClick={() => setConfirmRm(null)} className="text-[11px] text-[#6E6E73] underline">keep</button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => { setEditDid(m.did); setEditCap(m.allowanceCredits === null ? "" : String(m.allowanceCredits)); setConfirmRm(null); }} className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px]">Edit cap</button>
+                        {isOwner && (
+                          <button onClick={() => { setConfirmRm(m.did); setEditDid(null); }} className="text-[11px] text-[#6E6E73] underline">Remove</button>
+                        )}
+                      </>
                     )}
-                  </>
+                  </div>
                 )}
-              </div>
+              </>
             )}
           </div>
         );
