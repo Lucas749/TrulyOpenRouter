@@ -454,12 +454,12 @@ fi
 # === 6/7 account ===============================================================
 step 6 "linking your account"
 if [ "$TUI" = 1 ]; then
-  UI_BODY="  opening onboarding — log in, subscribe \$10, come back…\n"; UI_FOOT="press Enter when subscribed"; render
+  UI_BODY="  opening host onboarding — log in, fund the host key, come back…\n"; UI_FOOT="press Enter when logged in"; render
 else
-  hint "opening onboarding — log in, subscribe \$10, come back…"
+  hint "opening host onboarding — log in, fund the host key, come back…"
 fi
-(open "$PROD_WEB/onboarding" 2>/dev/null || xdg-open "$PROD_WEB/onboarding" 2>/dev/null || true)
-pause "Logged in and subscribed? Continue…"
+(open "$PROD_WEB/host/onboarding" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding" 2>/dev/null || true)
+pause "Logged in? Continue…"
 if have tor-host; then
   if [ "$TUI" = 1 ]; then
     UI_BODY="  linking this machine — the approval page opens by itself, one click…\n"; UI_FOOT="approve in the browser, I wait here"; render
@@ -535,13 +535,31 @@ if [ "$TUI" = 1 ]; then
   fi
   UI_BODY=""; UI_FOOT=""; render
 else
-  hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
-  if tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" < /dev/tty > /dev/tty 2>&1; then
-    ok "registered"
-  else
-    warn "run exited (underfunded host key is the usual cause — it prints the faucet address)"
-    die "fund it, then re-run just this step: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
+hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
+tries=0; registered=""
+while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
+  tries=$((tries + 1))
+  if [ "$TUI" = 1 ]; then
+    UI_BODY="  registering — attempt $tries/3 (host key, testnet stake, owner-claim)…\n"; UI_FOOT="underfunded key? the funding page opens next"; render
   fi
+  if tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" < /dev/tty > /dev/tty 2>&1; then
+    registered=1
+  else
+    # First attempt mints the host key, so the address exists now even though
+    # funding failed — open its funding page and retry instead of dying.
+    HOST_ADDR=$(node -e "console.log(require(require('os').homedir()+'/.tor/config.json').hostAddress||'')" 2>/dev/null) || HOST_ADDR=""
+    if [ -n "$HOST_ADDR" ] && [ "$tries" -lt 3 ]; then
+      (open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || true)
+      pause "Funded $HOST_ADDR (drip + faucet on the page)? Enter retries ($tries/3)…"
+    elif [ "$tries" -ge 3 ]; then
+      die "run exited 3× — fund the printed address, then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
+    else
+      pause "Run exited — check above, Enter retries ($tries/3)…"
+    fi
+  fi
+done
+[ "$TUI" = 1 ] && { UI_BODY=""; UI_FOOT=""; render; }
+ok "registered"
 fi
 HOST_ADDR=$(node -e "console.log(require(require('os').homedir()+'/.tor/config.json').hostAddress||'')" 2>/dev/null) || HOST_ADDR=""
 if [ -n "$HOST_ADDR" ]; then

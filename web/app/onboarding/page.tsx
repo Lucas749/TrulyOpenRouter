@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useConnectWallet, usePrivy, useWallets } from "@privy-io/react-auth";
-import { createPublicClient, createWalletClient, custom, http, parseAbi } from "viem";
+import { createPublicClient, createWalletClient, custom, formatEther, http, parseAbi } from "viem";
 import { hederaTestnet } from "../../lib/hedera-chains";
 import LoginButton from "../components/login-button";
 import { contractUrl } from "../../lib/chain";
+import { friendlyTxError } from "../../lib/tx-errors";
 
 const VAULT = "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576";
 const PLAN_ID = 0;
@@ -24,8 +25,11 @@ export default function OnboardingPage() {
   const { wallets } = useWallets();
   const { connectWallet } = useConnectWallet();
   const [credits, setCredits] = useState<string | null>(null);
+  const [hbar, setHbar] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [drip, setDrip] = useState<"idle" | "sending" | "done" | "error">("idle");
+  const [copied, setCopied] = useState(false);
 
   const wallet = wallets[0];
   const address = (user?.wallet?.address ?? wallet?.address) as `0x${string}` | undefined;
@@ -34,11 +38,52 @@ export default function OnboardingPage() {
     if (!address) return;
     try {
       const client = createPublicClient({ transport: http(RPC) });
-      const c = await client.readContract({ address: VAULT, abi: VAULT_ABI, functionName: "credits", args: [address] });
+      const [c, b] = await Promise.all([
+        client.readContract({ address: VAULT, abi: VAULT_ABI, functionName: "credits", args: [address] }),
+        client.getBalance({ address }),
+      ]);
       setCredits(String(c));
+      setHbar(formatEther(b));
     } catch {
-      setMsg("could not read credits, is the wallet funded with testnet HBAR?");
+      setMsg("could not read chain state, is the wallet funded with testnet HBAR?");
     }
+  }
+
+  async function dripFunds() {
+    if (!address) return;
+    setDrip("sending");
+    try {
+      const r = await fetch("/api/account/drip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address }),
+      });
+      const d: any = await r.json().catch(() => ({}));
+      if (r.status === 409) {
+        setMsg("account already exists — drip is one per address, faucet covers the rest");
+        setDrip("error");
+      } else if (!r.ok) {
+        throw new Error(d?.error ?? r.status);
+      } else {
+        setDrip("done");
+        setMsg("0.5 HBAR on the way — refresh in ~10s, then hit the faucet for the $10");
+        setTimeout(refresh, 12000);
+      }
+    } catch (e: any) {
+      setDrip("error");
+      setMsg(`drip failed: ${friendlyTxError(e)}`);
+    }
+  }
+
+  function copy() {
+    if (!address) return;
+    (navigator.clipboard?.writeText(address) ?? Promise.reject()).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => setMsg("copy failed — select the address manually"),
+    );
   }
 
   async function subscribe() {
@@ -66,7 +111,7 @@ export default function OnboardingPage() {
       setMsg(`subscribed ✓ ${hash.slice(0, 18)}…, reading credits…`);
       setTimeout(refresh, 4000);
     } catch (e: any) {
-      setMsg(`subscribe failed: ${String(e?.message ?? e).slice(0, 160)}`);
+      setMsg(`subscribe failed: ${friendlyTxError(e)}`);
     }
     setBusy(false);
   }
@@ -106,13 +151,30 @@ export default function OnboardingPage() {
         <section className={`rounded-[14px] border p-5 ${step === 2 ? "border-black" : "border-[#E5E5E0]"} ${!authenticated ? "opacity-50" : ""}`}>
           <div className="mb-1 text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">2 · Subscribe, $10 → {PLAN_CREDITS.toLocaleString("en-US")} credits {credits !== null && authenticated ? "✓" : ""}</div>
           <p className="m-0 mb-3 text-sm text-[#6E6E73]">
-            One onchain payment on Hedera testnet. Your wallet needs testnet HBAR first —{" "}
-            <a href="https://faucet.hedera.com" className="text-[#2563EB] underline">faucet.hedera.com</a>
-            {address ? <>, then send to <span className="font-mono text-black">{address.slice(0, 10)}…</span></> : null}.
+            One onchain payment (10 HBAR) on Hedera testnet. Fund the wallet first, then subscribe.
           </p>
+          {address && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <button onClick={copy} className="h-9 rounded-full border border-black/10 px-4 font-mono text-xs">
+                {copied ? "copied ✓" : `copy ${address.slice(0, 10)}…`}
+              </button>
+              <button onClick={dripFunds} disabled={drip === "sending"} className="h-9 rounded-full bg-black px-4 text-xs text-white disabled:opacity-40">
+                {drip === "sending" ? "dripping…" : "Drip 0.5 HBAR"}
+              </button>
+              <a href="https://faucet.hedera.com" target="_blank" rel="noreferrer" className="flex h-9 items-center rounded-full border border-black/10 px-4 text-xs hover:bg-black/5">
+                faucet.hedera.com ↗
+              </a>
+              <span className="font-mono text-sm">{hbar === null ? "balance —" : `${Number(hbar).toFixed(2)} HBAR`}</span>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-3">
-            <button onClick={subscribe} disabled={!authenticated || busy} className="flex h-10 items-center rounded-full bg-black px-5 text-sm text-white disabled:opacity-40">
-              {busy ? "confirm in wallet…" : "Subscribe $10"}
+            <button
+              onClick={subscribe}
+              disabled={!authenticated || busy || (hbar !== null && Number(hbar) < 10)}
+              title={hbar !== null && Number(hbar) < 10 ? "needs 10 HBAR first — drip + faucet above" : undefined}
+              className="flex h-10 items-center rounded-full bg-black px-5 text-sm text-white disabled:opacity-40"
+            >
+              {busy ? "confirm in wallet…" : hbar !== null && Number(hbar) < 10 ? `Fund first (${Number(hbar).toFixed(1)} HBAR)` : "Subscribe $10"}
             </button>
             <button onClick={refresh} disabled={!authenticated} className="h-10 rounded-full border border-black/10 px-4 text-sm disabled:opacity-40">Check credits</button>
             {credits !== null && <span className="font-mono text-sm">{credits} credits</span>}
