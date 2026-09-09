@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { createPublicClient, formatEther, http } from "viem";
 import LoginButton from "../../components/login-button";
@@ -21,23 +21,36 @@ function HostOnboardingInner() {
   const { ready, authenticated, user } = usePrivy();
   const account = (user?.wallet?.address ?? user?.id ?? null) as string | null;
   const [owned, setOwned] = useState<string[]>([]);
-  // Hosts already claimed by this login (owner-claim at run/link time) —
-  // prefill the first so returning users never paste anything.
+  // user typed/picked manually — auto-fill never overwrites
+  const touchedRef = useRef(false);
+  // Hosts claimed by this login (owner-claim at CLI login time). Polled, not
+  // once: the claim typically lands AFTER this page loads (login → approve →
+  // claim), and the field fills itself the moment it exists. Zero pasting.
   useEffect(() => {
     if (!authenticated || !user?.id) {
       setOwned([]);
       return;
     }
-    (async () => {
+    let stop = false;
+    const load = async () => {
       try {
         const d: any = await (await fetch(`${GW}/api/owners/${encodeURIComponent(user.id)}/hosts`)).json();
+        if (stop) return;
         const list: string[] = Array.isArray(d.data) ? d.data : [];
         setOwned(list);
-        if (list.length > 0 && !params.get("address")) setAddr(list[0]);
+        if (list.length > 0 && !params.get("address")) {
+          setAddr((cur) => (touchedRef.current ? cur : list[0]));
+        }
       } catch {
         /* gateway down — manual input still works */
       }
-    })();
+    };
+    void load();
+    const t = setInterval(load, 10000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, user?.id]);
   const [addr, setAddr] = useState(params.get("address") ?? "");
@@ -175,7 +188,10 @@ function HostOnboardingInner() {
               {owned.map((a) => (
                 <button
                   key={a}
-                  onClick={() => setAddr(a)}
+                  onClick={() => {
+                    touchedRef.current = true;
+                    setAddr(a);
+                  }}
                   className={`h-9 rounded-full border px-4 font-mono text-xs ${a.toLowerCase() === clean.toLowerCase() ? "border-black bg-black text-white" : "border-black/10 hover:bg-black/5"}`}
                 >
                   {short(a)}
@@ -201,7 +217,10 @@ function HostOnboardingInner() {
           <div className="flex flex-wrap gap-2">
             <input
               value={addr}
-              onChange={(e) => setAddr(e.target.value)}
+              onChange={(e) => {
+                touchedRef.current = true;
+                setAddr(e.target.value);
+              }}
               placeholder="host address 0x…"
               autoComplete="off"
               spellCheck={false}
