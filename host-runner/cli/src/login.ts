@@ -10,8 +10,20 @@ export async function login(gateway: string, opts?: { pollMs?: number; timeoutMs
   spin.start("requesting link code");
   const { code, expiresAt } = await api(gateway, "/api/device/code", { method: "POST" });
   spin.stop();
-  const show = opts?.onCode ?? ((c: string) => console.log(box("Link this host", [`open:  ${gateway.replace(/:\d+$/, ":3002")}/host/link?code=${c}`, ``, `code:   ${c}`])));
+  const url = `${gateway.replace(/:\d+$/, ":3002")}/host/link?code=${code}`;
+  const show = opts?.onCode ?? ((c: string) => console.log(box("Link this host", [`open:  ${url}`, ``, `code:   ${c}`])));
   show(code);
+  // Open the approval page for them — one click while logged in, no typing.
+  // Best-effort (headless/CI sets TOR_NO_OPEN=1); the printed box is the fallback.
+  if (!process.env.TOR_NO_OPEN) {
+    try {
+      const { spawn } = await import("child_process");
+      const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+      const args: string[] = process.platform === "win32" ? ["/c", "start", url] : [url];
+      const child = spawn(opener, args, { stdio: "ignore", detached: true });
+      child.unref();
+    } catch {}
+  }
   const poll = new Spinner();
   poll.start("waiting for approval on the web");
   try {

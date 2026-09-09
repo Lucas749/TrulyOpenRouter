@@ -159,9 +159,14 @@ if have wallet-cli; then
   if security find-generic-password -a default -s ledger-wallet-cli >/dev/null 2>&1; then
     ok "ring password already in keychain"
   else
-    hint "run this once (type a fresh password twice, I never see it):"
-    cmd "security add-generic-password -a default -s ledger-wallet-cli -w"
-    pause "Stored? Continue…"
+    hint "creating the keychain entry now (type a fresh password twice — I never see it):"
+    if security add-generic-password -a default -s ledger-wallet-cli -w < /dev/tty > /dev/tty 2>&1; then
+      ok "password stored in your keychain"
+    else
+      hint "that failed — run it yourself once, then continue:"
+      cmd "security add-generic-password -a default -s ledger-wallet-cli -w"
+      pause "Stored? Continue…"
+    fi
   fi
   warn "provisioning ring — approve ONCE on the device…"
   WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w) wallet-cli ring init \
@@ -171,21 +176,27 @@ else
   hint "skipped (no wallet-cli)"
 fi
 
-step "6/7" "your account (login → link → dashboard)"
-hint "opening the login + link pages…"
+step "6/7" "your account (one login, one click)"
+hint "opening onboarding — log in, subscribe \$10, come back…"
 (open http://localhost:3002/onboarding 2>/dev/null || xdg-open http://localhost:3002/onboarding 2>/dev/null || true)
-(open http://localhost:3002/host/link 2>/dev/null || xdg-open http://localhost:3002/host/link 2>/dev/null || true)
-hint "1. Log in (email OTP)  2. Fund hint shows your address  3. Subscribe \$10"
 pause "Logged in and subscribed? Continue…"
 if have tor-host; then
-  hint "linking this machine to your account (approve the code at /host/link)…"
+  hint "linking this machine — the approval page opens by itself, one click…"
   if tor-host login < /dev/tty > /dev/tty 2>&1; then
-    tor-host link && ok "linked — your dashboard is live" || warn "link later: tor-host login && tor-host link"
+    if tor-host link 2>/dev/null; then
+      ok "linked — dashboard live at http://localhost:3002/host/dashboard"
+      (open http://localhost:3002/host/dashboard 2>/dev/null || xdg-open http://localhost:3002/host/dashboard 2>/dev/null || true)
+    else
+      # link needs a registered host (tor-host run); localhost-only setups
+      # don't have one yet. Account login still done — link completes at step 7.
+      ok "logged in — no host registered yet, so nothing to claim (dashboard shows your account)"
+      hint "go public at step 7 and the claim runs automatically"
+    fi
   else
-    warn "login skipped — link later: tor-host login && tor-host link"
+    warn "login skipped — run later: tor-host login"
   fi
 else
-  warn "tor-host not on PATH — link later: tor-host login && tor-host link"
+  warn "tor-host not on PATH — run later: tor-host login"
 fi
 
 step "7/7" "serve (optional — join the public network as a paid host)"
