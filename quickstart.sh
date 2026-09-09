@@ -388,7 +388,17 @@ fi
 
 # === 5/7 Ledger ================================================================
 step 5 "Ledger security"
-if ! have wallet-cli; then
+LEDGER=""
+if [ "$TUI" = 1 ]; then
+  if tui_yn "Set up a Ledger? (Yes = max security, No = software keys)"; then LEDGER=1; fi
+else
+  ask_tty LEDGER_YN "Set up a Ledger? (Y = max security, n = software keys — everything still works)" "Y"
+  case "$LEDGER_YN" in Y|y|"") LEDGER=1;; esac
+fi
+if [ -z "$LEDGER" ]; then
+  if [ "$TUI" = 1 ]; then st_set 5 skip "software keys — serve, earn, withdraw all work"; else hint "software keys it is — serve, earn, withdraw, everything works"; fi
+  hint "add a Ledger anytime: tor-host ledger init"
+elif ! have wallet-cli; then
   if [ "$TUI" = 1 ]; then
     if tui_yn "Install the Ledger CLI now?"; then
       live_run 5 "npm i -g @ledgerhq/wallet-cli…" sh -c 'npm i -g @ledgerhq/wallet-cli 2>/dev/null || sudo npm i -g @ledgerhq/wallet-cli' \
@@ -401,7 +411,7 @@ if ! have wallet-cli; then
     case "$INSTALL_WC" in Y|y|"") (npm i -g @ledgerhq/wallet-cli 2>/dev/null || sudo npm i -g @ledgerhq/wallet-cli) && ok "wallet-cli installed" || warn "install failed";; *) hint "skipped";; esac
   fi
 fi
-if have wallet-cli; then
+if [ -n "$LEDGER" ] && have wallet-cli; then
   if [ "$TUI" = 1 ]; then
     UI_BODY="  plug in your Ledger, unlock it, open the dashboard app\n"; UI_FOOT="press Enter when ready"; render
     printf '\033[?25h' > /dev/tty 2>/dev/null || true
@@ -447,7 +457,7 @@ if have wallet-cli; then
       && ok "ring live — your host key and taps are device-backed" \
       || hint "(see LEDGER-WALKTHROUGH step 2 if that failed)"
   fi
-else
+elif [ -n "$LEDGER" ]; then
   if [ "$TUI" = 1 ]; then st_set 5 skip "no wallet-cli"; else hint "skipped (no wallet-cli)"; fi
 fi
 

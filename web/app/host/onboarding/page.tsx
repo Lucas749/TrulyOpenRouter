@@ -18,7 +18,8 @@ function short(a: string) {
 
 function HostOnboardingInner() {
   const params = useSearchParams();
-  const { ready, authenticated } = usePrivy();
+  const { ready, authenticated, user } = usePrivy();
+  const account = (user?.wallet?.address ?? user?.id ?? null) as string | null;
   const [addr, setAddr] = useState(params.get("address") ?? "");
   const [balance, setBalance] = useState<string | null>(null);
   const [host, setHost] = useState<any | null>(null);
@@ -121,7 +122,11 @@ function HostOnboardingInner() {
           {!ready ? (
             <div className="h-8 w-40 animate-pulse rounded-full bg-[#F4F4F4]" />
           ) : authenticated ? (
-            <p className="m-0 text-sm text-[#6E6E73]">Logged in — earnings and dashboard attach to this account.</p>
+            <p className="m-0 text-sm text-[#6E6E73]">
+              Logged in{account ? <> as <span className="font-mono text-black">{short(account)}</span></> : null} —
+              earnings and dashboard attach to this account. Your <em>host key</em> below is a
+              separate machine address that pays the stake.
+            </p>
           ) : (
             <>
               <p className="m-0 mb-3 text-sm text-[#6E6E73]">Email login, no seed phrase. Your host&apos;s earnings link here.</p>
@@ -134,6 +139,9 @@ function HostOnboardingInner() {
           <div className="mb-1 text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">
             2 · Fund your host key {funded ? "✓" : ""}
           </div>
+          <p className="m-0 mb-3 font-mono text-[11px] text-[#8F8F8F]">
+            two addresses: your login above receives earnings · the host key below pays stake
+          </p>
           {!params.get("address") && !valid ? (
             <div className="mb-3 rounded-lg bg-[#F7F7F5] p-3 text-sm text-[#5D5D5D]">
               No address yet? Run this once locally — it prints your host address, then come back and paste it:
