@@ -19,6 +19,7 @@ PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
 MODEL_ID="${MODEL_ID:-}" # env pin; step 2 fills it. Declared here so set -u never trips.
 QS_SESS=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo "session")
+QS_REV=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 # Brand mark (TOR block glyphs — widths verified 19 cols, keep aligned).
 QS_MARK="█████   ███   ████
   █    █   █  █   █
@@ -30,7 +31,7 @@ QS_MARK="█████   ███   ████
 qs_brand_head() {
   printf '%s\n' "$QS_MARK" | sed 's/^/  /' | while IFS= read -r _ml; do printf '  %s%s%s\r\n' "$B" "$_ml" "$RST"; done
   printf '  %sTrulyOpenRouter%s %squickstart%s\r\n' "$B" "$RST" "$DIM" "$RST"
-  printf '  %sSession %s · testnet, free%s\r\n\r\n' "$DIM" "${QS_SESS:-session}" "$RST"
+  printf '  %sSession %s · %s · testnet, free%s\r\n\r\n' "$DIM" "${QS_SESS:-session}" "${QS_REV:-nogit}" "$RST"
 }
 
 if [ "${1:-}" = "--stop" ] || [ "${1:-}" = "stop" ]; then
@@ -143,6 +144,18 @@ if [ "$TUI" = 1 ]; then
     IFS= read -r _ < /dev/tty 2>/dev/null || true
     tui_leave; trap - INT TERM; exit 1
   }
+  # run_logged CMD... — foreground cmd with stdin on the terminal, output BOTH
+  # live (tailed onto the alt screen) and into QS_LOG (survives repaints, so
+  # die() can show it). Without this, a failing tor-host run scrolls past and
+  # the retry loop + failure card go blind. Returns the command's status.
+  run_logged() {
+    : > "$QS_LOG"
+    "$@" > "$QS_LOG" 2>&1 < /dev/tty & _rl_pid=$!
+    tail -f "$QS_LOG" > /dev/tty 2>/dev/null & _rl_tail=$!
+    wait "$_rl_pid" && _rl_rc=0 || _rl_rc=$?
+    kill "$_rl_tail" 2>/dev/null || true
+    return "$_rl_rc"
+  }
   # live_run STEP MSG CMD... — background cmd, animate + tail its log in place.
   live_run() {
     _lr_n=$1; _lr_msg=$2; shift 2
@@ -196,7 +209,8 @@ else
   fail() { printf "  ✗ %s\n" "$1"; }
   hint() { printf "  %s\n" "$1"; }
   cmd() { printf "  %s\n" "$1"; }
-  die() { fail "$1"; exit 1; }
+  die() { fail "$1"; if [ -f "$QS_LOG" ]; then echo "--- last output:"; tail -8 "$QS_LOG" 2>/dev/null || true; fi; exit 1; }
+  run_logged() { "$@" < /dev/tty; }
   pause() { printf "\n  %s [Enter] " "$1"; IFS= read -r _ < /dev/tty 2>/dev/null || true; }
   ask_tty() {
     eval "cur=\${$1:-}"
@@ -489,7 +503,7 @@ pause "Continue to login (an approval page opens by itself)…"
 if have tor-host; then
   if [ "$TUI" = 1 ]; then
     UI_BODY="  linking this machine — the approval page opens by itself, one click…\n"; UI_FOOT="approve in the browser, I wait here"; render
-    if tor-host login --gateway="$PROD_GW" < /dev/tty > /dev/tty 2>&1; then
+    if run_logged tor-host login --gateway="$PROD_GW"; then
       ok "logged in — this machine's host key is attached to your account now"
     else
       warn "login skipped — run later: tor-host login --gateway=$PROD_GW"
@@ -497,7 +511,7 @@ if have tor-host; then
     UI_BODY=""; UI_FOOT=""; render
   else
     hint "linking this machine — the approval page opens by itself, one click…"
-    if tor-host login --gateway="$PROD_GW" < /dev/tty > /dev/tty 2>&1; then
+    if run_logged tor-host login --gateway="$PROD_GW"; then
       ok "logged in — this machine's host key is attached to your account now"
     else
       warn "login skipped — run later: tor-host login --gateway=$PROD_GW"
@@ -552,16 +566,10 @@ if [ -z "$ENDPOINT" ]; then
   die "no public URL — without one the network can't route to you (re-run with cloudflared installed)"
 fi
 if [ "$TUI" = 1 ]; then
-  UI_BODY="  registering — host key, testnet stake, owner-claim…\n"; UI_FOOT="underfunded key? it prints the faucet address"; render
-  if tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" < /dev/tty > /dev/tty 2>&1; then
-    ok "registered"
-  else
-    UI_BODY=""; UI_FOOT=""; render
-    die "run exited — fund the printed address, then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
-  fi
-  UI_BODY=""; UI_FOOT=""; render
+  UI_BODY="  registering — host key, testnet stake, owner-claim…\n"; UI_FOOT="underfunded key? I wait for funds below, no re-typing"; render
 else
-hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
+  hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
+fi
 # fund_wait ADDR — poll testnet balance until ≥10 HBAR (stake). Exact integer
 # math in shell (strip 18 wei digits — float64 can't hold HBAR scale). 0 = funded.
 # RPC failures report as unknown (never as zero — a blind check must not claim
@@ -603,7 +611,7 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
   if [ "$TUI" = 1 ]; then
     UI_BODY="  registering — attempt $tries/3 (host key, testnet stake, owner-claim)…\n"; UI_FOOT="underfunded key? I wait for funds below, no re-typing"; render
   fi
-  if tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" < /dev/tty > /dev/tty 2>&1; then
+  if run_logged tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT"; then
     registered=1
   else
     # First attempt mints the host key, so the address exists now even though
@@ -648,8 +656,7 @@ if [ -z "$registered" ]; then
 fi
 ok "registered"
 # Belt-and-braces claim (run already claims when logged in; free when not).
-tor-host link --gateway="$PROD_GW" 2>/dev/null && ok "claimed for your account" || hint "claim later: tor-host link (needs login + registered host)"
-fi
+run_logged tor-host link --gateway="$PROD_GW" 2>/dev/null && ok "claimed for your account" || hint "claim later: tor-host link (needs login + registered host)"
 HOST_ADDR=$(host_addr)
 if [ -n "$HOST_ADDR" ]; then
   SEEN=$(curl -sf "$PROD_GW/api/hosts/$HOST_ADDR" 2>/dev/null || echo "")
