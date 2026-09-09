@@ -651,6 +651,41 @@ export async function proposeRuleChange(orgId: string, kind: string, payload: Re
   return r;
 }
 
+/// @notice Direct set (owner-only — caller verifies rank 2). One signature,
+/// applied + caller syncs to gateway. Same validation and binding as propose,
+/// action "rule-set" instead of the two-step propose/decide dance.
+export async function setRuleDirect(
+  orgId: string,
+  kind: string,
+  payload: Record<string, unknown>,
+  decidedByDid: string,
+  ownerWallet: string,
+  signature: string,
+  message: string,
+  now = Date.now(),
+): Promise<OrgRules> {
+  validateRulePayload(kind, payload);
+  const ok = await verifyApprovalSignature(message, signature, ownerWallet);
+  if (!ok) throw new Error("signature is not from the recorded owner wallet");
+  const payloadJson = stableJson(payload);
+  const exp = Number((message.match(/^expires: (\d+)$/m) ?? [])[1]);
+  if (!Number.isFinite(exp) || now > exp) throw new Error("approval expired, sign again");
+  const lines = [`tor-team:rule-set`, `expires: ${exp}`, `kind: ${kind}`, `orgId: ${orgId}`, `payload: ${payloadJson}`];
+  if (message !== lines.join("\n")) throw new Error("signature does not match this rule set");
+  const s = await readRules();
+  const cur = s.rules[orgId] ?? { orgId, updatedAt: 0 };
+  s.rules[orgId] = applyRule(cur, kind as RuleKind, payload);
+  // Recorded in history as an approved self-decision (audit-complete).
+  const id = `rule_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  s.changes[id] = {
+    id, orgId, kind: kind as RuleKind, payload, status: "approved", createdAt: now, createdByDid: decidedByDid,
+    decidedAt: now, decidedByDid, decision: "approve", decisionSignature: signature,
+    decisionSigner: ownerWallet, decisionMessage: message, decisionExpires: exp,
+  };
+  await writeRules(s);
+  return s.rules[orgId];
+}
+
 /// @notice Decide (owner-only — caller verifies rank 2). Approval applies immediately.
 export async function decideRuleChange(
   id: string,

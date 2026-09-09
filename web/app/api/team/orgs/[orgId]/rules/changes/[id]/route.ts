@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { decideRuleChange, getOrgMeta, listRuleChanges, memberByWallet, roleRank } from "../../../../../../../../lib/members";
-import { syncOrgRules } from "../../../../../../../../lib/gateway-admin";
+import { decideRuleChange, listRuleChanges, memberByWallet, roleRank } from "../../../../../../../../lib/members";
 
 // GET: pending (default) or all rule changes for the inbox.
 // POST /:id { decision, signerWallet, signature, message }: owner decides.
@@ -41,27 +40,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     let gatewaySynced = false;
     let gatewayError: string | null = null;
     if (decided.status === "approved") {
-      // Sync org rules + member handles to gateway pre-flight enforcement.
-      const meta = await getOrgMeta(orgId);
-      const { getRules } = await import("../../../../../../../../lib/members");
-      const rules = await getRules(orgId);
-      const handles = (meta?.members ?? [])
-        .filter((m) => m.status === "active")
-        .flatMap((m) => [`wallet:${m.walletAddress.toLowerCase()}`, ...(m.keyPrefix ? [`key:${m.keyPrefix}`] : [])]);
-      try {
-        await syncOrgRules(orgId, {
-          dailyCapCredits: rules.dailyCapCredits ?? null,
-          allowedModels: rules.allowedModels ?? null,
-          allowedRegions: rules.allowedRegions ?? null,
-          requireVerified: rules.requireVerified ?? false,
-          rateLimitPerMin: rules.rateLimitPerMin ?? null,
-          pinnedHosts: rules.pinnedHosts ?? null,
-          handles,
-        });
-        gatewaySynced = true;
-      } catch (e: any) {
-        gatewayError = String(e?.message ?? e).slice(0, 120);
-      }
+      const s = await (await import("../../../../../../../../lib/rule-sync")).syncRulesToGateway(orgId);
+      gatewaySynced = s.synced;
+      gatewayError = s.error;
     }
     return NextResponse.json({ change: decided, gatewaySynced, gatewayError });
   } catch (e: any) {

@@ -7,6 +7,7 @@ import { addMember, decideRuleChange, ensureOrg, getRules, listRuleChanges, memb
 import { stableJson } from "../../../../../../lib/member-messages";
 import { GET as listRules, POST as proposeRoute } from "./route";
 import { POST as decideRoute } from "./changes/[id]/route";
+import { POST as setRoute } from "./set/route";
 
 const OWNER = privateKeyToAccount(generatePrivateKey());
 const MEMBER = privateKeyToAccount(generatePrivateKey());
@@ -118,6 +119,40 @@ describe("org rules", () => {
       { params: Promise.resolve({ orgId: ORG, id: change2.id }) },
     );
     expect(replay.status).toBe(401);
+  });
+
+  it("owner sets directly in one signature (manager gets 403)", async () => {
+    await ensureOrg(ORG);
+    await addMember(ORG, { did: "did:owner", walletAddress: OWNER.address, role: "owner" });
+    await addMember(ORG, { did: "did:mgr", walletAddress: MEMBER.address, role: "manager" });
+    const payload = { credits: 111 };
+    const msgLines = (e: number) => ["tor-team:rule-set", `expires: ${e}`, "kind: daily_cap", `orgId: ${ORG}`, `payload: ${stableJson(payload)}`].join("\n");
+    const exp = Date.now() + 300_000;
+    const msg = msgLines(exp);
+    const sig = await OWNER.signMessage({ message: msg });
+    const ok = await setRoute(
+      new Request("http://x", { method: "POST", body: JSON.stringify({ kind: "daily_cap", payload, memberDid: "did:owner", signature: sig, message: msg, signerWallet: OWNER.address }) }),
+      { params: Promise.resolve({ orgId: ORG }) },
+    );
+    expect(ok.status).toBe(200);
+    const out: any = await ok.json();
+    expect(out.rules.dailyCapCredits).toBe(111);
+    expect(out.gatewaySynced).toBe(true);
+    expect((await getRules(ORG)).dailyCapCredits).toBe(111);
+    // manager direct-set -> 403 (they propose instead)
+    const mmsg = msgLines(Date.now() + 300_000);
+    const msig = await MEMBER.signMessage({ message: mmsg });
+    const denied = await setRoute(
+      new Request("http://x", { method: "POST", body: JSON.stringify({ kind: "daily_cap", payload, memberDid: "did:mgr", signature: msig, message: mmsg, signerWallet: MEMBER.address }) }),
+      { params: Promise.resolve({ orgId: ORG }) },
+    );
+    expect(denied.status).toBe(403);
+    // tampered payload -> 400 (signature binds exact bytes)
+    const evil = await setRoute(
+      new Request("http://x", { method: "POST", body: JSON.stringify({ kind: "daily_cap", payload: { credits: 999 }, memberDid: "did:owner", signature: sig, message: msg, signerWallet: OWNER.address }) }),
+      { params: Promise.resolve({ orgId: ORG }) },
+    );
+    expect(evil.status).toBe(400);
   });
 
   it("decideRuleChange validates directly", async () => {
