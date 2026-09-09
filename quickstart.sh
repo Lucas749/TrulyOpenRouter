@@ -47,12 +47,16 @@ fi
 have tor-host && ok "tor-host on PATH" || warn "tor-host not on PATH yet — open a new terminal"
 
 step "2/6" "stack (ollama + guard)"
-for p in 11434 4122; do
-  if curl -sf -o /dev/null "http://127.0.0.1:$p/" 2>/dev/null || (echo > "/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
-    die "port $p is busy — stop whatever holds it first (try: lsof -i :$p), then re-run"
-  fi
-done
-docker compose -f host-runner/docker-compose.yml up -d ollama guard
+if docker ps -q --filter ancestor=ollama/ollama 2>/dev/null | grep -q .; then
+  ok "stack already up from a previous run, reusing"
+else
+  for p in 11434 4122; do
+    if curl -sf -o /dev/null "http://127.0.0.1:$p/" 2>/dev/null || (echo > "/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
+      die "port $p is busy — stop whatever holds it first (try: lsof -i :$p), then re-run"
+    fi
+  done
+  docker compose -f host-runner/docker-compose.yml up -d ollama guard
+fi
 docker exec "$(docker ps -q --filter ancestor=ollama/ollama | head -1)" ollama pull qwen2.5:0.5b
 ok "guard :4122, model pulled"
 
