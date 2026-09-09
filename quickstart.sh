@@ -49,6 +49,62 @@ ask_tty() {
     eval "$1=\$3"
   fi
 }
+# menu_pick "line1\nline2\n…" DEFAULT — arrow-key menu on /dev/tty (↑↓ + Enter,
+# 1-9 jumps), numbered fallback when no tty. Echoes the 1-based index.
+menu_pick() {
+  _mp_list=$1; _mp_i=${2:-1}
+  _mp_n=$(printf '%s\n' "$_mp_list" | grep -c .)
+  # A usable console = /dev/tty opens AND answers stty (containers have a
+  # dead /dev/tty node that opens but blocks forever — never trust -r alone).
+  if (exec 3<>/dev/tty && stty -g <&3 >/dev/null 2>&1) 2>/dev/null; then
+    : # usable console below
+  else
+    printf "  pick [1-%s, default %s]: " "$_mp_n" "$_mp_i"
+    IFS= read -r _mp_val 2>/dev/null || _mp_val=""
+    echo "${_mp_val:-$_mp_i}"
+    return 0
+  fi
+  _mp_old=$(stty -g < /dev/tty 2>/dev/null || echo "")
+  _mp_cleanup() {
+    stty "$_mp_old" < /dev/tty 2>/dev/null || stty sane < /dev/tty 2>/dev/null || true
+    printf '\033[?25h' > /dev/tty 2>/dev/null || true
+  }
+  trap _mp_cleanup INT TERM
+  printf '\033[?25l' > /dev/tty 2>/dev/null || true
+  stty -icanon -echo < /dev/tty 2>/dev/null || true
+  _mp_k=1
+  while [ "$_mp_k" -le "$_mp_n" ]; do printf '\n' > /dev/tty; _mp_k=$((_mp_k + 1)); done
+  while :; do
+    printf '\033[%sA' "$_mp_n" > /dev/tty 2>/dev/null || true
+    _mp_k=1
+    while [ "$_mp_k" -le "$_mp_n" ]; do
+      _mp_line=$(printf '%s\n' "$_mp_list" | sed -n "${_mp_k}p")
+      if [ "$_mp_k" -eq "$_mp_i" ]; then
+        printf '\r\033[K  ${B}>${RST} %s\n' "$_mp_line" > /dev/tty
+      else
+        printf '\r\033[K    %s\n' "$_mp_line" > /dev/tty
+      fi
+      _mp_k=$((_mp_k + 1))
+    done
+    _mp_key=$(dd bs=1 count=1 < /dev/tty 2>/dev/null)
+    if [ "$_mp_key" = "$(printf '\033')" ]; then
+      _mp_seq=$(dd bs=2 count=1 < /dev/tty 2>/dev/null)
+      case "$_mp_seq" in
+        "[A") _mp_i=$((_mp_i - 1)); [ "$_mp_i" -lt 1 ] && _mp_i=$_mp_n;;
+        "[B") _mp_i=$((_mp_i + 1)); [ "$_mp_i" -gt "$_mp_n" ] && _mp_i=1;;
+      esac
+    elif [ -z "$_mp_key" ]; then
+      break # Enter (newline) — accept highlighted
+    else
+      case "$_mp_key" in
+        [1-9]) [ "$_mp_key" -le "$_mp_n" ] && { _mp_i=$_mp_key; break; };;
+      esac
+    fi
+  done
+  _mp_cleanup
+  trap - INT TERM
+  echo "$_mp_i"
+}
 # wait_for NAME URL SECONDS — dots until curl 200s.
 wait_for() {
   printf "  waiting for %s" "$1"
@@ -103,25 +159,38 @@ qwen2.5:7b|4.7|8|capable · wants room
 llama3.1:8b|4.9|16|strong · 16GB+
 deepseek-r1:8b|5.2|16|reasoning · slower"
 mkdir -p .local
-: > .local/qs-models.tmp
-n=0; def_n=1
-# heredoc loop (not a pipe) so def_n survives — pipes fork subshells.
-while IFS='|' read -r id size min blurb; do
-  [ -n "$id" ] || continue
-  n=$((n + 1))
-  if [ "$RAM_GB" -ge "$min" ]; then fit="${GRN}✓ fits${RST}"; else fit="${RED}✗ tight${RST}"; fi
-  if awk "BEGIN{exit !( $size <= $RAM_GB * 0.5 )}"; then def_n=$n; star="${YLW}★ pick${RST}"; else star=""; fi
-  # shellcheck disable=SC2059
-  printf "  ${B}%s)${RST} %-14s ${DIM}%4sGB · needs %sGB+${RST}  %b %s %s\n" "$n" "$id" "$size" "$min" "$fit" "$star" "$blurb"
-  echo "$n=$id" >> .local/qs-models.tmp
-done <<EOF
+if [ -n "${MODEL_ID:-}" ]; then
+  ok "serving $MODEL_ID (pinned via env)"
+else
+  # pass 1 (silent): recommended default = biggest fitting in half the RAM.
+  n=0; def_n=1
+  while IFS='|' read -r id size min blurb; do
+    [ -n "$id" ] || continue
+    n=$((n + 1))
+    if awk "BEGIN{exit !( $size <= $RAM_GB * 0.5 )}"; then def_n=$n; fi
+  done <<EOF
 $MODELS
 EOF
-ask_tty PICK "Which model do you want to run?" "$def_n"
-MODEL_ID="${MODEL_ID:-$(awk -F= -v p="$PICK" '$1==p {print $2}' .local/qs-models.tmp)}"
-[ -n "$MODEL_ID" ] || MODEL_ID="qwen2.5:0.5b"
-rm -f .local/qs-models.tmp
-ok "serving $MODEL_ID"
+  # pass 2: display rows — exactly one ★, on the default.
+  rows=""; n=0
+  while IFS='|' read -r id size min blurb; do
+    [ -n "$id" ] || continue
+    n=$((n + 1))
+    if [ "$RAM_GB" -ge "$min" ]; then fit="${GRN}✓ fits${RST}"; else fit="${RED}✗ tight${RST}"; fi
+    if [ "$n" -eq "$def_n" ]; then star=" ${YLW}★${RST}"; else star=""; fi
+    # shellcheck disable=SC2059
+    rows="$rows$(printf '%-14s %4sGB · needs %sGB+  %b%s %s' "$id" "$size" "$min" "$fit" "$star" "$blurb")
+"
+  done <<EOF
+$MODELS
+EOF
+  rows=$(printf '%s' "$rows" | sed -e '$ { /^$/ d; }')
+  hint "↑↓ to move · Enter to select · 1-6 to jump"
+  PICK=$(menu_pick "$rows" "$def_n")
+  MODEL_ID=$(printf '%s\n' "$MODELS" | sed -n "${PICK:-$def_n}p" | cut -d'|' -f1)
+  [ -n "$MODEL_ID" ] || MODEL_ID="qwen2.5:0.5b"
+  ok "serving $MODEL_ID"
+fi
 
 step "3/7" "stack (ollama + guard)"
 if docker ps -q --filter ancestor=ollama/ollama 2>/dev/null | grep -q .; then
