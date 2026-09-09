@@ -536,21 +536,60 @@ if [ "$TUI" = 1 ]; then
   UI_BODY=""; UI_FOOT=""; render
 else
 hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
+# fund_wait ADDR — poll testnet balance until ≥10 HBAR (stake). Exact integer
+# math in shell (strip 18 wei digits — float64 can't hold HBAR scale). 0 = funded.
+fund_wait() {
+  _fw_i=0
+  while [ "$_fw_i" -lt "${FW_MAX:-600}" ]; do
+    _fw_wei=$(cast balance "$1" --rpc-url https://testnet.hashio.io/api 2>/dev/null | tr -d ' \n' || echo 0)
+    case "$_fw_wei" in ''|*[!0-9]*) _fw_wei=0;; esac
+    _fw_int=${_fw_wei%??????????????????}
+    [ -z "$_fw_int" ] && _fw_int=0
+    echo "balance: ${_fw_int} HBAR"
+    if [ "$_fw_int" -ge 10 ] 2>/dev/null; then return 0; fi
+    sleep 15; _fw_i=$((_fw_i + 15))
+  done
+  return 1
+}
+host_addr() {
+  node -e "console.log(require(require('os').homedir()+'/.tor/config.json').hostAddress||'')" 2>/dev/null || echo ""
+}
 tries=0; registered=""
 while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
   tries=$((tries + 1))
   if [ "$TUI" = 1 ]; then
-    UI_BODY="  registering — attempt $tries/3 (host key, testnet stake, owner-claim)…\n"; UI_FOOT="underfunded key? the funding page opens next"; render
+    UI_BODY="  registering — attempt $tries/3 (host key, testnet stake, owner-claim)…\n"; UI_FOOT="underfunded key? I wait for funds below, no re-typing"; render
   fi
   if tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" < /dev/tty > /dev/tty 2>&1; then
     registered=1
   else
     # First attempt mints the host key, so the address exists now even though
-    # funding failed — open its funding page and retry instead of dying.
-    HOST_ADDR=$(node -e "console.log(require(require('os').homedir()+'/.tor/config.json').hostAddress||'')" 2>/dev/null) || HOST_ADDR=""
-    if [ -n "$HOST_ADDR" ] && [ "$tries" -lt 3 ]; then
+    # funding failed — show it big, open its funding page, and WAIT for the
+    # money instead of making you re-run anything.
+    HOST_ADDR=$(host_addr)
+    if [ -n "$HOST_ADDR" ]; then
+      if [ "$TUI" = 1 ]; then
+        UI_BODY="  fund this host key (≥10 HBAR stake):\n  ${B}$HOST_ADDR${RST}\n"; UI_FOOT="watching it — fund via the page, I continue alone"; render
+      else
+        ok "fund this host key (≥10 HBAR stake): $HOST_ADDR"
+      fi
       (open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || true)
-      pause "Funded $HOST_ADDR (drip + faucet on the page)? Enter retries ($tries/3)…"
+      if [ "$TUI" = 1 ]; then
+        UI_LOG=1
+        fund_wait "$HOST_ADDR" > "$QS_LOG" 2>&1 & _fw_pid=$!
+        while kill -0 "$_fw_pid" 2>/dev/null; do SPIN_N=$((SPIN_N + 1)); render; sleep 2; done
+        wait "$_fw_pid" && _fw_rc=0 || _fw_rc=$?
+        UI_LOG=0
+      else
+        hint "watching $HOST_ADDR for stake (drip + faucet on the page, ~10 min max)…"
+        fund_wait "$HOST_ADDR" || _fw_rc=$?
+        _fw_rc=${_fw_rc:-0}
+      fi
+      if [ "${_fw_rc:-0}" = 0 ]; then
+        [ "$TUI" = 1 ] && { UI_BODY="  funded ✓ retrying register…\n"; render; } || ok "funded ✓ retrying register…"
+      else
+        pause "Still unfunded after 10 min — fund, then Enter retries ($tries/3)…"
+      fi
     elif [ "$tries" -ge 3 ]; then
       die "run exited 3× — fund the printed address, then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
     else
@@ -559,9 +598,14 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
   fi
 done
 [ "$TUI" = 1 ] && { UI_BODY=""; UI_FOOT=""; render; }
-ok "registered"
+if [ -z "$registered" ]; then
+  die "run exited 3× — then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
 fi
-HOST_ADDR=$(node -e "console.log(require(require('os').homedir()+'/.tor/config.json').hostAddress||'')" 2>/dev/null) || HOST_ADDR=""
+ok "registered"
+# Belt-and-braces claim (run already claims when logged in; free when not).
+tor-host link --gateway="$PROD_GW" 2>/dev/null && ok "claimed for your account" || hint "claim later: tor-host link (needs login + registered host)"
+fi
+HOST_ADDR=$(host_addr)
 if [ -n "$HOST_ADDR" ]; then
   SEEN=$(curl -sf "$PROD_GW/api/hosts/$HOST_ADDR" 2>/dev/null || echo "")
   case "$SEEN" in

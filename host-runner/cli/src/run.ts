@@ -13,7 +13,19 @@ import { banner, box, ok, Spinner, warn } from "./ui.js";
 const REGISTRY_ABI = parseAbi([
   "function register(string endpoint, string modelId, bytes32 modelDigest, bytes32 imageDigest, uint256 pricePerReq, uint256 pricePer1kTokens, bytes teePubkey) payable",
   "function MIN_STAKE() view returns (uint256)",
+  "function getHost(address) view returns ((string endpoint, string modelId, bytes32 modelDigest, bytes32 imageDigest, uint256 pricePerReq, uint256 pricePer1kTokens, bytes teePubkey, uint256 stake, bool active, uint64 registeredAt, uint64 lastHeartbeat, uint64 releaseAfter, bool challenged))",
 ]);
+
+export interface OnchainHost {
+  active: boolean;
+  stake: bigint;
+}
+
+/// @notice Pure re-run gate: an already-active host skips re-registering
+/// (no double stake, no revert) and continues to guard/region/claim.
+export function shouldRegister(existing: OnchainHost | null): boolean {
+  return !existing || !existing.active;
+}
 
 export interface RunOptions {
   gateway: string;
@@ -116,6 +128,9 @@ export async function run(o: RunOptions): Promise<void> {
       console.log(warn("fresh host key generated — kept in ~/.tor, never leaves this machine"));
     }
     const account = privateKeyToAccount(hostKey);
+    // Persist the address with the key (before funding/registering) so the
+    // funding page and retries can find this machine's address immediately.
+    saveConfig({ ...loadConfig(), gateway: o.gateway, hostAddress: account.address });
     console.log(ok(`host ${account.address}`));
 
     // 6. funded? (stake + fees)
@@ -130,21 +145,32 @@ export async function run(o: RunOptions): Promise<void> {
     }
     spin.stop(ok(`funded ${(Number(balance) / 1e18).toFixed(1)} HBAR`));
 
-    // 7. register onchain
-    spin.start("registering onchain");
-    const wallet = createWalletClient({ account, transport: http(rpcUrl) });
-    const minStake = (await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: "MIN_STAKE" })) as bigint;
-    if (stakeWei < minStake) throw new Error(`stake below registry minimum`);
-    const hash = await wallet.writeContract({
+    // 7. register onchain (skipped when this key is already active — re-runs
+    // after a partial success must not double-stake or revert).
+    const existing = (await pub.readContract({
       address: registry,
       abi: REGISTRY_ABI,
-      functionName: "register",
-      args: [o.endpoint ?? `http://${lanIp()}:4122`, o.model, digest, "0x0000000000000000000000000000000000000000000000000000000000000000", BigInt(o.priceReq ?? 100000), BigInt(o.price1k ?? 100000), "0x"],
-      value: stakeWei,
-      chain: undefined,
-    });
+      functionName: "getHost",
+      args: [account.address],
+    }).catch(() => null)) as OnchainHost | null;
+    if (!shouldRegister(existing)) {
+      console.log(ok(`already registered (stake ${(Number(existing!.stake) / 1e18).toFixed(1)} HBAR) — continuing`));
+    } else {
+      spin.start("registering onchain");
+      const wallet = createWalletClient({ account, transport: http(rpcUrl) });
+      const minStake = (await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: "MIN_STAKE" })) as bigint;
+      if (stakeWei < minStake) throw new Error(`stake below registry minimum`);
+      const hash = await wallet.writeContract({
+        address: registry,
+        abi: REGISTRY_ABI,
+        functionName: "register",
+        args: [o.endpoint ?? `http://${lanIp()}:4122`, o.model, digest, "0x0000000000000000000000000000000000000000000000000000000000000000", BigInt(o.priceReq ?? 100000), BigInt(o.price1k ?? 100000), "0x"],
+        value: stakeWei,
+        chain: undefined,
+      });
+      spin.stop(ok(`registered ${hash.slice(0, 18)}…`));
+    }
     saveConfig({ ...loadConfig(), gateway: o.gateway, hostAddress: account.address });
-    spin.stop(ok(`registered ${hash.slice(0, 18)}…`));
 
     // 8. guard up (paid serving; dev-mode without HOST_WALLET is local-only)
     spin.start("starting payment guard");

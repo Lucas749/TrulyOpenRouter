@@ -134,10 +134,17 @@ function HostOnboardingInner() {
           <div className="mb-1 text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">
             2 · Fund your host key {funded ? "✓" : ""}
           </div>
-          <p className="m-0 mb-3 text-sm text-[#6E6E73]">
-            Registration stakes {STAKE_HBAR} HBAR on Hedera testnet. Paste your host&apos;s address
-            (your terminal printed it), get test HBAR, come back.
-          </p>
+          {!params.get("address") && !valid ? (
+            <div className="mb-3 rounded-lg bg-[#F7F7F5] p-3 text-sm text-[#5D5D5D]">
+              No address yet? Run this once locally — it prints your host address, then come back and paste it:
+              <p className="m-0 mt-2 rounded-lg bg-white p-2 font-mono text-xs">tor-host run --model qwen2.5:0.5b --endpoint https://…</p>
+              <p className="m-0 mt-2 font-mono text-xs text-[#8F8F8F]">looks like 0x91c3…DCE4e (42 chars, 0x + 40 hex)</p>
+            </div>
+          ) : (
+            <p className="m-0 mb-3 text-sm text-[#6E6E73]">
+              Registration stakes {STAKE_HBAR} HBAR on Hedera testnet. Get test HBAR below, then back in your terminal.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             <input
               value={addr}
