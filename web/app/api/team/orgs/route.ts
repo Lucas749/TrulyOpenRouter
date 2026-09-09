@@ -88,8 +88,15 @@ export async function POST(req: Request) {
     }
     const wallet: any = await privyApi("POST", "/wallets", walletBody);
     if (creatorWallet && /^0x[0-9a-fA-F]{40}$/.test(creatorWallet)) {
-      const { setOrgCreator } = await import("../../../../lib/members");
+      // The creator becomes founding owner immediately — otherwise they create
+      // a team they can't act on (no membership = no invite/propose UI).
+      const { addMember, setOrgCreator } = await import("../../../../lib/members");
       await setOrgCreator(org.id, creatorWallet);
+      try {
+        await addMember(org.id, { did: `wallet:${creatorWallet.toLowerCase()}`, walletAddress: creatorWallet, role: "owner" });
+      } catch {
+        // already a member (retry path) — membership is what matters, not this write
+      }
     }
     return NextResponse.json({ org, quorumId: quorum.id, policy, wallet });
   } catch (e: any) {

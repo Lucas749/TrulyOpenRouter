@@ -19,7 +19,13 @@ import { POST as createOrg } from "./route";
 import { privyApi } from "../../../../lib/privy-server";
 
 describe("team org creation", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { mkdtempSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    process.env.TOR_MEMBERS_DIR = mkdtempSync(join(tmpdir(), "tor-orgs-"));
+  });
 
   it("converts USD caps to HBAR-wei policies", async () => {
     const r = await createOrg(
@@ -40,5 +46,15 @@ describe("team org creation", () => {
     const plain = await createOrg(new Request("http://x", { method: "POST", body: JSON.stringify({ name: "Acme" }) }));
     expect(plain.status).toBe(200);
     expect(((await plain.json()) as any).wallet.policy_ids).toEqual([]);
+  });
+
+  it("makes the creator founding owner (or the team is unmanageable)", async () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const r = await createOrg(new Request("http://x", { method: "POST", body: JSON.stringify({ name: "Mine", creatorWallet: wallet }) }));
+    expect(r.status).toBe(200);
+    const { getMember, visibleOrgIds } = await import("../../../../lib/members");
+    const me = await getMember("org-test", `wallet:${wallet}`);
+    expect(me?.role).toBe("owner");
+    expect(await visibleOrgIds(wallet)).toContain("org-test");
   });
 });

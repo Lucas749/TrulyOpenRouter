@@ -146,7 +146,11 @@ export default function OrgMembers({
   );
   const myMembership = members?.find((m) => m.did === me?.did || sameWallet(m.walletAddress, me?.wallet)) ?? null;
   // Managers share invite / cap / inbox powers; removal, defaults, and roles stay owner-only.
+  // Empty org + connected wallet = founding flow (server bootstraps the first
+  // member as owner): show invite even to non-members, or nobody could start.
   const canManage = isOwner || myMembership?.role === "manager";
+  const canFound = (members?.length ?? 0) === 0 && !!me?.wallet;
+  const canInvite = canManage || canFound;
   const myWallet = myMembership?.walletAddress ?? me?.wallet ?? null;
 
   async function sign(msg: string): Promise<string> {
@@ -381,9 +385,9 @@ export default function OrgMembers({
         </div>
       )}
 
-      {canManage && !mock && (
+      {canInvite && !mock && (
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-black/15 p-3">
-          <span className="text-xs font-medium">Invite member — email + wallet is enough</span>
+          <span className="text-xs font-medium">{canFound && !canManage ? "No members yet — add yourself as founding owner" : "Invite member — email + wallet is enough"}</span>
           <div className="flex flex-wrap gap-2">
             <input value={invEmail} onChange={(e) => setInvEmail(e.target.value)} placeholder="email" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 text-xs" />
             <input value={invWallet} onChange={(e) => setInvWallet(e.target.value)} placeholder="wallet 0x…" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
