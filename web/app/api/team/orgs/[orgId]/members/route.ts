@@ -6,13 +6,14 @@ import {
   getOrgMeta,
   inviteMember,
   memberByWallet,
+  spendCapFor,
   periodStartFor,
   removeMember,
   roleRank,
   setOrgDefault,
   verifyActionMessage,
 } from "../../../../../../lib/members";
-import { clearCap, syncCap } from "../../../../../../lib/gateway-admin";
+import { clearCap, syncCap, syncSpendCap } from "../../../../../../lib/gateway-admin";
 
 async function gatewaySpend(prefix: string | undefined): Promise<number | null> {
   if (!prefix) return null;
@@ -92,7 +93,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       const owner = meta?.members.find((m) => m.role === "owner" && m.status === "active" && m.walletAddress.toLowerCase() === signer.toLowerCase());
       if (!owner) return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
       const updated = await setOrgDefault(orgId, Number(body.setDefault));
-      return NextResponse.json({ defaultAllowanceCredits: updated.defaultAllowanceCredits ?? null });
+      // Fan-out: members inheriting the default (no explicit allowance) get a
+      // new effective cap — mirror each onchain, best-effort, counted.
+      const metaAfter = await getOrgMeta(orgId);
+      const inheriting = (metaAfter?.members ?? []).filter(
+        (x) => x.status === "active" && x.allowanceCredits === undefined && (x.walletAddress || x.keyPrefix),
+      );
+      const chain: Record<string, number> = { synced: 0, skipped: 0, failed: 0 };
+      await Promise.all(
+        inheriting.map(async (x) => {
+          const { capCredits, periodDays } = spendCapFor(metaAfter!, x.did);
+          const r = await syncSpendCap({ address: x.walletAddress || undefined, prefix: x.keyPrefix ?? undefined, capCredits, periodDays });
+          chain[r] += 1;
+        }),
+      );
+      return NextResponse.json({ defaultAllowanceCredits: updated.defaultAllowanceCredits ?? null, chainSynced: chain });
     }
     // Email-only invite: no wallet yet. Owner/manager signs action "member-invite"
     // binding {orgId, email, role}; the invitee claims it on first login by
@@ -130,7 +145,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
           role: requested as "owner" | "manager" | "member",
           allowanceCredits: body.member.allowanceCredits,
         });
-        return NextResponse.json({ member: inv, invited: true });
+        // No wallet yet = nothing to cap onchain; the claim mirrors then.
+        return NextResponse.json({ member: inv, invited: true, chainSynced: "skipped" });
       } catch (e: any) {
         return NextResponse.json({ error: String(e?.message ?? e).slice(0, 160) }, { status: 409 });
       }
@@ -204,7 +220,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
         return failSync(m.did, e);
       }
     }
-    return NextResponse.json({ member: m, bootstrappedOwner: bootstrapping });
+    // Onchain mirror of the EFFECTIVE allowance (explicit or inherited default;
+    // null = uncapped, which also clears stale caps on re-invite revive).
+    // Best-effort: reported, never blocks membership.
+    const metaAfter = await ensureOrg(orgId);
+    const { capCredits, periodDays } = spendCapFor(metaAfter, m.did);
+    const chainSync = await syncSpendCap({
+      address: m.walletAddress || undefined,
+      prefix: m.keyPrefix ?? undefined,
+      capCredits,
+      periodDays,
+    });
+    return NextResponse.json({ member: m, bootstrappedOwner: bootstrapping, chainSynced: chainSync });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }

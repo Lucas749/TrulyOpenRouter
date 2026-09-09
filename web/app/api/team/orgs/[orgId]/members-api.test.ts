@@ -27,17 +27,24 @@ async function signedAdd(did: string, wallet: string, role = "member", allowance
   return { member: { did, walletAddress: wallet, role, allowanceCredits: allowance }, signature, message, signerWallet: OWNER.address };
 }
 
+export const spendCapCalls: any[] = [];
+
 beforeEach(async () => {
   process.env.TOR_MEMBERS_DIR = mkdtempSync(join(tmpdir(), "tor-route-"));
   const { resetMembersDb } = await import("../../../../../lib/db-test");
   await resetMembersDb(["org-test"]);
   process.env.GATEWAY_ADMIN_TOKEN = "route-test-token";
+  spendCapCalls.length = 0;
   vi.unstubAllGlobals();
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: any, init: any) => {
       const u = String(url);
       if (u.includes("/api/admin/caps")) return { ok: true, json: async () => ({}) } as any;
+      if (u.includes("/api/admin/spend-caps")) {
+        spendCapCalls.push(JSON.parse(String(init?.body ?? "{}")));
+        return { ok: true, status: 200, json: async () => ({ targets: [], txs: {} }) } as any;
+      }
       if (u.includes("/api/usage/")) return { ok: true, json: async () => ({ spent: 30 }) } as any;
       throw new Error(`unexpected fetch ${u} ${init?.method}`);
     }) as any,
@@ -66,6 +73,9 @@ describe("members routes", () => {
     (add.member as any).keyPrefix = "prefixm1abcd";
     const r3 = await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(add) }), { params: Promise.resolve({ orgId: ORG }) });
     expect(r3.status).toBe(200);
+    // onchain mirror: wallet + budget prefix capped at the effective allowance
+    expect(((await r3.json()) as any).chainSynced).toBe("synced");
+    expect(spendCapCalls.at(-1)).toMatchObject({ address: MEMBER.address, prefix: "prefixm1abcd", capCredits: 100, periodDays: 30 });
 
     // list shows resolved caps + live spend
     const list = await listMembers(new Request("http://x"), { params: Promise.resolve({ orgId: ORG }) });
@@ -140,6 +150,7 @@ describe("members routes", () => {
     );
     expect(patched.status).toBe(200);
     expect(((await patched.json()) as any).member.allowanceCredits).toBe(250);
+    expect(spendCapCalls.at(-1)).toMatchObject({ address: MEMBER.address, capCredits: 250 });
     // Manager invites a member -> 200.
     const invMsg = memberActionMessage("member-add", { orgId: ORG, did: "did:m2", wallet: MEMBER.address, role: "member" }, Date.now() + 300_000);
     const invited = await addMemberRoute(
@@ -221,6 +232,8 @@ describe("members routes", () => {
     );
     expect(removed.status).toBe(200);
     expect(((await removed.json()) as any).member.status).toBe("removed");
+    // onchain mirror: ex-member denied (cap 0) before removal
+    expect(spendCapCalls.at(-1)).toMatchObject({ address: MEMBER.address, prefix: "prefixm1abcd", capCredits: 0 });
   });
 });
 

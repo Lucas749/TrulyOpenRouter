@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getMember, memberByWallet, removeMember, roleRank, setMemberAllowance, setMemberRole, setMemberWallet, verifyActionMessage } from "../../../../../../../lib/members";
+import { getMember, getOrgMeta, memberByWallet, removeMember, roleRank, setMemberAllowance, setMemberRole, setMemberWallet, spendCapFor, verifyActionMessage } from "../../../../../../../lib/members";
 import type { Member, MemberRole } from "../../../../../../../lib/members";
-import { clearCap, syncCap } from "../../../../../../../lib/gateway-admin";
+import { clearCap, syncCap, syncSpendCap } from "../../../../../../../lib/gateway-admin";
 
 /// @notice Rank-gated authorization: minRank 2 = owner-only (roles, removal),
 /// minRank 1 = owner + manager (allowances). Returns the acting member.
@@ -98,7 +98,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
         return NextResponse.json({ error: String(e?.message ?? e).slice(0, 160) }, { status: 409 });
       }
     }
-    return NextResponse.json({ member: await getMember(orgId, targetDid) });
+    // Onchain mirror of the new effective allowance (covers allowance edits AND
+    // wallet binds, which activate invited rows). Best-effort, reported.
+    const updated = await getMember(orgId, targetDid);
+    const metaAfter = await getOrgMeta(orgId);
+    const { capCredits, periodDays } = spendCapFor(metaAfter!, targetDid);
+    const chainSync = await syncSpendCap({
+      address: updated?.walletAddress || undefined,
+      prefix: updated?.keyPrefix ?? undefined,
+      capCredits,
+      periodDays,
+    });
+    return NextResponse.json({ member: updated, chainSynced: chainSync });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }
@@ -114,6 +125,16 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ orgId
     if (!target) return NextResponse.json({ error: "member not found" }, { status: 404 });
     const authed = await requireOwner(orgId, body, { orgId, did: targetDid }, "member-remove");
     if ("error" in authed) return authed.error;
+    // Onchain deny (cap 0) BEFORE removal, so an ex-member's wallet can never
+    // settle again even where the gateway pre-flight is bypassed. Best-effort:
+    // removal itself must never be blocked by chain infra.
+    const metaBefore = await getOrgMeta(orgId);
+    const chainSync = await syncSpendCap({
+      address: target.walletAddress || undefined,
+      prefix: target.keyPrefix ?? undefined,
+      capCredits: 0,
+      periodDays: metaBefore?.periodDays ?? 30,
+    });
     if (target.keyPrefix) {
       try {
         await clearCap(target.keyPrefix);
@@ -121,7 +142,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ orgId
         return NextResponse.json({ error: `gateway sync failed, nothing persisted: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 502 });
       }
     }
-    return NextResponse.json({ member: await removeMember(orgId, targetDid) });
+    return NextResponse.json({ member: await removeMember(orgId, targetDid), chainSynced: chainSync });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }

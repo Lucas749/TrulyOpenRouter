@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { approvalMessage, decideRequest, getMember, getRequest, memberByWallet, roleRank } from "../../../../../../../lib/members";
-import { syncCap } from "../../../../../../../lib/gateway-admin";
+import { approvalMessage, decideRequest, getMember, getOrgMeta, getRequest, memberByWallet, roleRank, spendCapFor } from "../../../../../../../lib/members";
+import { syncCap, syncSpendCap } from "../../../../../../../lib/gateway-admin";
 
 // POST: owner/manager decides. Signed by the decider's wallet over the canonical
 // decision message (useSignMessage); the signature + recovered signer are stored
@@ -45,6 +45,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
           return NextResponse.json({ request: decided, gatewaySynced: false, gatewayError: String(e?.message ?? e).slice(0, 120) }, { status: 207 });
         }
       }
+      // Onchain mirror of the newly approved cap. Best-effort, reported next
+      // to the gateway flag — same "decision stands" rationale as above.
+      const metaAfter = await getOrgMeta(orgId);
+      const { capCredits, periodDays } = spendCapFor(metaAfter!, decided.memberDid);
+      const chainSync = member
+        ? await syncSpendCap({ address: member.walletAddress || undefined, prefix: member.keyPrefix ?? undefined, capCredits, periodDays })
+        : "skipped";
+      return NextResponse.json({ request: decided, gatewaySynced: true, chainSynced: chainSync });
     }
     return NextResponse.json({ request: decided, gatewaySynced: true });
   } catch (e: any) {

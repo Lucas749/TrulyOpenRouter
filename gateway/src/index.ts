@@ -9,7 +9,7 @@ import { MemoryOrgRules, type OrgRuleStore, PgOrgRules } from "./orgrules.js";
 import { buildReceipt, MemoryReceiptLog, PgReceiptLog, type ReceiptLog, sha256hex } from "./receipts.js";
 import { dbEnabled, ensureSchema } from "./db.js";
 import { type Health, MemoryHealth, PgHealth } from "./health.js";
-import { createVaultDebit, readVaultCredits } from "./vault.js";
+import { createVaultDebit, createVaultSpendCapWriter, readVaultCredits, type SpendCapWriter } from "./vault.js";
 import { type HostMeta, MemoryHostMeta, PgHostMeta, validRegion } from "./hostmeta.js";
 import { logReceiptHcs, type HcsConfig } from "./hcs.js";
 import { budgetAddressFor } from "./budget.js";
@@ -52,6 +52,7 @@ export interface GatewayOptions {
   tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
   adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
   settle?: DebitFn; // Vault debit; absent = dev mode (no charging)
+  spendCapWriter?: SpendCapWriter; // onchain allowance mirror; absent = chain sync unavailable (old vault / dev)
 }
 
 /// @notice Paid sender for verification probes: probes travel the SAME path as user
@@ -926,6 +927,53 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json({ prefix: req.params.prefix, removed: await opts.spendCaps.removeCap(req.params.prefix) });
   });
 
+  // Onchain allowance mirror: set/clear one account's SpendCap in the vault.
+  // Body: { address? 0x…, prefix? key-prefix, capCredits? number|null, periodDays? n }.
+  // capCredits null/omitted = uncapped (periodDays 0 clears). capCredits 0 = deny-all.
+  // prefix additionally caps the derived budget account (web never sees BUDGET_MASTER).
+  // 501 when no chain writer (dev / old vault) — callers MUST treat that as
+  // "chain sync unavailable" and continue, never as a mutation failure.
+  app.post("/api/admin/spend-caps", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const { address, prefix, capCredits, periodDays } = req.body ?? {};
+      const targets = new Set<string>();
+      if (address !== undefined && address !== null) {
+        const a = String(address).toLowerCase();
+        if (!/^0x[0-9a-f]{40}$/.test(a)) {
+          res.status(400).json({ error: { message: "address must be 0x + 40 hex", type: "invalid_request" } });
+          return;
+        }
+        targets.add(a);
+      }
+      if (prefix !== undefined && prefix !== null) {
+        const b = budgetAddressFor(String(prefix));
+        if (b) targets.add(b.toLowerCase());
+      }
+      if (targets.size === 0) {
+        res.status(400).json({ error: { message: "address and/or prefix required", type: "invalid_request" } });
+        return;
+      }
+      if (!opts.spendCapWriter) {
+        res.status(501).json({ error: { message: "vault spend-cap writer not configured", type: "unavailable" } });
+        return;
+      }
+      const days = capCredits === null || capCredits === undefined ? 0 : Number(periodDays ?? 30);
+      const cap = capCredits === null || capCredits === undefined ? 0n : BigInt(Math.max(0, Math.floor(Number(capCredits))));
+      if (!Number.isInteger(days) || days < 0 || days > 365) {
+        res.status(400).json({ error: { message: "periodDays must be 0..365", type: "invalid_request" } });
+        return;
+      }
+      const txs: Record<string, unknown> = {};
+      for (const t of targets) {
+        txs[t] = await opts.spendCapWriter(t as `0x${string}`, cap, days);
+      }
+      res.json({ targets: [...targets], capCredits: capCredits ?? null, periodDays: days, txs });
+    } catch (e: any) {
+      res.status(502).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "upstream_error" } });
+    }
+  });
+
   // Org rules mirror (synced from web team management after signed approval).
   // Same trust shape as caps: caller holds the wallet signature, this hop is
   // token-authed. Body: { orgId, dailyCapCredits|null, allowedModels|null,
@@ -1123,11 +1171,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     };
   }
   if (process.env.VAULT_ADDRESS && rpcUrl && process.env.OPERATOR_KEY) {
-    opts.settle = createVaultDebit({
+    const vaultCfg = {
       rpcUrl,
       vault: process.env.VAULT_ADDRESS as Address,
       operatorKey: process.env.OPERATOR_KEY as `0x${string}`,
-    });
+    };
+    opts.settle = createVaultDebit(vaultCfg);
+    opts.spendCapWriter = createVaultSpendCapWriter(vaultCfg);
   }
   startVerifyLoop(opts); // VERIFY_INTERVAL_MS=0/unset = off; VERIFY_AUTO_CHALLENGE=1 + OPERATOR_KEY files challenges
   createApp(opts).listen(PORT, () => console.log(`tor-gateway on :${PORT}`));

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { claimInvite } from "../../../../../../../lib/members";
+import { claimInvite, getOrgMeta, spendCapFor } from "../../../../../../../lib/members";
+import { syncSpendCap } from "../../../../../../../lib/gateway-admin";
 
 // POST: invitee claims an email invite by proving wallet ownership. No org
 // membership needed — the wallet signature over the canonical "invite-claim"
@@ -19,7 +20,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     }
     try {
       const m = await claimInvite(orgId, body.email, body.did, body.walletAddress, body.signature, body.message);
-      return NextResponse.json({ member: m });
+      // Newly active: mirror the (possibly pre-set) allowance onchain now.
+      const metaAfter = await getOrgMeta(orgId);
+      const { capCredits, periodDays } = spendCapFor(metaAfter!, m.did);
+      const chainSync = await syncSpendCap({
+        address: m.walletAddress || undefined,
+        prefix: m.keyPrefix ?? undefined,
+        capCredits,
+        periodDays,
+      });
+      return NextResponse.json({ member: m, chainSynced: chainSync });
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       const status = /expired|sign again/.test(msg) ? 401 : /no pending invite/.test(msg) ? 404 : /already active|does not match|must own|wrong action/.test(msg) ? 409 : 400;

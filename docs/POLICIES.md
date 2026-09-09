@@ -8,7 +8,7 @@ about regions, models, or daily caps lives onchain.
 
 | Policy | Set where | Enforced by | Enforced where | Onchain? |
 |---|---|---|---|---|
-| Member allowance (credits) | /team → Members → Edit cap | Gateway `SpendCapStore` (`gateway/src/allowances.ts`) | Pre-flight check per request; over cap → `429 quota_exceeded` | No |
+| Member allowance (credits) | /team → Members → Edit cap | Gateway `SpendCapStore` + vault `SpendCap` mirror | Pre-flight `429` per request; `debit` reverts `SpendCapExceeded` past the cap | Yes, where the deployed vault supports `setSpendCap` (else `chainSynced:"skipped"`) |
 | Org daily ceiling | /team → Firm rules → Daily ceiling | Gateway `orgrules.ts` | Per request; over → `429` | No |
 | Allowed models / regions / verified-only / rate / pinned hosts | /team → Firm rules | Gateway org-rules gate (`gateway/src/index.ts` ~365) | Per request; violation → `403 org_policy` with a plain-language reason | No |
 | Per-tx USD cap on the team wallet | Team creation (`capUsd`) | **Privy**, not us | At signing time: Privy refuses to sign a tx over the cap | No — Privy-side |
@@ -46,6 +46,19 @@ Every chat/completion request passes two gates in `gateway/src/index.ts`:
 
 Both read from Postgres (fall back to local JSON), so rules survive restarts
 and apply to every gateway instance pointing at the same DB.
+
+**Onchain mirror.** Every allowance mutation (add / edit / remove → cap 0 /
+claim / approve increase / default change fan-out) also calls
+`POST /api/admin/spend-caps`, and the gateway writes `setSpendCap` to the
+vault for the member's wallet *and* their key-budget address: cap + period
+from the effective allowance (null = uncapped clears, 0 = deny-all). From then
+on `debit` reverts past the cap even if the pre-flight is bypassed. The mirror
+is best-effort and reported per response as `chainSynced: synced|skipped|failed`
+— chain txs are slow/external, and a pre-`SpendCap` vault (or dev without chain
+config) 501s, which must never block team admin. The gateway gate stays the
+primary enforcer; the chain is the backstop that cannot be skipped by a buggy
+caller. Proven: 7 forge tests + a real anvil loop (subscribe → cap → debit ok
+→ over-cap reverts → exact remainder works).
 
 ## 3. What Privy enforces (and why the per-tx cap is special)
 

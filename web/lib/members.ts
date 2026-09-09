@@ -416,6 +416,14 @@ export function effectiveAllowance(meta: OrgMeta, did: string): number {
   return meta.defaultAllowanceCredits ?? Infinity;
 }
 
+/// @notice Materialize a member's effective allowance for the onchain mirror.
+/// Infinity (unlimited) -> null (uncapped onchain). Removed/invited -> 0
+/// (deny-all onchain; claim/binds re-mirror after activation).
+export function spendCapFor(meta: OrgMeta, did: string): { capCredits: number | null; periodDays: number } {
+  const eff = effectiveAllowance(meta, did);
+  return { capCredits: eff === Infinity ? null : eff, periodDays: meta.periodDays };
+}
+
 export function periodStartFor(meta: OrgMeta, did: string, now = Date.now()): number {
   const m = meta.members.find((x) => x.did === did);
   if (!m) return now;

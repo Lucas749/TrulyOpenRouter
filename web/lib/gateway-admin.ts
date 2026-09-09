@@ -23,6 +23,49 @@ export async function syncCap(prefix: string, cap: number, periodStart?: number)
   if (!res.ok) throw new Error(`gateway sync failed: ${(await res.text()).slice(0, 160)}`);
 }
 
+/// @notice Mirror one member's effective allowance into the vault's onchain
+/// SpendCap (wallet address and/or key prefix — the gateway derives the budget
+/// account itself, the web never sees BUDGET_MASTER).
+/// Returns "skipped" when the gateway has no chain writer (dev / pre-SpendCap
+/// vault): callers MUST continue, gateway pre-flight caps still enforce.
+/// Chain txs are slow and external, so unlike syncCap this never throws for
+/// transport/chain failures either — it returns "failed" and logs, and the
+/// route reports chainSynced:false. Rationale: blocking team admin on chain
+/// infra (or an old vault deployment) is worse than a delayed mirror; the
+/// gateway gate is the primary enforcer, the chain is the backstop.
+export async function syncSpendCap(o: {
+  address?: string | null;
+  prefix?: string | null;
+  capCredits: number | null;
+  periodDays?: number;
+}): Promise<"synced" | "skipped" | "failed"> {
+  if (!o.address && !o.prefix) return "skipped";
+  const t = token();
+  if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured, refusing unwatched sync");
+  let res: Response;
+  try {
+    res = await fetch(`${base()}/api/admin/spend-caps`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+      body: JSON.stringify({
+        ...(o.address ? { address: o.address } : {}),
+        ...(o.prefix ? { prefix: o.prefix } : {}),
+        capCredits: o.capCredits,
+        periodDays: o.periodDays ?? 30,
+      }),
+    });
+  } catch (e: any) {
+    console.error(`spend-cap mirror failed (transport): ${String(e?.message ?? e).slice(0, 160)}`);
+    return "failed";
+  }
+  if (res.status === 501) return "skipped"; // no chain writer: dev / old vault
+  if (!res.ok) {
+    console.error(`spend-cap mirror failed: ${(await res.text()).slice(0, 160)}`);
+    return "failed";
+  }
+  return "synced";
+}
+
 export async function clearCap(prefix: string): Promise<void> {
   const t = token();
   if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured, refusing unwatched sync");

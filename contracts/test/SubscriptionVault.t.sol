@@ -86,6 +86,90 @@ contract SubscriptionVaultTest is Test {
         assertEq(vault.spentToday(user), 1);
     }
 
+    function test_SpendCapEnforcedPerMember() public {
+        _subscribed();
+        vm.prank(gateway);
+        vault.setSpendCap(user, 500, 30);
+        vm.prank(gateway);
+        vault.debit(user, host, 400, bytes32("r1"));
+        vm.prank(gateway);
+        vm.expectRevert(
+            abi.encodeWithSelector(SubscriptionVault.SpendCapExceeded.selector, 501, 500)
+        );
+        vault.debit(user, host, 101, bytes32("r2")); // 400 + 101 > 500
+        // exact-cap spend works
+        vm.prank(gateway);
+        vault.debit(user, host, 100, bytes32("r3"));
+        (uint256 cap, uint64 ps, uint32 pdays, uint256 spent) = vault.spendCaps(user);
+        assertEq(cap, 500);
+        assertEq(pdays, 30);
+        assertEq(spent, 500);
+    }
+
+    function test_SpendCapZeroDeniesAll() public {
+        _subscribed();
+        vm.prank(gateway);
+        vault.setSpendCap(user, 0, 30); // removed member
+        vm.prank(gateway);
+        vm.expectRevert(
+            abi.encodeWithSelector(SubscriptionVault.SpendCapExceeded.selector, 1, 0)
+        );
+        vault.debit(user, host, 1, bytes32("r"));
+    }
+
+    function test_SpendCapUnsetIsUncapped() public {
+        _subscribed(); // no setSpendCap call: pre-existing subscribers unaffected
+        vm.prank(gateway);
+        vault.debit(user, host, QUOTA, bytes32("r1")); // only the daily quota binds
+        (uint256 c0, uint64 p0, uint32 pdays, uint256 s0) = vault.spendCaps(user);
+        assertEq(pdays, 0);
+    }
+
+    function test_SpendCapClearedIsUncapped() public {
+        _subscribed();
+        vm.prank(gateway);
+        vault.setSpendCap(user, 500, 30);
+        vm.prank(gateway);
+        vault.setSpendCap(user, 0, 0); // null allowance -> clear
+        vm.prank(gateway);
+        vault.debit(user, host, QUOTA, bytes32("r1"));
+        (uint256 c0, uint64 p0, uint32 pdays, uint256 s0) = vault.spendCaps(user);
+        assertEq(pdays, 0);
+    }
+
+    function test_SpendCapResetsAfterPeriod() public {
+        _subscribed();
+        vm.prank(gateway);
+        vault.setSpendCap(user, 500, 30);
+        vm.prank(gateway);
+        vault.debit(user, host, 500, bytes32("r1"));
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(gateway);
+        vault.debit(user, host, 500, bytes32("r2")); // fresh window works
+        (uint256 c1, uint64 p1, uint32 d1, uint256 spent) = vault.spendCaps(user);
+        assertEq(spent, 500);
+    }
+
+    function test_SpendCapFreshCapFreshPeriod() public {
+        _subscribed();
+        vm.prank(gateway);
+        vault.setSpendCap(user, 500, 30);
+        vm.prank(gateway);
+        vault.debit(user, host, 500, bytes32("r1"));
+        vm.prank(gateway);
+        vault.setSpendCap(user, 700, 30); // raise = fresh period, mirrors gateway UX
+        vm.prank(gateway);
+        vault.debit(user, host, 700, bytes32("r2"));
+        (uint256 c1, uint64 p1, uint32 d1, uint256 spent) = vault.spendCaps(user);
+        assertEq(spent, 700);
+    }
+
+    function test_SpendCapOnlyGateway() public {
+        vm.prank(user);
+        vm.expectRevert(SubscriptionVault.NotGateway.selector);
+        vault.setSpendCap(user, 500, 30);
+    }
+
     function test_DebitInsufficientCreditsReverts() public {
         vm.prank(gateway);
         vm.expectRevert(

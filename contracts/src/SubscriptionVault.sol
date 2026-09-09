@@ -27,9 +27,22 @@ contract SubscriptionVault {
     mapping(address => uint64) public quotaDay;
     uint256 public accruedFees;
 
+    /// @notice Per-account max spend, synced from team allowances by the gateway.
+    /// Zero struct (periodDays == 0) = uncapped: every pre-existing subscriber
+    /// keeps working. cap == 0 with periodDays > 0 = deny-all (removed members).
+    /// A fresh cap starts a fresh period now (mirrors the gateway allowance UX).
+    struct SpendCap {
+        uint256 cap;
+        uint64 periodStart;
+        uint32 periodDays;
+        uint256 spent;
+    }
+    mapping(address => SpendCap) public spendCaps;
+
     event GatewaySet(address indexed gateway);
     event PlanSet(uint256 indexed planId, uint256 priceWei, uint256 credits);
     event QuotaSet(uint256 dailyQuota);
+    event SpendCapSet(address indexed user, uint256 cap, uint32 periodDays);
     event Subscribed(address indexed user, uint256 indexed planId, uint256 credits);
     event Debited(address indexed user, address indexed host, uint256 amount, bytes32 receiptHash);
     event HostPaid(address indexed host, uint256 amount, bytes32 receiptHash);
@@ -43,6 +56,7 @@ contract SubscriptionVault {
     error WrongPayment(uint256 sent, uint256 required);
     error InsufficientCredits(uint256 have, uint256 need);
     error QuotaExceeded(uint256 wouldSpend, uint256 quota);
+    error SpendCapExceeded(uint256 wouldSpend, uint256 cap);
     error NothingToWithdraw();
     error NothingToRefund();
     error InconsistentPlan(uint256 priceWei, uint256 expected);
@@ -83,6 +97,19 @@ contract SubscriptionVault {
         emit QuotaSet(dailyQuota_);
     }
 
+    /// @notice Sync one account's max spend from a team allowance. onlyGateway
+    /// on purpose: team-owner authorization happens offchain (signed messages
+    /// in the web app) and the gateway propagates, exactly like debit itself —
+    /// the chain cannot see team roles. periodDays == 0 clears back to uncapped.
+    function setSpendCap(address user, uint256 cap, uint32 periodDays) external onlyGateway {
+        if (periodDays == 0) {
+            delete spendCaps[user];
+        } else {
+            spendCaps[user] = SpendCap(cap, uint64(block.timestamp), periodDays, 0);
+        }
+        emit SpendCapSet(user, cap, periodDays);
+    }
+
     /// @notice Buy credits at exact plan price.
     function subscribe(uint256 planId) external payable {
         Plan storage p = plans[planId];
@@ -106,6 +133,16 @@ contract SubscriptionVault {
             revert QuotaExceeded(spentToday[user] + amount, dailyQuota);
         }
         if (credits[user] < amount) revert InsufficientCredits(credits[user], amount);
+
+        SpendCap storage sc = spendCaps[user];
+        if (sc.periodDays > 0) {
+            if (block.timestamp >= sc.periodStart + uint64(sc.periodDays) * 1 days) {
+                sc.periodStart = uint64(block.timestamp);
+                sc.spent = 0;
+            }
+            if (sc.spent + amount > sc.cap) revert SpendCapExceeded(sc.spent + amount, sc.cap);
+            sc.spent += amount;
+        }
 
         credits[user] -= amount;
         spentToday[user] += amount;
