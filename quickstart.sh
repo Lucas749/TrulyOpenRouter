@@ -148,7 +148,8 @@ if [ "$TUI" = 1 ]; then
     _lr_n=$1; _lr_msg=$2; shift 2
     st_set "$_lr_n" run "$_lr_msg"; UI_BODY=""; UI_LOG=1
     : > "$QS_LOG" || return 1
-    "$@" > "$QS_LOG" 2>&1 & _lr_pid=$!
+    # < /dev/null: background steps must never steal keystrokes meant for prompts.
+    "$@" > "$QS_LOG" 2>&1 < /dev/null & _lr_pid=$!
     while kill -0 "$_lr_pid" 2>/dev/null; do render_tick "$_lr_n"; sleep 0.4; done
     wait "$_lr_pid" && _lr_rc=0 || _lr_rc=$?
     UI_LOG=0
@@ -523,7 +524,7 @@ if have cloudflared; then ok "cloudflared present"; else
   fi
 fi
 if have cloudflared; then
-  nohup cloudflared tunnel --url http://127.0.0.1:4122 > "$QS_TUNLOG" 2>&1 &
+  nohup cloudflared tunnel --url http://127.0.0.1:4122 > "$QS_TUNLOG" 2>&1 < /dev/null &
   TUNNEL_PID=$!
   if [ "$TUI" = 1 ]; then
     UI_BODY=""; UI_LOG=0
@@ -563,16 +564,33 @@ else
 hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
 # fund_wait ADDR — poll testnet balance until ≥10 HBAR (stake). Exact integer
 # math in shell (strip 18 wei digits — float64 can't hold HBAR scale). 0 = funded.
+# RPC failures report as unknown (never as zero — a blind check must not claim
+# "not funded"). Enter rechecks immediately instead of waiting out the 15s tick.
 fund_wait() {
   _fw_i=0
   while [ "$_fw_i" -lt "${FW_MAX:-600}" ]; do
-    _fw_wei=$(cast balance "$1" --rpc-url https://testnet.hashio.io/api 2>/dev/null | tr -d ' \n' || echo 0)
-    case "$_fw_wei" in ''|*[!0-9]*) _fw_wei=0;; esac
-    _fw_int=${_fw_wei%??????????????????}
-    [ -z "$_fw_int" ] && _fw_int=0
-    echo "balance: ${_fw_int} HBAR"
-    if [ "$_fw_int" -ge 10 ] 2>/dev/null; then return 0; fi
-    sleep 15; _fw_i=$((_fw_i + 15))
+    # cast's exit code first (a pipeline would report tr's) — blind ≠ zero.
+    # < /dev/null: cast must not slurp Enters meant for the recheck read below.
+    if _fw_raw=$(cast balance "$1" --rpc-url https://testnet.hashio.io/api < /dev/null 2>/dev/null) && [ -n "$_fw_raw" ]; then
+      _fw_wei=$(printf '%s' "$_fw_raw" | tr -d ' \n')
+      case "$_fw_wei" in ''|*[!0-9]*) _fw_ok=0;; *) _fw_ok=1;; esac
+    else
+      _fw_ok=0
+    fi
+    if [ "$_fw_ok" = 1 ]; then
+      _fw_int=${_fw_wei%??????????????????}
+      [ -z "$_fw_int" ] && _fw_int=0
+      echo "balance: ${_fw_int} HBAR / need ≥10 (Enter = recheck now)"
+      if [ "$_fw_int" -ge 10 ] 2>/dev/null; then return 0; fi
+    else
+      echo "balance: ? (RPC unreachable — retrying, NOT counted as zero)"
+    fi
+    if [ -e /dev/tty ]; then
+      IFS= read -t 15 -r _ < /dev/tty 2>/dev/null || true
+    else
+      sleep 15
+    fi
+    _fw_i=$((_fw_i + 15))
   done
   return 1
 }
@@ -593,10 +611,12 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
     # money instead of making you re-run anything.
     HOST_ADDR=$(host_addr)
     if [ -n "$HOST_ADDR" ]; then
+      printf '%s' "$HOST_ADDR" | pbcopy 2>/dev/null || printf '%s' "$HOST_ADDR" | xclip -selection clipboard 2>/dev/null || true
       if [ "$TUI" = 1 ]; then
-        UI_BODY="  fund this host key (≥10 HBAR stake):\n  ${B}$HOST_ADDR${RST}\n"; UI_FOOT="watching it — fund via the page, I continue alone"; render
+        UI_BODY="  fund THIS address (≥10 HBAR stake) — your host key, not your login wallet:\n  ${B}$HOST_ADDR${RST}\n  (copied to clipboard — paste at faucet.hedera.com)\n"; UI_FOOT="watching it live below — Enter rechecks, funding auto-continues"; render
       else
-        ok "fund this host key (≥10 HBAR stake): $HOST_ADDR"
+        ok "fund THIS address (≥10 HBAR stake) — host key, not login wallet: $HOST_ADDR"
+        hint "copied to clipboard — paste at faucet.hedera.com"
       fi
       (open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || true)
       if [ "$TUI" = 1 ]; then
@@ -616,7 +636,7 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
         pause "Still unfunded after 10 min — fund, then Enter retries ($tries/3)…"
       fi
     elif [ "$tries" -ge 3 ]; then
-      die "run exited 3× — fund the printed address, then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
+      die "run exited 3× — fund $HOST_ADDR (host key, not login wallet), then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
     else
       pause "Run exited — check above, Enter retries ($tries/3)…"
     fi
@@ -624,7 +644,7 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
 done
 [ "$TUI" = 1 ] && { UI_BODY=""; UI_FOOT=""; render; }
 if [ -z "$registered" ]; then
-  die "run exited 3× — then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
+  die "run exited 3× — fund the host key shown above, then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
 fi
 ok "registered"
 # Belt-and-braces claim (run already claims when logged in; free when not).
