@@ -63,6 +63,7 @@ export default function OrgRules({
   const [regions, setRegions] = useState<string[]>([]);
   const [hosts, setHosts] = useState<{ address: string; modelId: string }[]>([]);
 
+  const [open, setOpen] = useState(false);
   const [daily, setDaily] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [pickedRegions, setPickedRegions] = useState<string[]>([]);
@@ -214,7 +215,7 @@ export default function OrgRules({
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-[#E5E5E0] px-4 py-3">
-      <div className="flex flex-wrap items-baseline gap-x-3">
+      <button onClick={() => setOpen((o) => !o)} className="flex flex-wrap items-baseline gap-x-3 text-left">
         <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Firm rules</span>
         <span className="ml-auto font-mono text-[11px] text-[#8F8F8F]">
           {rules ? (
@@ -230,8 +231,11 @@ export default function OrgRules({
             "…"
           )}
         </span>
-      </div>
+        <span className={`font-mono text-xs text-[#8F8F8F] transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+      </button>
 
+      {open && (
+        <>
       {canManage && !mock && (
         <>
           <div className={row}>
@@ -244,7 +248,7 @@ export default function OrgRules({
               onChange={(e) => setDaily(e.target.value)}
               placeholder={rules?.dailyCapCredits == null ? "unlimited" : String(rules.dailyCapCredits)}
               className="h-9 w-36 rounded-lg border border-black/10 px-3 font-mono text-sm"
-              inputMode="numeric"
+              inputMode="numeric" autoComplete="off"
             />
             <button
               onClick={() => submit("daily_cap", { credits: daily.trim() === "" ? null : Number(daily) }, "daily")}
@@ -289,7 +293,13 @@ export default function OrgRules({
               <div className={label}>Allowed regions</div>
               <div className={sub}>unticked = all regions (observed IP geo, self-report fallback)</div>
               <div className="mt-2 flex flex-wrap gap-2">
-                {regions.length === 0 && <span className="font-mono text-[11px] text-[#8F8F8F]">no host locations yet</span>}
+                {regions.length === 0 && (
+                  <span className="font-mono text-[11px] text-[#8F8F8F]">
+                    {hosts.length
+                      ? `${hosts.length} host${hosts.length === 1 ? "" : "s"} online, none report a location — hosts set it with tor-host run --region <slug>`
+                      : "no hosts online yet"}
+                  </span>
+                )}
                 {regions.map((r) => {
                   const on = pickedRegions.includes(r);
                   return (
@@ -337,7 +347,7 @@ export default function OrgRules({
               onChange={(e) => setRate(e.target.value)}
               placeholder={rules?.rateLimitPerMin == null ? "unlimited" : String(rules.rateLimitPerMin)}
               className="h-9 w-36 rounded-lg border border-black/10 px-3 font-mono text-sm"
-              inputMode="numeric"
+              inputMode="numeric" autoComplete="off"
             />
             <button
               onClick={() => submit("rate_limit", { perMin: rate.trim() === "" ? null : Number(rate) }, "rate")}
@@ -380,15 +390,15 @@ export default function OrgRules({
 
           <div className={row}>
             <div className="min-w-0 flex-1">
-              <div className={label}>Per-tx display cap</div>
-              <div className={sub}>USD label mirrored from the Privy creation policy (empty = none)</div>
+              <div className={label}>Per-transaction display cap</div>
+              <div className={sub}>a cap per LLM inference, in USD — display only, enforced by the wallet policy at creation (empty = none)</div>
             </div>
             <input
               value={perTx}
               onChange={(e) => setPerTx(e.target.value)}
               placeholder={rules?.perTxCapUsd == null ? "none" : String(rules.perTxCapUsd)}
               className="h-9 w-36 rounded-lg border border-black/10 px-3 font-mono text-sm"
-              inputMode="numeric"
+              inputMode="numeric" autoComplete="off"
             />
             <button
               onClick={() => submit("per_tx_cap", { usd: perTx.trim() === "" ? null : Number(perTx) }, "pertx")}
@@ -434,6 +444,8 @@ export default function OrgRules({
             </div>
           ))}
         </div>
+      )}
+        </>
       )}
       {note && <p className="m-0 font-mono text-xs text-[#0B7A5D]">{note}</p>}
       {err && <p className="m-0 font-mono text-xs text-[#B3261E]">{err}</p>}

@@ -113,6 +113,7 @@ export default function OrgMembers({
   const [editCap, setEditCap] = useState("");
   const [bindDid, setBindDid] = useState<string | null>(null);
   const [bindWallet, setBindWallet] = useState("");
+  const [open, setOpen] = useState(false);
   const [confirmRm, setConfirmRm] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [newDefault, setNewDefault] = useState("");
@@ -384,12 +385,17 @@ export default function OrgMembers({
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-[#E5E5E0] px-4 py-3">
-      <div className="flex flex-wrap items-baseline gap-x-3">
+      <button onClick={() => setOpen((o) => !o)} className="flex flex-wrap items-baseline gap-x-3 text-left">
         <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Members & spend ({members?.length ?? "…"})</span>
         <span className="ml-auto font-mono text-[11px] text-[#8F8F8F]">
           org default {defCap === null ? "unlimited" : `${defCap} credits/member`}
         </span>
-      </div>
+        <span className={`font-mono text-xs text-[#8F8F8F] transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+      </button>
+      {open && (
+        <>
+          {/* collapsible body: member rows through inbox; closed above the error line */}
+      
 
       {(members ?? []).map((m) => {
         // Wallet-derived dids display as the address, not "wallet:0x…".
@@ -424,7 +430,7 @@ export default function OrgMembers({
                     <span className="text-[11px] text-[#6E6E73]">waiting on {m.email ?? "invitee"} — they claim it by logging in, or bind their wallet:</span>
                     {isOwner && !mock && (bindDid === m.did ? (
                       <>
-                        <input value={bindWallet} onChange={(e) => setBindWallet(e.target.value)} placeholder="wallet 0x…" className="h-8 w-52 rounded-lg border border-black/10 bg-white px-2.5 font-mono text-xs" />
+                        <input value={bindWallet} onChange={(e) => setBindWallet(e.target.value)} placeholder="wallet 0x…" autoComplete="off" spellCheck={false} className="h-8 w-52 rounded-lg border border-black/10 bg-white px-2.5 font-mono text-xs" />
                         <button onClick={() => bindInvitedWallet(m.did)} className="rounded-full bg-black px-3 py-1 text-[11px] text-white">Bind</button>
                         <button onClick={() => { setBindDid(null); setBindWallet(""); }} className="text-[11px] text-[#6E6E73] underline">cancel</button>
                       </>
@@ -447,7 +453,7 @@ export default function OrgMembers({
                   <div className="flex flex-wrap items-center gap-2 pl-[38px]">
                     {editDid === m.did ? (
                       <>
-                        <input value={editCap} onChange={(e) => setEditCap(e.target.value)} placeholder="credits, empty = org default" className="h-8 w-52 rounded-lg border border-black/10 bg-white px-2.5 font-mono text-xs" inputMode="numeric" />
+                        <input value={editCap} onChange={(e) => setEditCap(e.target.value)} placeholder="credits, empty = org default" className="h-8 w-52 rounded-lg border border-black/10 bg-white px-2.5 font-mono text-xs" inputMode="numeric" autoComplete="off" />
                         <button onClick={() => saveCap(m.did)} className="rounded-full bg-black px-3 py-1 text-[11px] text-white">Save</button>
                         <button onClick={() => setEditDid(null)} className="text-[11px] text-[#6E6E73] underline">cancel</button>
                       </>
@@ -487,7 +493,7 @@ export default function OrgMembers({
       {myMembership && myMembership.role !== "owner" && !mock && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-black/15 p-3">
           <span className="text-xs text-[#5D5D5D]">Need headroom?</span>
-          <input value={reqAmount} onChange={(e) => setReqAmount(e.target.value)} placeholder="new cap in credits" className="h-8 w-40 rounded-lg border border-black/10 px-2.5 font-mono text-xs" inputMode="numeric" />
+          <input value={reqAmount} onChange={(e) => setReqAmount(e.target.value)} placeholder="new cap in credits" className="h-8 w-40 rounded-lg border border-black/10 px-2.5 font-mono text-xs" inputMode="numeric" autoComplete="off" />
           <button onClick={requestIncrease} disabled={busy === "request" || !reqAmount.trim()} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
             {busy === "request" ? "signing…" : "Request increase"}
           </button>
@@ -499,19 +505,19 @@ export default function OrgMembers({
         <div className="flex flex-col gap-2 rounded-lg border border-dashed border-black/15 p-3">
           <span className="text-xs font-medium">{canFound && !canManage ? "No members yet — add yourself as founding owner" : "Invite by email — they join when they sign up"}</span>
           <div className="flex flex-wrap gap-2">
-            <input value={invEmail} onChange={(e) => setInvEmail(e.target.value)} placeholder="email" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 text-xs" />
-            <input value={invWallet} onChange={(e) => setInvWallet(e.target.value)} placeholder="wallet 0x… (optional, adds them immediately)" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
+            <input value={invEmail} onChange={(e) => setInvEmail(e.target.value)} placeholder="email" autoComplete="email" className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 text-xs" />
+            <input value={invWallet} onChange={(e) => setInvWallet(e.target.value)} placeholder="wallet 0x… (optional, adds them immediately)" autoComplete="off" spellCheck={false} className="h-8 min-w-[160px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
           </div>
           <div className="flex flex-wrap gap-2">
             {!invWallet.trim() ? null : (
-              <input value={invDid} onChange={(e) => setInvDid(e.target.value)} placeholder="Privy DID, optional (defaults to wallet)" className="h-8 min-w-[200px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
+              <input value={invDid} onChange={(e) => setInvDid(e.target.value)} placeholder="Privy DID, optional (defaults to wallet)" autoComplete="off" spellCheck={false} className="h-8 min-w-[200px] flex-1 rounded-lg border border-black/10 px-2.5 font-mono text-xs" />
             )}
             <select value={invRole} onChange={(e) => setInvRole(e.target.value as "owner" | "manager" | "member")} title={ROLE_HELP[invRole]} className="h-8 rounded-lg border border-black/10 bg-white px-2 text-xs">
               <option value="member" title={ROLE_HELP.member}>Member</option>
               <option value="manager" title={ROLE_HELP.manager}>Manager</option>
               <option value="owner" title={ROLE_HELP.owner}>Owner</option>
             </select>
-            <input value={invCap} onChange={(e) => setInvCap(e.target.value)} placeholder="cap, empty = default" className="h-8 w-36 rounded-lg border border-black/10 px-2.5 font-mono text-xs" inputMode="numeric" />
+            <input value={invCap} onChange={(e) => setInvCap(e.target.value)} placeholder="cap, empty = default" className="h-8 w-36 rounded-lg border border-black/10 px-2.5 font-mono text-xs" inputMode="numeric" autoComplete="off" />
             <button onClick={invite} disabled={busy === "invite" || !invEmail.trim() || !myWallet} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
               {busy === "invite" ? "signing…" : (members?.length ?? 0) === 0 ? "Add founding owner" : "Invite"}
             </button>
@@ -524,7 +530,7 @@ export default function OrgMembers({
       {isOwner && !mock && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-[11px] text-[#6E6E73]">default for new members</span>
-          <input value={newDefault} onChange={(e) => setNewDefault(e.target.value)} placeholder="credits" className="h-8 w-28 rounded-lg border border-black/10 px-2.5 font-mono text-xs" inputMode="numeric" />
+          <input value={newDefault} onChange={(e) => setNewDefault(e.target.value)} placeholder="credits" className="h-8 w-28 rounded-lg border border-black/10 px-2.5 font-mono text-xs" inputMode="numeric" autoComplete="off" />
           <button onClick={saveDefault} disabled={busy === "default" || !newDefault.trim()} className="rounded-full border border-black/10 px-3 py-1 text-[11px] disabled:opacity-40">
             {busy === "default" ? "signing…" : "Set default"}
           </button>
@@ -559,6 +565,8 @@ export default function OrgMembers({
             </div>
           ))}
         </div>
+      )}
+        </>
       )}
       {err && <p className="m-0 font-mono text-xs text-[#B3261E]">{err}</p>}
     </div>
