@@ -12,6 +12,7 @@ cd "$(dirname "$0")"
 
 PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
+MODEL_ID="${MODEL_ID:-}" # env pin; step 2 fills it. Declared here so set -u never trips.
 QS_SESS=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo "session")
 # Brand mark (TOR block glyphs — widths verified 19 cols, keep aligned).
 QS_MARK="█████   ███   ████
@@ -19,6 +20,13 @@ QS_MARK="█████   ███   ████
   █    █   █  ████
   █    █   █  █ █
   █     ███   █  █"
+# Brand block shared by every fullscreen screen (app frame + nested pickers).
+# Writes to stdout with \r\n ends; callers redirect (render group / /dev/tty).
+qs_brand_head() {
+  printf '%s\n' "$QS_MARK" | sed 's/^/  /' | while IFS= read -r _ml; do printf '  %s%s%s\r\n' "$B" "$_ml" "$RST"; done
+  printf '  %sTrulyOpenRouter%s %squickstart%s\r\n' "$B" "$RST" "$DIM" "$RST"
+  printf '  %sSession %s · testnet, free%s\r\n\r\n' "$DIM" "${QS_SESS:-session}" "$RST"
+}
 
 if [ "${1:-}" = "--stop" ] || [ "${1:-}" = "stop" ]; then
   [ -f .local/qs-tunnel.pid ] && kill "$(cat .local/qs-tunnel.pid)" 2>/dev/null && echo "tunnel down" || true
@@ -71,9 +79,7 @@ if [ "$TUI" = 1 ]; then
   render() {
     {
       printf '\033[H\033[J'
-      printf '%s\n' "$QS_MARK" | sed 's/^/  /' | while IFS= read -r _ml; do printf '  %s%s%s\r\n' "$B" "$_ml" "$RST"; done
-      printf '  %sTrulyOpenRouter%s %squickstart%s\r\n' "$B" "$RST" "$DIM" "$RST"
-      printf '  %sSession %s · testnet, free%s\r\n\r\n' "$DIM" "$QS_SESS" "$RST"
+      qs_brand_head
       _ri=0
       while [ "$_ri" -le 7 ]; do
         eval "_rs=\$ST_S_$_ri; _rm=\$ST_M_$_ri"
@@ -217,7 +223,9 @@ menu_pick() {
   printf '\033[?25l' > /dev/tty 2>/dev/null || true
   stty -icanon -echo < /dev/tty 2>/dev/null || true
   _mp_draw() {
-    printf "\033[H\033[J\r\n  ${B}%s${RST}\r\n" "$_mp_title" > /dev/tty 2>/dev/null || true
+    printf "\033[H\033[J" > /dev/tty 2>/dev/null || true
+    if [ -n "${TOR_ALT:-}" ]; then qs_brand_head > /dev/tty 2>/dev/null || true; else printf "\r\n" > /dev/tty 2>/dev/null || true; fi
+    printf "  ${B}%s${RST}\r\n" "$_mp_title" > /dev/tty 2>/dev/null || true
     if [ -n "$_mp_sub" ]; then printf "  ${DIM}%s${RST}\r\n" "$_mp_sub" > /dev/tty 2>/dev/null || true; fi
     printf "\r\n" > /dev/tty 2>/dev/null || true
     _mp_k=1
@@ -328,6 +336,7 @@ EOF
   fi
   MODEL_ID=$(printf '%s\n' "$MODELS" | sed -n "${PICK:-$def_n}p" | cut -d'|' -f1)
   [ -n "$MODEL_ID" ] || MODEL_ID="qwen2.5:0.5b"
+  [ -n "$MODEL_ID" ] || die "no model selected — re-run step 2"
   ok "$MODEL_ID"
 fi
 
