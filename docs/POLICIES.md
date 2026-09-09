@@ -100,6 +100,43 @@ testnet spend, not for hostile environments.
   signal is present. Enforcement compares the request's routed host against
   the allowlist the same way.
 
+## 6. Could the rules be enforced onchain? What does x402 change?
+
+Short answer: **total spend already is, per-request policy cannot be — and
+x402 doesn't change that boundary.**
+
+What x402 gives us: every inference is an atomic, signed payment
+authorization (~$0.001). Because money moves per request:
+
+- **Total spend is onchain-bounded today.** Callers prepay into subscription
+  pools; the vault debit settles per receipt and reverts when the pool is
+  empty. No policy needed: you cannot spend what was never deposited. The
+  vault balance *is* the ultimate spend cap, enforced by consensus.
+- **Each payment is attributable.** Receipts + HCS anchoring mean any
+  gateway misbehavior (serving a disallowed model, ignoring a cap) leaves a
+  signed, timestamped trail. Enforcement is offchain; *auditability* is
+  onchain.
+
+What x402 does NOT carry: the payment authorization has amount, recipient,
+nonce — no field for "model qwen2.5" or "region eu". To gate those onchain you
+would need a policy contract in the payment path (payer approves a PolicyVault;
+each request calls `spend(model, region, amount)`, which checks stored rules
+and forwards the funds) **plus an oracle for region** — the chain cannot see
+IPs, so some trusted party must attest "this host is in eu". That buys you
+consensus-stamped denials at the cost of gas + latency on every inference and
+a new trusted party (the oracle), which is exactly the trust you were trying
+to remove.
+
+And Privy specifically: its policy engine gates *signing* (value ≤ cap on
+`eth_sendTransaction` for the team wallet). It knows nothing about models,
+regions, or credits. It cannot enforce firm rules; it was never in that path.
+
+So "set the rules right and they're all enforced" is true today — the
+enforcer is the gateway, per request, before serving. Moving that check into a
+contract would make violations *impossible* instead of *detectable*, at a price
+we'd feel on every call. Deliberate split, documented here so it stays
+deliberate.
+
 ## Mental model
 
 ```

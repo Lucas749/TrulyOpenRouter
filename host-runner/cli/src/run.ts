@@ -27,6 +27,27 @@ export interface RunOptions {
   endpoint?: string; // override; default = auto-detected LAN IP :4122
 }
 
+/// @notice Our own egress-IP geo, resolved host-side. The gateway cannot do this
+/// for us: it only sees our endpoint hostname (docker/LAN names resolve to
+/// nothing), while we see our own public exit IP. Same slug format as the
+/// gateway's observed geo (`cc-region`), free ip-api tier, best-effort.
+export async function egressRegion(fetchFn: typeof fetch = fetch): Promise<string | null> {
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 4000);
+    try {
+      const r = await fetchFn("http://ip-api.com/json/?fields=status,countryCode,regionName", { signal: ctl.signal });
+      const d = (await r.json()) as any;
+      if (d.status !== "success" || !d.countryCode) return null;
+      return `${String(d.countryCode).toLowerCase()}-${String(d.regionName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "unknown"}`;
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    return null;
+  }
+}
+
 /// @notice First non-internal IPv4 (the address other machines route to).
 export function lanIp(): string {
   for (const ifs of Object.values(networkInterfaces())) {
@@ -130,14 +151,23 @@ export async function run(o: RunOptions): Promise<void> {
     await sh("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d", "guard"]);
     spin.stop(ok("guard up — set HOST_WALLET to your 0.0.x id for paid serving"));
 
-    // 9. sync to backend: region + owner claim (best-effort — serving works regardless)
-    if (o.region) {
+    // 9. region attach + owner claim (best-effort — serving works regardless).
+    // --region wins; otherwise auto-resolve our own egress IP so every host
+    // reports a location without the operator thinking about it.
+    let region = o.region;
+    if (!region) {
+      region = (await egressRegion().catch(() => null)) ?? undefined;
+      if (region) console.log(ok(`region ${region} (auto-detected from your IP, override with --region)`));
+    }
+    if (region) {
       try {
-        await api(o.gateway, `/api/hosts/${account.address}/meta`, { method: "POST", body: JSON.stringify({ region: o.region }) });
-        console.log(ok(`region ${o.region} (self-reported)`));
+        await api(o.gateway, `/api/hosts/${account.address}/meta`, { method: "POST", body: JSON.stringify({ region }) });
+        if (o.region) console.log(ok(`region ${o.region} (self-reported)`));
       } catch (e) {
         console.log(warn(`region sync skipped: ${String((e as Error)?.message ?? e).slice(0, 120)}`));
       }
+    } else {
+      console.log(warn("no region detected (offline?) — set it with: tor-host run --region <slug>"));
     }
     const me = loadConfig();
     if (me.userId) {
