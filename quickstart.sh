@@ -99,7 +99,9 @@ if [ "$TUI" = 1 ]; then
       done
       printf '\r\n  %s────────────────────────────────────────%s\r\n' "$DIM" "$RST"
       if [ "$UI_LOG" = 1 ] && [ -f "$QS_LOG" ]; then
-        tr '\r' '\n' < "$QS_LOG" 2>/dev/null | tail -5 | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /'
+        # Collapse ollama's progress spam (one \r-redraw per chunk) into one
+        # clean status line per layer; manifest/digest/success lines pass through.
+        tr '\r' '\n' < "$QS_LOG" 2>/dev/null | tail -8 | sed -E -e 's/(pulling [0-9a-f]{4})[0-9a-f]*: *([0-9]+%?).*/\1… \2/' | tail -5 | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /'
       elif [ -n "$UI_BODY" ]; then
         printf '%b' "$UI_BODY"
       fi

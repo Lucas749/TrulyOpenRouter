@@ -20,6 +20,26 @@ function HostOnboardingInner() {
   const params = useSearchParams();
   const { ready, authenticated, user } = usePrivy();
   const account = (user?.wallet?.address ?? user?.id ?? null) as string | null;
+  const [owned, setOwned] = useState<string[]>([]);
+  // Hosts already claimed by this login (owner-claim at run/link time) —
+  // prefill the first so returning users never paste anything.
+  useEffect(() => {
+    if (!authenticated || !user?.id) {
+      setOwned([]);
+      return;
+    }
+    (async () => {
+      try {
+        const d: any = await (await fetch(`${GW}/api/owners/${encodeURIComponent(user.id)}/hosts`)).json();
+        const list: string[] = Array.isArray(d.data) ? d.data : [];
+        setOwned(list);
+        if (list.length > 0 && !params.get("address")) setAddr(list[0]);
+      } catch {
+        /* gateway down — manual input still works */
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, user?.id]);
   const [addr, setAddr] = useState(params.get("address") ?? "");
   const [balance, setBalance] = useState<string | null>(null);
   const [host, setHost] = useState<any | null>(null);
@@ -142,7 +162,23 @@ function HostOnboardingInner() {
           <p className="m-0 mb-3 font-mono text-[11px] text-[#8F8F8F]">
             two addresses: your login above receives earnings · the host key below pays stake
           </p>
-          {!params.get("address") && !valid ? (
+          {owned.length > 1 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {owned.map((a) => (
+                <button
+                  key={a}
+                  onClick={() => setAddr(a)}
+                  className={`h-9 rounded-full border px-4 font-mono text-xs ${a.toLowerCase() === clean.toLowerCase() ? "border-black bg-black text-white" : "border-black/10 hover:bg-black/5"}`}
+                >
+                  {short(a)}
+                </button>
+              ))}
+            </div>
+          )}
+          {owned.length > 0 && valid && (
+            <p className="m-0 mb-3 font-mono text-[11px] text-[#0B7A5D]">found on your account ✓</p>
+          )}
+          {!params.get("address") && owned.length === 0 && !valid ? (
             <div className="mb-3 rounded-lg bg-[#F7F7F5] p-3 text-sm text-[#5D5D5D]">
               No address yet? Run this once locally — it prints your host address, then come back and paste it:
               <p className="m-0 mt-2 rounded-lg bg-white p-2 font-mono text-xs">tor-host run --model qwen2.5:0.5b --endpoint https://…</p>
