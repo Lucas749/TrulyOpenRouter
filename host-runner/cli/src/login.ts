@@ -1,4 +1,5 @@
 import { saveConfig } from "./config.js";
+import { ensureHostKey } from "./run.js";
 import { api } from "./util.js";
 import { banner, box, ok, Spinner } from "./ui.js";
 
@@ -40,7 +41,19 @@ export async function login(gateway: string, opts?: { pollMs?: number; timeoutMs
       const st: any = await api(gateway, `/api/device/poll?code=${code}`);
       if (st.status === "approved") {
         saveConfig({ gateway, token: st.token, userId: st.userId });
-        poll.stop(ok(`linked as ${st.userId}`));
+        // Bind machine → account NOW (pre-registration, pre-funding): the site
+        // lists this key under the account immediately, so funding pages
+        // prefill with zero pasting and zero ?address= detective work.
+        const { address } = ensureHostKey(gateway);
+        try {
+          await api(gateway, `/api/hosts/${address}/owner`, {
+            method: "POST",
+            body: JSON.stringify({ userId: st.userId }),
+          });
+          poll.stop(ok(`linked as ${st.userId} — host ${address} attached`));
+        } catch {
+          poll.stop(ok(`linked as ${st.userId} (host claim skipped — run tor-host link later)`));
+        }
         return;
       }
       if (st.status !== "pending" || Date.now() > deadline) throw new Error(`login ${st.status}`);

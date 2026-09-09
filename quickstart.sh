@@ -476,7 +476,7 @@ if have tor-host; then
   if [ "$TUI" = 1 ]; then
     UI_BODY="  linking this machine — the approval page opens by itself, one click…\n"; UI_FOOT="approve in the browser, I wait here"; render
     if tor-host login --gateway="$PROD_GW" < /dev/tty > /dev/tty 2>&1; then
-      ok "logged in — the claim runs automatically once your host registers below"
+      ok "logged in — this machine's host key is attached to your account now"
     else
       warn "login skipped — run later: tor-host login --gateway=$PROD_GW"
     fi
@@ -484,7 +484,7 @@ if have tor-host; then
   else
     hint "linking this machine — the approval page opens by itself, one click…"
     if tor-host login --gateway="$PROD_GW" < /dev/tty > /dev/tty 2>&1; then
-      ok "logged in — the claim runs automatically once your host registers below"
+      ok "logged in — this machine's host key is attached to your account now"
     else
       warn "login skipped — run later: tor-host login --gateway=$PROD_GW"
     fi

@@ -60,6 +60,25 @@ export async function egressRegion(fetchFn: typeof fetch = fetch): Promise<strin
   }
 }
 
+/// @notice Ensure this machine has a host key, generating + persisting (0600)
+/// on first use. Returns the address and whether it is fresh. The address is
+/// saved immediately (before funding/registering) so login can bind the
+/// machine to the account and funding pages can find it with zero pasting.
+export function ensureHostKey(gateway: string): { address: `0x${string}`; fresh: boolean } {
+  const stored = loadConfig();
+  let hostKey = stored.hostKey as `0x${string}` | undefined;
+  let fresh = false;
+  if (!hostKey || !existsSync(join(configDir(), "config.json"))) {
+    hostKey = generatePrivateKey();
+    saveConfig({ ...stored, gateway, hostKey });
+    chmodSync(join(configDir(), "config.json"), 0o600);
+    fresh = true;
+  }
+  const account = privateKeyToAccount(hostKey);
+  saveConfig({ ...loadConfig(), gateway, hostAddress: account.address });
+  return { address: account.address, fresh };
+}
+
 /// @notice First non-internal IPv4 (the address other machines route to).
 export function lanIp(): string {
   for (const ifs of Object.values(networkInterfaces())) {
@@ -119,18 +138,9 @@ export async function run(o: RunOptions): Promise<void> {
     spin.stop(ok(`digest ${digest.slice(0, 14)}…`));
 
     // 5. host key (generated once, chmod 0600, testnet only for now)
-    const stored = loadConfig();
-    let hostKey = stored.hostKey as `0x${string}` | undefined;
-    if (!hostKey || !existsSync(join(configDir(), "config.json"))) {
-      hostKey = generatePrivateKey();
-      saveConfig({ ...stored, gateway: o.gateway, hostKey });
-      chmodSync(join(configDir(), "config.json"), 0o600);
-      console.log(warn("fresh host key generated — kept in ~/.tor, never leaves this machine"));
-    }
-    const account = privateKeyToAccount(hostKey);
-    // Persist the address with the key (before funding/registering) so the
-    // funding page and retries can find this machine's address immediately.
-    saveConfig({ ...loadConfig(), gateway: o.gateway, hostAddress: account.address });
+    const { fresh } = ensureHostKey(o.gateway);
+    if (fresh) console.log(warn("fresh host key generated — kept in ~/.tor, never leaves this machine"));
+    const account = privateKeyToAccount(loadConfig().hostKey as `0x${string}`);
     console.log(ok(`host ${account.address}`));
 
     // 6. funded? (stake + fees)

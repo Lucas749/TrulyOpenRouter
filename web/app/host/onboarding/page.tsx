@@ -50,6 +50,7 @@ function HostOnboardingInner() {
 
   const clean = addr.trim();
   const valid = /^0x[0-9a-fA-F]{40}$/.test(clean);
+  const fromOwned = valid && owned.some((a) => a.toLowerCase() === clean.toLowerCase());
 
   const refresh = useCallback(async () => {
     if (!valid) return;
@@ -219,6 +220,7 @@ function HostOnboardingInner() {
           {valid && balance !== null && !funded && (
             <p className="mb-0 mt-3 text-sm text-[#8A5300]">
               Needs ≥ {STAKE_HBAR} HBAR to register (drip covers account creation, the faucet covers stake).
+              {fromOwned && hostState !== "live" ? " Attached to your account ✓ — fund it, then register from your terminal." : ""}
             </p>
           )}
           {msg && <p className="mb-0 mt-3 font-mono text-xs text-[#6E6E73]">{msg}</p>}
