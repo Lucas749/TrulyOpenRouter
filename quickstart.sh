@@ -13,6 +13,8 @@ PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
 
 if [ "${1:-}" = "--stop" ] || [ "${1:-}" = "stop" ]; then
+  [ -f .local/qs-tunnel.pid ] && kill "$(cat .local/qs-tunnel.pid)" 2>/dev/null && echo "tunnel down" || true
+  rm -f .local/qs-tunnel.pid
   docker compose -f host-runner/docker-compose.yml down 2>/dev/null || true
   echo "stack down — re-run sh quickstart.sh anytime"
   exit 0
@@ -257,29 +259,65 @@ else
   warn "tor-host not on PATH — run later: tor-host login --gateway=$PROD_GW"
 fi
 
-step "7/7" "serve (register on the network, earn per request)"
-hint "this generates your host key, registers onchain (testnet stake),"
-hint "starts serving $MODEL_ID, and claims the host for your account."
-hint "the network must reach your guard — LAN won't route, so either expose"
-hint ":4122 (ngrok / cloudflared / public IP) or serve LAN-only for now."
-ask_tty ENDPOINT "Your guard's public URL (empty = http://<lan-ip>:4122, LAN-only)" ""
-if [ -z "$ENDPOINT" ]; then
-  hint "LAN-only: you serve, but the public network can't route to you yet."
-  hint "re-run with a tunnel URL anytime: tor-host run --endpoint https://… --model $MODEL_ID"
+step "7/7" "serve (public tunnel → register → prove you're routable)"
+hint "the network must reach your guard, so this opens a free Cloudflare"
+hint "tunnel (no signup), registers you onchain, then probes you end-to-end."
+TUNNEL_URL=""
+if have cloudflared; then ok "cloudflared present"; else
+  if [ "$(uname -s)" = "Darwin" ] && have brew; then
+    warn "installing cloudflared (one-time, brew)…"
+    brew install -q cloudflared 2>/dev/null && ok "cloudflared installed" || warn "brew install failed"
+  else
+    warn "install cloudflared first: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+  fi
 fi
-if tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" ${ENDPOINT:+--endpoint="$ENDPOINT"} < /dev/tty > /dev/tty 2>&1; then
-  ok "serving $MODEL_ID on the network — dashboard live at $PROD_WEB/host/dashboard"
-  (open "$PROD_WEB/host/dashboard" 2>/dev/null || xdg-open "$PROD_WEB/host/dashboard" 2>/dev/null || true)
+if have cloudflared; then
+  mkdir -p .local
+  nohup cloudflared tunnel --url http://127.0.0.1:4122 > .local/qs-tunnel.log 2>&1 &
+  echo $! > .local/qs-tunnel.pid
+  printf "  opening tunnel"
+  i=0
+  while [ "$i" -lt 60 ]; do
+    TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' .local/qs-tunnel.log 2>/dev/null | head -1 || true)
+    if [ -n "$TUNNEL_URL" ]; then break; fi
+    printf "."; sleep 2; i=$((i + 2))
+  done
+  printf "\n"
+  [ -n "$TUNNEL_URL" ] && ok "public guard URL: $TUNNEL_URL" || { warn "tunnel never printed a URL — see .local/qs-tunnel.log"; kill "$(cat .local/qs-tunnel.pid)" 2>/dev/null || true; }
+fi
+ask_tty ENDPOINT "Guard public URL (Enter = tunnel above, or paste your own)" "${TUNNEL_URL:-}"
+if [ -z "$ENDPOINT" ]; then
+  die "no public URL — without one the network can't route to you (re-run with cloudflared installed)"
+fi
+hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
+if tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" < /dev/tty > /dev/tty 2>&1; then
+  ok "registered"
 else
   warn "run exited (underfunded host key is the usual cause — it prints the faucet address)"
-  hint "fund it, then re-run just this step:"
-  cmd "tor-host run --gateway=$PROD_GW --model $MODEL_ID ${ENDPOINT:+--endpoint=$ENDPOINT}"
+  die "fund it, then re-run just this step: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
 fi
+# self-test: ask the HOSTED gateway what it sees + probe routability.
+HOST_ADDR=$(node -e "console.log(require(require('os').homedir()+'/.tor/config.json').hostAddress||'')" 2>/dev/null) || HOST_ADDR=""
+if [ -n "$HOST_ADDR" ]; then
+  SEEN=$(curl -sf "$PROD_GW/api/hosts/$HOST_ADDR" 2>/dev/null || echo "")
+  case "$SEEN" in *"$ENDPOINT"*|*"endpoint"*) ok "gateway lists you ($HOST_ADDR)";; *) warn "gateway doesn't list you yet — heartbeats take ~10 min to propagate";; esac
+  VCODE=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$PROD_GW/api/verify/$HOST_ADDR" 2>/dev/null || echo "000")
+  if [ "$VCODE" = "200" ]; then
+    ok "spot-check passed — you are ROUTABLE, traffic will find you"
+  elif [ "$VCODE" = "501" ]; then
+    hint "verifier off on the hosted gateway — registered, first live traffic confirms routability"
+  else
+    warn "spot-check returned $VCODE — endpoint may be unreachable from the network"
+  fi
+else
+  hint "couldn't read ~/.tor/config.json — check status with: tor-host status"
+fi
+(open "$PROD_WEB/host/dashboard" 2>/dev/null || xdg-open "$PROD_WEB/host/dashboard" 2>/dev/null || true)
 
 printf "\n${B}╭────────────────────────────────────────╮${RST}\n"
-printf "${B}│  ${GRN}✓${B} TrulyOpenRouter is live               │${RST}\n"
+printf "${B}│  ${GRN}✓${B} you're serving on TrulyOpenRouter      │${RST}\n"
 printf "${B}╰────────────────────────────────────────╯${RST}\n"
 printf "  dashboard  ${CYN}%s/host/dashboard${RST}\n" "$PROD_WEB"
-printf "  model      ${B}%s${RST}\n" "$MODEL_ID"
+printf "  model      ${B}%s  ${DIM}via %s${RST}\n" "$MODEL_ID" "$ENDPOINT"
 printf "  status     ${DIM}tor-host status${RST}\n"
-printf "  stop       ${DIM}sh quickstart.sh --stop${RST}\n"
+printf "  stop       ${DIM}sh quickstart.sh --stop  (tunnel URL changes on restart — re-run step 7 to re-point)${RST}\n"
