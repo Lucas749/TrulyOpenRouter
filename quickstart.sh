@@ -358,7 +358,7 @@ else
   fi
 fi
 if [ "$TUI" = 1 ]; then
-  live_run 3 "pulling $MODEL_ID…" docker exec "$(docker ps -q --filter ancestor=ollama/ollama | head -1)" ollama pull "$MODEL_ID" \
+  live_run 3 "pulling ${MODEL_ID}..." docker exec "$(docker ps -q --filter ancestor=ollama/ollama | head -1)" ollama pull "$MODEL_ID" \
     && ok "guard :4122 · $MODEL_ID ready" || die "model pull failed"
 else
   warn "pulling $MODEL_ID (one-time download, a few minutes)…"
