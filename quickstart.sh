@@ -480,13 +480,11 @@ fi
 
 # === 6/7 account ===============================================================
 step 6 "linking your account"
-if [ "$TUI" = 1 ]; then
-  UI_BODY="  opening host onboarding — log in, fund the host key, come back…\n"; UI_FOOT="press Enter when logged in"; render
-else
-  hint "opening host onboarding — log in, fund the host key, come back…"
-fi
-(open "$PROD_WEB/host/onboarding" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding" 2>/dev/null || true)
-pause "Logged in? Continue…"
+# NOTE: no browser tabs here on purpose. tor-host login below opens its own
+# approve URL (login included when logged out), and the funding page opens
+# exactly once, at step 7, pre-filled with your host address — only if it is
+# actually unfunded. A funding page with no address is never useful.
+pause "Continue to login (an approval page opens by itself)…"
 if have tor-host; then
   if [ "$TUI" = 1 ]; then
     UI_BODY="  linking this machine — the approval page opens by itself, one click…\n"; UI_FOOT="approve in the browser, I wait here"; render
