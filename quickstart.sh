@@ -350,6 +350,7 @@ llama3.2:3b|2.0|8|balanced daily driver
 qwen2.5:7b|4.7|8|capable · wants room
 llama3.1:8b|4.9|16|strong · 16GB+
 deepseek-r1:8b|5.2|16|reasoning · slower"
+MODEL_FILE="${TOR_HOME:-$HOME/.tor}/last-model"
 if [ -n "${MODEL_ID:-}" ]; then
   ok "$MODEL_ID (pinned via env) — $HW_SUM"
 else
@@ -361,6 +362,20 @@ else
   done <<EOF
 $MODELS
 EOF
+  # Remember last pick — returning users land on their model, not the biggest.
+  if [ -f "$MODEL_FILE" ]; then
+    _lm=$(head -1 "$MODEL_FILE" 2>/dev/null || true)
+    if [ -n "$_lm" ]; then
+      n=0
+      while IFS='|' read -r id size min blurb; do
+        [ -n "$id" ] || continue
+        n=$((n + 1))
+        if [ "$id" = "$_lm" ]; then def_n=$n; break; fi
+      done <<EOF
+$MODELS
+EOF
+    fi
+  fi
   rows=""; n=0
   while IFS='|' read -r id size min blurb; do
     [ -n "$id" ] || continue
@@ -382,6 +397,7 @@ EOF
   MODEL_ID=$(printf '%s\n' "$MODELS" | sed -n "${PICK:-$def_n}p" | cut -d'|' -f1)
   [ -n "$MODEL_ID" ] || MODEL_ID="qwen2.5:0.5b"
   [ -n "$MODEL_ID" ] || die "no model selected — re-run step 2"
+  mkdir -p "$(dirname "$MODEL_FILE")" 2>/dev/null && echo "$MODEL_ID" > "$MODEL_FILE" 2>/dev/null || true
   ok "$MODEL_ID"
 fi
 
