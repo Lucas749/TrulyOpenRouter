@@ -9,6 +9,7 @@
 # Nothing here costs money (testnet + faucet funds only).
 set -eu
 cd "$(dirname "$0")"
+mkdir -p .local # live_run logs + pids land here; fresh clones lack it (.local is gitignored)
 
 PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
@@ -111,7 +112,13 @@ if [ "$TUI" = 1 ]; then
   hint() { UI_BODY="${UI_BODY}  ${DIM}$1${RST}\n"; render; }
   cmd() { UI_BODY="${UI_BODY}  ${CYN}$1${RST}\n"; render; }
   die() {
-    st_set "$CUR" fail "$1"; UI_FOOT="press Enter to leave"
+    st_set "$CUR" fail "$1"
+    if [ -f .local/qs-step.log ]; then
+      UI_BODY="  ${DIM}last output:${RST}\n$(tail -8 .local/qs-step.log 2>/dev/null | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /')\n"
+    else
+      UI_BODY=""
+    fi
+    UI_FOOT="press Enter to leave"
     render; printf '\033[?25h' > /dev/tty 2>/dev/null || true
     IFS= read -r _ < /dev/tty 2>/dev/null || true
     tui_leave; trap - INT TERM; exit 1
@@ -120,7 +127,8 @@ if [ "$TUI" = 1 ]; then
   live_run() {
     _lr_n=$1; _lr_msg=$2; shift 2
     st_set "$_lr_n" run "$_lr_msg"; UI_BODY=""; UI_LOG=1
-    : > .local/qs-step.log
+    mkdir -p .local
+    : > .local/qs-step.log || return 1
     "$@" > .local/qs-step.log 2>&1 & _lr_pid=$!
     while kill -0 "$_lr_pid" 2>/dev/null; do SPIN_N=$((SPIN_N + 1)); render; sleep 0.4; done
     wait "$_lr_pid" && _lr_rc=0 || _lr_rc=$?
