@@ -39,10 +39,19 @@ contract SubscriptionVault {
     }
     mapping(address => SpendCap) public spendCaps;
 
+    /// @notice Organization money: the pool (org wallet) holds the credits,
+    /// members draw from it within their own cap. Deny-by-default — a member
+    /// with NO entry cannot touch pool funds at all (unknown/removed members
+    /// drain nothing). An "unlimited" org allowance is mirrored as
+    /// type(uint256).max by the gateway, never as an empty slot.
+    mapping(address => mapping(address => SpendCap)) public poolSpendCaps; // pool => member => cap
+
     event GatewaySet(address indexed gateway);
     event PlanSet(uint256 indexed planId, uint256 priceWei, uint256 credits);
     event QuotaSet(uint256 dailyQuota);
     event SpendCapSet(address indexed user, uint256 cap, uint32 periodDays);
+    event PoolSpendCapSet(address indexed pool, address indexed member, uint256 cap, uint32 periodDays);
+    event PoolDebited(address indexed pool, address indexed member, address indexed host, uint256 amount, bytes32 receiptHash);
     event Subscribed(address indexed user, uint256 indexed planId, uint256 credits);
     event Debited(address indexed user, address indexed host, uint256 amount, bytes32 receiptHash);
     event HostPaid(address indexed host, uint256 amount, bytes32 receiptHash);
@@ -57,6 +66,8 @@ contract SubscriptionVault {
     error InsufficientCredits(uint256 have, uint256 need);
     error QuotaExceeded(uint256 wouldSpend, uint256 quota);
     error SpendCapExceeded(uint256 wouldSpend, uint256 cap);
+    error NoPoolSpendCap(address pool, address member);
+    error PoolSpendCapExceeded(address pool, address member, uint256 wouldSpend, uint256 cap);
     error NothingToWithdraw();
     error NothingToRefund();
     error InconsistentPlan(uint256 priceWei, uint256 expected);
@@ -108,6 +119,57 @@ contract SubscriptionVault {
             spendCaps[user] = SpendCap(cap, uint64(block.timestamp), periodDays, 0);
         }
         emit SpendCapSet(user, cap, periodDays);
+    }
+
+    /// @notice Sync one member's cap against one org pool. onlyGateway, same
+    /// rationale as setSpendCap (org roles live offchain). periodDays == 0
+    /// deletes back to deny-by-default.
+    function setPoolSpendCap(address pool, address member, uint256 cap, uint32 periodDays) external onlyGateway {
+        if (periodDays == 0) {
+            delete poolSpendCaps[pool][member];
+        } else {
+            poolSpendCaps[pool][member] = SpendCap(cap, uint64(block.timestamp), periodDays, 0);
+        }
+        emit PoolSpendCapSet(pool, member, cap, periodDays);
+    }
+
+    /// @notice Charge one routed call against ORGANIZATION funds. Callable only
+    /// by the gateway, which resolves (member, org) -> pool offchain from team
+    /// membership. The pool pays; the member's pool-cap bounds them; the pool's
+    /// own balance and the global daily quota bound the org as a whole.
+    function debitFrom(address pool, address member, address host, uint256 amount, bytes32 receiptHash)
+        external
+        onlyGateway
+    {
+        uint64 day = uint64(block.timestamp / 1 days);
+        if (quotaDay[pool] != day) {
+            quotaDay[pool] = day;
+            spentToday[pool] = 0;
+        }
+        if (spentToday[pool] + amount > dailyQuota) {
+            revert QuotaExceeded(spentToday[pool] + amount, dailyQuota);
+        }
+        if (credits[pool] < amount) revert InsufficientCredits(credits[pool], amount);
+
+        SpendCap storage sc = poolSpendCaps[pool][member];
+        if (sc.periodDays == 0) revert NoPoolSpendCap(pool, member);
+        if (block.timestamp >= sc.periodStart + uint64(sc.periodDays) * 1 days) {
+            sc.periodStart = uint64(block.timestamp);
+            sc.spent = 0;
+        }
+        if (sc.spent + amount > sc.cap) revert PoolSpendCapExceeded(pool, member, sc.spent + amount, sc.cap);
+        sc.spent += amount;
+
+        credits[pool] -= amount;
+        spentToday[pool] += amount;
+
+        uint256 fee = (amount * PROTOCOL_FEE_BPS) / 10_000;
+        uint256 hostShare = amount - fee;
+        hostEarnings[host] += hostShare;
+        accruedFees += fee;
+
+        emit PoolDebited(pool, member, host, amount, receiptHash);
+        emit HostPaid(host, hostShare, receiptHash);
     }
 
     /// @notice Buy credits at exact plan price.

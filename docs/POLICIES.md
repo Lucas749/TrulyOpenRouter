@@ -175,6 +175,18 @@ pool (members draw freely up to caps) vs stipends (company tops up individual
 balances). Either way the allowance machinery already exists — only the
 funding source changes.
 
+**Status: the contract half exists.** `SubscriptionVault` now has
+`poolSpendCaps[pool][member]` + `debitFrom(pool, member, …)`: the org wallet
+subscribes once (company funds it), each member draws within their own cap,
+and members with NO entry are denied by default — an unknown or removed
+member cannot touch pool funds, period. The pool's own balance and the daily
+quota bound the org as a whole. Proven in forge (6 tests: draw-within-cap,
+deny-by-default, cap-0 removal, period reset, pool-balance bound, gateway-only).
+Not yet wired: gateway payer resolution with org context (request → (member,
+pool) → `debitFrom`), pool funding UX (subscribe from the org wallet), and the
+web mirror keyed by (pool, member). Until those land, live traffic still
+settles per-member (this section's first paragraph).
+
 ## Mental model
 
 ```

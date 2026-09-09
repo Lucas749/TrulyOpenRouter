@@ -170,6 +170,96 @@ contract SubscriptionVaultTest is Test {
         vault.setSpendCap(user, 500, 30);
     }
 
+    address pool = address(0x0BAD);
+    address alice = address(0xA11CE);
+
+    function _fundedPool() internal {
+        deal(pool, 100 ether);
+        vm.prank(pool);
+        vault.subscribe{value: PLAN_PRICE}(0);
+    }
+
+    function test_PoolDebitDrawsOrgFundsWithinMemberCap() public {
+        _fundedPool();
+        vm.prank(gateway);
+        vault.setPoolSpendCap(pool, alice, 500, 30);
+        vm.prank(gateway);
+        vault.debitFrom(pool, alice, host, 400, bytes32("p1"));
+        assertEq(vault.credits(pool), PLAN_CREDITS - 400);
+        assertEq(vault.credits(alice), 0); // member never needed her own balance
+        assertEq(vault.hostEarnings(host), 360);
+        (, , , uint256 spent) = vault.poolSpendCaps(pool, alice);
+        assertEq(spent, 400);
+    }
+
+    function test_PoolDebitDenyByDefault() public {
+        _fundedPool();
+        vm.prank(gateway);
+        vm.expectRevert(
+            abi.encodeWithSelector(SubscriptionVault.NoPoolSpendCap.selector, pool, alice)
+        );
+        vault.debitFrom(pool, alice, host, 10, bytes32("p1")); // no entry, no spend
+    }
+
+    function test_PoolCapEnforcedAndZeroDenies() public {
+        _fundedPool();
+        vm.prank(gateway);
+        vault.setPoolSpendCap(pool, alice, 500, 30);
+        vm.prank(gateway);
+        vault.debitFrom(pool, alice, host, 500, bytes32("p1"));
+        vm.prank(gateway);
+        vm.expectRevert(
+            abi.encodeWithSelector(SubscriptionVault.PoolSpendCapExceeded.selector, pool, alice, 501, 500)
+        );
+        vault.debitFrom(pool, alice, host, 1, bytes32("p2"));
+        // removal -> cap 0 denies everything
+        vm.prank(gateway);
+        vault.setPoolSpendCap(pool, alice, 0, 30);
+        vm.prank(gateway);
+        vm.expectRevert(
+            abi.encodeWithSelector(SubscriptionVault.PoolSpendCapExceeded.selector, pool, alice, 1, 0)
+        );
+        vault.debitFrom(pool, alice, host, 1, bytes32("p3"));
+    }
+
+    function test_PoolCapResetsAfterPeriod() public {
+        _fundedPool();
+        vm.prank(gateway);
+        vault.setPoolSpendCap(pool, alice, 500, 30);
+        vm.prank(gateway);
+        vault.debitFrom(pool, alice, host, 500, bytes32("p1"));
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(gateway);
+        vault.debitFrom(pool, alice, host, 500, bytes32("p2"));
+        (, , , uint256 spent) = vault.poolSpendCaps(pool, alice);
+        assertEq(spent, 500);
+    }
+
+    function test_PoolDebitBoundedByPoolBalanceAndDailyQuota() public {
+        deal(pool, 100 ether);
+        vm.prank(pool);
+        vault.subscribe{value: PLAN_PRICE}(0); // 10k credits
+        vm.prank(gateway);
+        vault.setPoolSpendCap(pool, alice, type(uint256).max, 30); // "unlimited" member
+        // pool balance still binds: daily quota is 2000, so drain day by day
+        vm.prank(gateway);
+        vault.debitFrom(pool, alice, host, QUOTA, bytes32("p1"));
+        vm.prank(gateway);
+        vm.expectRevert(
+            abi.encodeWithSelector(SubscriptionVault.QuotaExceeded.selector, QUOTA + 1, QUOTA)
+        );
+        vault.debitFrom(pool, alice, host, 1, bytes32("p2")); // pool daily quota binds the org too
+    }
+
+    function test_PoolFnsOnlyGateway() public {
+        vm.prank(alice);
+        vm.expectRevert(SubscriptionVault.NotGateway.selector);
+        vault.setPoolSpendCap(pool, alice, 500, 30);
+        vm.prank(alice);
+        vm.expectRevert(SubscriptionVault.NotGateway.selector);
+        vault.debitFrom(pool, alice, host, 1, bytes32("p"));
+    }
+
     function test_DebitInsufficientCreditsReverts() public {
         vm.prank(gateway);
         vm.expectRevert(
