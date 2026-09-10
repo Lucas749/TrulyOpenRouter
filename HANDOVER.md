@@ -1,4 +1,4 @@
-# Handover — TrulyOpenRouter (as of the 5 HBAR onboarding rollout, 2026-09-11)
+# Handover — TrulyOpenRouter (as of the live host console rollout, 2026-09-11)
 
 ## What this is
 Decentralized OpenRouter on Hedera testnet: users chat with LLMs through a
@@ -43,6 +43,25 @@ gates run in the gateway per request.
 - Repo: `https://github.com/Lucas749/TrulyOpenRouter`, small commits on `main`.
 
 ## What is built (this session worked newest-first)
+- **Live host console (2026-09-11)**: quickstart opens the TUI immediately
+  after registration. Reopen with `tor-host` or `tor-host dashboard`.
+  Seven tabs cover overview, request activity, models, network, logs, controls,
+  and help. Ten-second refreshes retain the selected tab and scroll position.
+  The overview combines registration, local guard, downloaded model, and
+  registered endpoint health. Recent receipts distinguish routed traffic from
+  readiness. Unknown telemetry stays unknown; balances use HBAR.
+  Controls start existing containers, pause the guard, or restart the guard /
+  Ollama without recreating containers or moving funds. Closing the view leaves
+  services alone. `tor-host status --json` exports public telemetry only.
+  Quickstart retains setup/tunnel log paths in `~/.tor/monitor.json`, refreshes
+  the installed launcher, and the hosted installer stops if Git updates fail.
+  CLI: 59 tests pass; shell/terminal: 13 tests pass. PTY checks cover live
+  request refresh, navigation, 40-column resize, plain output, input/cursor
+  restoration, and pause/resume with simulated services. The actual local
+  Dubai host passes all readiness checks with `qwen2.5:0.5b` and 0 requests.
+  The final quickstart handoff is exercised separately without chain writes.
+  Hosted installer deployment: `dpl_7nhSfhZupeoJgX2DQs1Bq6M49EK2`
+  (code `e0bd942`); repository changes are pushed to `main`.
 - **Host dashboard + map fixes (2026-09-11)**: the old dashboard rendered a
   404 body as a host and crashed on the missing address. Typed per-host states
   now retain pending registrations and failed lookups, with bounded requests
@@ -118,11 +137,9 @@ the user's host wallet during this rollout.
 - Receipt IDs currently hash content and latency but omit payer/request identity.
   Identical completions at equal latency can collide; the wallet route fixture
   now uses a distinct prompt. Receipt uniqueness needs a separate fix.
-- `git pull -q || true` in `install.sh` swallows failures → stale clones;
-  quickstart prints its rev in the session line — always ask for it.
-- `tor-host` resolves to the repo checkout (npm link), NOT the installer
-  clone — the clone's step-1 rebuild doesn't affect the binary; rebuild repo
-  `host-runner/cli` after touching it.
+- Quickstart now refreshes `npm link` after each build. If linking fails,
+  the current install session uses its freshly built CLI directly and prints
+  a launcher recovery command. Rebuild `host-runner/cli` after source edits.
 - macOS `script(1)` batches piped stdin until EOF — pty timing tests lie;
   test logic, not timing, in harness.
 - bash 3.2 + non-UTF8 locale: never put a multibyte char directly after
@@ -143,6 +160,7 @@ the user's host wallet during this rollout.
 ## Key files
 - `quickstart.sh`, `web/public/install.sh`, `host-runner/setup.sh` (legacy manual)
 - `host-runner/cli/src/{run,login,link,index,ui}.ts`, `gateway/src/{index,orgrules,vault,allowances,geo}.ts`
+- `host-runner/cli/src/{dashboard,monitor,monitor-view,monitor-logs,monitor-controls}.ts`
 - `contracts/src/{SubscriptionVault,HostRegistry}.sol`
 - `web/app/{onboarding,host/onboarding,team/members,rules}/`, `web/lib/{members,member-messages,gateway-admin,tx-errors}.ts`
 - `docs/POLICIES.md`, `docs/DESIGN-SECURITY.md`, `DEPLOY.md`, `.local/TEST-LIST.md`
