@@ -6,7 +6,10 @@ set -eu
 if command -v git >/dev/null 2>&1; then
   if [ -d TrulyOpenRouter ]; then
     echo "TrulyOpenRouter/ exists — updating…"
-    (cd TrulyOpenRouter && git pull -q || true)
+    if ! (cd TrulyOpenRouter && git pull --ff-only -q); then
+      echo "Update failed. Resolve the Git error in TrulyOpenRouter/ and run the installer again."
+      exit 1
+    fi
   else
     git clone -q https://github.com/Lucas749/TrulyOpenRouter
   fi

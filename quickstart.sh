@@ -13,6 +13,7 @@ cd "$(dirname "$0")"
 # must work on a bare machine with zero repo state. Nothing depends on .local.
 QS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/tor-qs.XXXXXX")
 QS_LOG="$QS_TMP/step.log"
+QS_SETUPLOG="$QS_TMP/setup.log"
 QS_TUNLOG="$QS_TMP/tunnel.log"
 QS_RUN_STATUS="$QS_TMP/run-status.json"
 QS_FUNDLOG="$QS_TMP/funding.log"
@@ -165,6 +166,7 @@ if [ "$TUI" = 1 ]; then
     tail -f "$QS_LOG" > /dev/tty 2>/dev/null & _rl_tail=$!
     wait "$_rl_pid" && _rl_rc=0 || _rl_rc=$?
     kill "$_rl_tail" 2>/dev/null || true
+    cat "$QS_LOG" >> "$QS_SETUPLOG"
     return "$_rl_rc"
   }
   # live_run STEP MSG CMD... — background cmd, animate + tail its log in place.
@@ -177,6 +179,7 @@ if [ "$TUI" = 1 ]; then
     "$@" > "$QS_LOG" 2>&1 < /dev/null & _lr_pid=$!
     while kill -0 "$_lr_pid" 2>/dev/null; do render_tick "$_lr_n"; sleep 0.4; done
     wait "$_lr_pid" && _lr_rc=0 || _lr_rc=$?
+    cat "$QS_LOG" >> "$QS_SETUPLOG"
     UI_LOG=0
     return "$_lr_rc"
   }
@@ -240,6 +243,7 @@ else
     _n=$1; _m=$2; shift 2
     printf '  %s\n' "$_m"
     "$@" > "$QS_LOG" 2>&1 < /dev/null && _lr_rc=0 || _lr_rc=$?
+    cat "$QS_LOG" >> "$QS_SETUPLOG"
     log_tail "$QS_LOG" 10
     return "$_lr_rc"
   }
@@ -357,10 +361,12 @@ if [ "$TUI" = 1 ]; then
 else
   (cd host-runner/cli && npm install --no-audit --no-fund && npm run build) || die "CLI build failed"
 fi
-if have tor-host; then ok "tor-host on PATH"; else
-  warn "linking tor-host (may ask for sudo)…"
-  (cd host-runner/cli && (npm link 2>/dev/null || sudo npm link)) || hint "link failed — use: npx --prefix host-runner/cli tsx src/index.ts"
-  have tor-host && ok "tor-host on PATH" || warn "tor-host not on PATH yet — open a new terminal"
+# Refresh the installed launcher even if it points at an older checkout.
+if (cd host-runner/cli && npm link --no-audit --no-fund >/dev/null 2>&1); then
+  ok "tor-host updated on PATH"
+else
+  warn "launcher link needs attention — run npm link in host-runner/cli"
+  hint "this session uses the new CLI directly"
 fi
 
 # Use the CLI we just built, even if a global npm link points to another checkout.
@@ -763,11 +769,8 @@ fi
 
 # === done ======================================================================
 if [ "$TUI" = 1 ]; then
-  i=0; while [ "$i" -le 7 ]; do eval "_s=\$ST_S_$i"; [ "$_s" = "run" ] && eval "ST_S_$i=ok"; i=$((i + 1)); done
-  UI_BODY="  ${B}Welcome — you're serving $MODEL_ID${RST}\n  public URL ${CYN}$ENDPOINT${RST}\n  network    ${CYN}$PROD_WEB/network${RST}  (find yourself as traffic flows)\n  dashboard  ${CYN}$PROD_WEB/host/dashboard${RST}  (live calls + earnings, set prices in tor-host run)\n  status     ${DIM}tor-host status · stop: sh quickstart.sh --stop${RST}\n"
-  UI_FOOT="press Enter to leave"; UI_LOG=0; render
-  printf '\033[?25h' > /dev/tty 2>/dev/null || true
-  IFS= read -r _ < /dev/tty 2>/dev/null || true
   tui_leave; trap - INT TERM
+  unset TOR_ALT
+  tor_host dashboard --gateway="$PROD_GW" --tunnel-log="$QS_TUNLOG" --setup-log="$QS_SETUPLOG" < /dev/tty > /dev/tty 2>&1
 fi
-printf "\n  Welcome — you're serving %s\n  public URL %s\n  network    %s/network (find yourself as traffic flows)\n  dashboard  %s/host/dashboard (live calls + earnings)\n  stop       sh quickstart.sh --stop\n" "$MODEL_ID" "$ENDPOINT" "$PROD_WEB" "$PROD_WEB"
+printf "\n  Host setup complete · %s\n  console    tor-host dashboard\n  snapshot   tor-host status\n  public URL %s\n  network    %s/network\n  dashboard  %s/host/dashboard\n  stop       sh quickstart.sh --stop\n" "$MODEL_ID" "$ENDPOINT" "$PROD_WEB" "$PROD_WEB"

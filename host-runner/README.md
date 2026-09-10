@@ -2,6 +2,29 @@
 
 Anyone with a GPU (or a Mac with Ollama) can join. Three steps, minutes.
 
+Quickstart opens a live host console when setup finishes. Reopen it anytime:
+
+```sh
+tor-host
+# or: tor-host dashboard
+```
+
+Use **1–6** or **← / →** to explore the overview, request activity, local models,
+network, service logs, and help. **↑ / ↓** scroll, **r** refreshes, **l** switches
+the log source, and **q** closes the view. Closing the console leaves services
+running. It refreshes every 10 seconds and keeps the selected tab in place.
+
+The overview checks the registered public endpoint, local guard, and Ollama.
+“Ready to serve” means these checks pass; “Serving · recent traffic” means a
+routed request completed in the last five minutes. Request counts, failures,
+latency, and earnings come from the gateway. Unavailable data stays unknown.
+Balances use HBAR. Health checks do not send paid inference requests.
+
+For scripts or a quick snapshot, use `tor-host status` or `tor-host status --json`.
+`tor-host dashboard --once` also works without an interactive terminal. Custom
+setups may pass `--gateway`, `--guard-url`, and `--ollama-url`. `tor-host run`
+opens the console after successful setup; use `--no-dashboard` for plain output.
+
 ## 1. Run a model
 
 ```sh
