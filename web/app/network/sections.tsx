@@ -14,6 +14,8 @@ export interface SectionsData {
   hosts: any[];
   models: any[];
   receipts: any[];
+  updatedAt: number | null;
+  preview?: boolean;
 }
 
 function dollarsPer1k(avgCreditsPer1k: string | null): string {
@@ -21,8 +23,8 @@ function dollarsPer1k(avgCreditsPer1k: string | null): string {
   return `$${(Number(avgCreditsPer1k) * 0.001).toFixed(4)}`;
 }
 
-export default function DataSections({ hosts, models, receipts }: SectionsData) {
-  const stamp = new Date().toISOString().slice(11, 16);
+export default function DataSections({ hosts, models, receipts, updatedAt, preview = false }: SectionsData) {
+  const stamp = updatedAt === null ? null : new Date(updatedAt).toISOString().slice(11, 16);
   const byModel = new Map<string, { tokens: number; calls: number }>();
   for (const r of receipts) {
     const m = r.modelId ?? "unknown";
@@ -60,7 +62,7 @@ export default function DataSections({ hosts, models, receipts }: SectionsData) 
 
   const section = "flex flex-col gap-4";
   const h2 = "m-0 text-[20px] font-medium tracking-[-0.02em]";
-  const updated = <span className="font-mono text-xs text-[#8F8F8F]">Updated {stamp} UTC</span>;
+  const updated = <span className="font-mono text-xs text-[#8F8F8F]">{preview ? "Preview data" : stamp ? `Updated ${stamp} UTC` : "Waiting for data"}</span>;
 
   return (
     <div className="flex flex-col gap-10">

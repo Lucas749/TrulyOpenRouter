@@ -244,7 +244,7 @@ export default function NetworkPage() {
           </div>
         )}
 
-        <DataSections hosts={shownHosts} models={shownModels} receipts={shownReceipts} />
+        <DataSections hosts={shownHosts} models={shownModels} receipts={shownReceipts} updatedAt={updatedAt} preview={mock} />
       </main>
     </div>
   );
