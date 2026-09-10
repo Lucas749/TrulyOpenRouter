@@ -43,6 +43,25 @@ gates run in the gateway per request.
 - Repo: `https://github.com/Lucas749/TrulyOpenRouter`, small commits on `main`.
 
 ## What is built (this session worked newest-first)
+- **Host dashboard + map fixes (2026-09-11)**: the old dashboard rendered a
+  404 body as a host and crashed on the missing address. Typed per-host states
+  now retain pending registrations and failed lookups, with bounded requests
+  and 15-second refreshes. The dashboard has HBAR balances, active host cards,
+  setup recovery, address tracking, and mobile layouts. Damaged bookmarks are
+  filtered; unknown balances stay unknown.
+- **Host locations**: globe now recognizes gateway slugs such as `ae-dubai`
+  and `us-oregon`, with labeled country-center fallbacks for other regions.
+  Region controls reveal either hemisphere. The canvas and rotation persist
+  across data updates; host lists refresh every 15 seconds. Missing locations
+  are counted, and the fixed gateway marker / decorative traffic were removed.
+  Live data shows 4 hosts: Dubai + Oregon mapped, 2 without reported regions.
+  Browser checks cover the original mixed pending/registered crash, empty and
+  damaged storage, mobile overflow, and a newly discovered region appearing
+  without reload while the selected region stays focused. Web: 62 tests pass,
+  2 database-dependent skips; typecheck and targeted lint pass. Production web
+  deployment: `dpl_5gNzZ7vPpBgHPVScv25zJmVtiCph` (code `68949f2`).
+  Network update labels use the actual refresh time, preventing hydration
+  mismatches. Live desktop/mobile checks finish with no browser errors.
 - **Host onboarding E2E** (ACTIVE FIRE, see below): fullscreen TUI
   `quickstart.sh` (alt-screen app, live board, arrow-key model picker with
   remembered pick in `~/.tor/last-model`, hardware detect, auto cloudflared
