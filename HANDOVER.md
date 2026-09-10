@@ -70,6 +70,10 @@ readback), fund-wait loop, underfunded errors with address.
 **Just fixed**: stake 5 / fund 6 so one faucet trip (10 HBAR) suffices —
 previously exactly-10 keys failed the register tx on gas with zero visibility
 (log truncation wiped the error; waits now append).
+**Docker readiness**: quickstart now checks the engine during dependencies,
+opens Docker Desktop on macOS when needed, and waits up to 2 minutes with
+setup guidance. Missing Docker/Compose and startup failures have explicit
+recovery steps. Verified locally from a stopped engine to ready.
 **To verify next**: full green run to "ROUTABLE" (blocked only on real testnet
 funds + browser clicks, which can't be automated here).
 **Known sharp edges**:
@@ -106,5 +110,6 @@ funds + browser clicks, which can't be automated here).
 - Web: `npx tsc --noEmit && npx vitest run` (in `web/`); deploy `vercel --prod --yes`
 - Gateway: `npx vitest run` (in `gateway/`); contracts: `forge test` (in `contracts/`)
 - CLI: `npm run build && npx vitest run` (in `host-runner/cli/`)
+- Docker startup: `node --test host-runner/test/ensure-docker.test.mjs` (repo root)
 - Box hosts: `curl -s http://52.12.2.63:4121/api/hosts`
 - Anvil cap E2E: see runbook comment in `gateway/test/spendcaps-e2e.test.ts`

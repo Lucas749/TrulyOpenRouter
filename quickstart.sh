@@ -313,10 +313,29 @@ menu_pick() {
 # === 0/7 dependencies ========================================================
 step 0 "dependencies"
 miss=0
-for t in node npm docker cast; do
+for t in node npm cast; do
   if have "$t"; then ok "$t"; else fail "$t — missing"; miss=1; fi
 done
 [ "$miss" = 0 ] || die "install the missing tools above, then re-run"
+
+# Desktop may be installed before its CLI symlinks or shell PATH are set up.
+# Keep an existing Docker command/context; only add a fallback when missing.
+if ! have docker && [ "$(uname -s)" = "Darwin" ]; then
+  for docker_bin in "$HOME/.docker/bin" /Applications/Docker.app/Contents/Resources/bin "$HOME/Applications/Docker.app/Contents/Resources/bin"; do
+    if [ -x "$docker_bin/docker" ]; then
+      PATH="$docker_bin:$PATH"; export PATH
+      break
+    fi
+  done
+fi
+if [ "$TUI" = 1 ]; then
+  live_run 0 "checking Docker (starting it if needed)…" node host-runner/ensure-docker.mjs \
+    || die "Docker needs attention — follow the steps below"
+else
+  node host-runner/ensure-docker.mjs < /dev/null \
+    || die "Docker needs attention — follow the steps above"
+fi
+ok "tools ready · Docker running"
 
 # === 1/7 CLI ================================================================
 step 1 "fetching the CLI"
@@ -416,9 +435,10 @@ else
   done
   if [ "$TUI" = 1 ]; then
     live_run 3 "creating containers…" docker compose -f host-runner/docker-compose.yml up -d ollama guard \
-      || die "compose up failed — is Docker running?"
+      || die "container startup failed — see the Docker error below"
   else
-    docker compose -f host-runner/docker-compose.yml up -d ollama guard
+    docker compose -f host-runner/docker-compose.yml up -d ollama guard \
+      || die "container startup failed — see the Docker error above"
   fi
 fi
 if [ "$TUI" = 1 ]; then
