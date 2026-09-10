@@ -1,4 +1,5 @@
 const GATEWAY = "/api/gw";
+const requestSignal = (signal?: AbortSignal) => AbortSignal.any([AbortSignal.timeout(12000), ...(signal ? [signal] : [])]);
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 export const CLAIM_KEY = "tor-my-hosts";
 
@@ -65,8 +66,8 @@ export function hbarLabel(value: string | null): string {
 
 export async function loadHost(address: string, signal?: AbortSignal, fetchFn: typeof fetch = fetch): Promise<HostEntry> {
   try {
-    const response = await fetchFn(`${GATEWAY}/api/hosts/${address}`, { signal });
-    if (response.status === 404) return { address, status: "pending", message: "This host is linked, but has no active registration yet. Finish setup on the host machine." };
+    const response = await fetchFn(`${GATEWAY}/api/hosts/${address}`, { signal: requestSignal(signal) });
+    if (response.status === 404) return { address, status: "pending", message: "No active registration was found for this address. If you’re setting up this host, finish setup on its machine." };
     if (!response.ok) throw new Error("lookup failed");
     const d = await response.json();
     if (!d || typeof d.address !== "string" || d.address.toLowerCase() !== address.toLowerCase() || typeof d.modelId !== "string" || typeof d.active !== "boolean") throw new Error("invalid host");
@@ -91,7 +92,7 @@ export async function loadHostDashboard(userId: string | null, bookmarks: string
   let notice: string | null = null;
   if (userId) {
     try {
-      const response = await fetchFn(`${GATEWAY}/api/owners/${encodeURIComponent(userId)}/hosts`, { signal });
+      const response = await fetchFn(`${GATEWAY}/api/owners/${encodeURIComponent(userId)}/hosts`, { signal: requestSignal(signal) });
       if (!response.ok) throw new Error("owner lookup failed");
       const data = await response.json();
       if (!Array.isArray(data?.data)) throw new Error("invalid owner list");

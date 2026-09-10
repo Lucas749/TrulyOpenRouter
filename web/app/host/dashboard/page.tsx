@@ -3,206 +3,128 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
+import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, Copy, Cpu, ExternalLink, Link2, LoaderCircle, MapPin, Plus, RefreshCw, Server, Wallet } from "lucide-react";
+import { hbarLabel, hostAddresses, loadHost, loadHostDashboard, storedHosts, storeHosts, totalHostAmount, type HostDashboard, type HostEntry } from "../../../lib/host-dashboard";
+import { usdLabel } from "../../../lib/money";
+import { hostLocation } from "../../../lib/host-locations";
 
-const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
-const CLAIM_KEY = "tor-my-hosts";
+const button = "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#E5E5E0] bg-white px-4 text-sm font-medium transition hover:bg-[#F5F5F2] disabled:cursor-wait disabled:opacity-50";
+const primary = "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#171A18] px-4 text-sm font-medium text-white transition hover:bg-[#303A34]";
+const short = (address: string) => `${address.slice(0, 8)}…${address.slice(-4)}`;
 
-export function loadClaimed(): string[] {
-  try {
-    const list = JSON.parse(window.localStorage.getItem(CLAIM_KEY) ?? "[]");
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [message, setMessage] = useState<string | null>(null);
+  async function copy() {
+    try { await navigator.clipboard.writeText(value); setMessage("Copied"); }
+    catch { setMessage("Select and copy the text below"); }
+    setTimeout(() => setMessage(null), 2200);
   }
+  return <button onClick={copy} title={value} className={button}>{message === "Copied" ? <Check size={14} /> : <Copy size={14} />}{message ?? label}</button>;
 }
 
-export function saveClaimed(list: string[]) {
-  try {
-    window.localStorage.setItem(CLAIM_KEY, JSON.stringify(list));
-  } catch {}
-}
-
-// Stake lifecycle runs where the host key lives (CLI), never in the browser:
-// copy-paste commands with the exact address filled in.
-function StakeCmds({ registry, active }: { registry: string | null; active: boolean }) {
-  const [copied, setCopied] = useState<string | null>(null);
-  if (!registry) return null;
-  const cmds: [string, string][] = active
-    ? [["Deregister", `cast send ${registry} "deregister()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>  # stake unlocks after timelock, release via /security tap`]]
-    : [["Release stake", `cast send ${registry} "release()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>  # only after deregister + timelock`]];
+function HostCard({ entry }: { entry: HostEntry }) {
+  if (entry.status !== "ready") return (
+    <article className="rounded-2xl border border-[#E7DFCC] bg-[#FFFCF5] p-5 sm:p-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#F2EBDC] text-[#8B6B29]"><Server size={19} /></div>
+        <div className="min-w-0 flex-1"><h3 className="m-0 text-sm font-semibold">{entry.status === "pending" ? "Awaiting registration" : "Details unavailable"}</h3><p className="mt-1 font-mono text-xs text-[#77786F]">{short(entry.address)}</p></div>
+        <span className="rounded-full bg-[#F2EBDC] px-2.5 py-1 text-[11px] font-medium text-[#816322]">{entry.status === "pending" ? "Setup incomplete" : "Try refreshing"}</span>
+      </div>
+      <p className="mb-4 mt-4 max-w-lg text-sm leading-relaxed text-[#706D60]">{entry.message}</p>
+      <div className="flex flex-wrap gap-2"><CopyButton value={entry.address} label="Copy address" />{entry.status === "pending" && <Link className={button} href={`/host/onboarding?address=${entry.address}`}>View setup <ArrowUpRight size={14} /></Link>}</div>
+    </article>
+  );
+  const h = entry.host;
   return (
-    <>
-      {cmds.map(([label, cmd]) => (
-        <button
-          key={label}
-          onClick={() => {
-            try {
-              navigator.clipboard?.writeText(cmd).catch(() => {});
-            } catch {}
-            setCopied(label);
-            setTimeout(() => setCopied(null), 1600);
-          }}
-          title={cmd}
-          className="rounded-full border border-black/10 px-3 py-1 font-mono text-[11px] hover:bg-black/5"
-        >
-          {copied === label ? "copied ✓ (swap in your key)" : label}
-        </button>
-      ))}
-      <span className="font-mono text-[10px] text-[#8F8F8F]">host key never leaves your machine</span>
-    </>
+    <article className="overflow-hidden rounded-2xl border border-[#E3E6E1] bg-white">
+      <div className="flex flex-wrap items-center gap-3 p-5 sm:p-6">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-[#DDE8E0] bg-[#F0F6F1] text-[#377650]"><Cpu size={24} strokeWidth={1.5} /></div>
+        <div className="min-w-0 flex-1"><h3 className="m-0 break-all text-lg font-semibold tracking-tight">{h.modelId}</h3><div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#838780]"><span className="font-mono" title={h.address}>{short(h.address)}</span><span className="inline-flex items-center gap-1"><MapPin size={12} />{hostLocation(h.geo ?? h.region)?.label ?? (h.geo ?? h.region ?? "Location not reported").replace(/-/g, " ")}</span></div></div>
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${h.active ? "bg-[#EDF6EF] text-[#347349]" : "bg-[#F1F2EF] text-[#757B73]"}`}><span className={`h-1.5 w-1.5 rounded-full ${h.active ? "bg-[#55A66B]" : "bg-[#93998F]"}`} />{h.active ? "Registered" : "Inactive"}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-y-5 border-y border-[#F0F1ED] px-5 py-5 sm:grid-cols-4 sm:px-6">
+        {[["Requests · 24h", h.calls24h.toLocaleString("en-US"), `${h.fail24h} failed`], ["Available earnings", hbarLabel(h.earningsWei), "HBAR"], ["Price / request", usdLabel(h.pricePerReq), `${usdLabel(h.pricePer1kTokens)} / 1k tokens`], ["Staked", hbarLabel(h.stake), "HBAR locked"]].map(([title, value, hint]) => <div key={title} className="min-w-0 pr-3"><p className="m-0 text-[11px] font-medium text-[#838780]">{title}</p><p className="mb-0 mt-2 break-all font-mono text-xl tracking-tight">{value}</p><p className="mb-0 mt-1 text-[11px] text-[#92968D]">{hint}</p></div>)}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 sm:px-6">
+        <p className="m-0 text-xs text-[#858B80]">{h.calls24h ? `${h.tokensRecent.toLocaleString("en-US")} tokens in recent receipts` : "Ready for your first routed request"}</p>
+        <Link href={`/network/host/${h.address}`} className="inline-flex items-center gap-1 text-xs font-medium text-[#356E4A]">View activity <ArrowUpRight size={14} /></Link>
+      </div>
+      {h.challenged && <p className="m-0 border-t border-[#F0E5CE] bg-[#FFFCF5] px-6 py-3 text-xs text-[#8B6B29]">This host has a challenge awaiting review.</p>}
+      {h.registry && <details className="group border-t border-[#F0F1ED] px-5 sm:px-6"><summary className="flex cursor-pointer list-none items-center justify-between py-3 text-xs text-[#868D82]">Host details &amp; stake management <ChevronDown size={14} className="transition group-open:rotate-180" /></summary><div className="space-y-3 pb-5 text-xs text-[#72796D]"><p className="break-all">Host address: <span className="font-mono">{h.address}</span></p><p>Latest heartbeat: {h.lastHeartbeat ? new Date(h.lastHeartbeat).toLocaleString() : "Not available"}</p><p>Sign stake actions on the machine that holds your host key. Stopping a host begins the withdrawal waiting period.</p><code className="block overflow-x-auto rounded-lg bg-[#F5F6F2] p-3 font-mono text-[11px] text-[#4E594A]">{`cast send ${h.registry} "${h.active ? "deregister" : "release"}()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>`}</code><CopyButton label={h.active ? "Copy stop command" : "Copy release command"} value={`cast send ${h.registry} "${h.active ? "deregister" : "release"}()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>`} /></div></details>}
+    </article>
   );
 }
 
 export default function HostDashboardPage() {
-  const { user } = usePrivy();
+  const { ready, user, login } = usePrivy();
   const userId = user?.id ?? null;
-  const [addrs, setAddrs] = useState<string[] | null>(null);
-  const [detail, setDetail] = useState<any[]>([]);
+  const [dashboard, setDashboard] = useState<HostDashboard | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const [lookup, setLookup] = useState("");
   const [lookupMsg, setLookupMsg] = useState<string | null>(null);
-
-  async function refresh(list: string[]) {
-    setAddrs(list);
-    const out: any[] = [];
-    for (const a of list) {
-      try {
-        out.push(await (await fetch(`${GATEWAY}/api/hosts/${a}`)).json());
-      } catch {}
-    }
-    setDetail(out);
-  }
+  const [tracking, setTracking] = useState(false);
 
   useEffect(() => {
-    (async () => {
-      // Logged-in hosts (claimed via `tor-host login` + `tor-host link`,
-      // visible in any browser) merged over this-browser bookmarks.
-      const local = loadClaimed();
-      if (userId) {
-        try {
-          const d: any = await (await fetch(`${GATEWAY}/api/owners/${encodeURIComponent(userId)}/hosts`)).json();
-          const owned: string[] = Array.isArray(d.data) ? d.data : [];
-          const merged = [...owned, ...local.filter((a) => !owned.includes(a))];
-          if (merged.length !== local.length) saveClaimed(merged);
-          await refresh(merged);
-          return;
-        } catch {}
+    if (!ready) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      setRefreshing(true);
+      try {
+        const next = await loadHostDashboard(userId, storedHosts(), controller.signal);
+        if (!controller.signal.aborted) setDashboard(next);
+      } finally {
+        if (!controller.signal.aborted) { setRefreshing(false); timer = setTimeout(() => { void refresh().catch(() => {}); }, 15000); }
       }
-      await refresh(local);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+    }
+    void refresh().catch(() => {});
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [ready, userId, refreshKey]);
 
-  async function track() {
-    const addr = lookup.trim();
-    setLookupMsg(null);
-    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
-      setLookupMsg("that doesn't look like a host address (0x + 40 hex)");
-      return;
-    }
+  async function track(event: React.FormEvent) {
+    event.preventDefault();
+    const address = hostAddresses([lookup.trim()])[0];
+    if (!address) { setLookupMsg("Enter a host address: 0x followed by 40 letters or numbers."); return; }
+    setTracking(true); setLookupMsg(null);
     try {
-      const d: any = await (await fetch(`${GATEWAY}/api/hosts/${addr}`)).json();
-      if (d.error || d.registeredAt === 0) throw new Error();
-    } catch {
-      setLookupMsg("no registered host at that address, check /network");
-      return;
-    }
-    const list = loadClaimed();
-    if (!list.includes(addr)) {
-      const next = [...list, addr];
-      saveClaimed(next);
-      await refresh(next);
-    }
-    setLookup("");
-    setLookupMsg("tracking ✓");
+      const entry = await loadHost(address);
+      if (entry.status === "error") { setLookupMsg(entry.message); return; }
+      storeHosts([...storedHosts(), address]);
+      setLookup(""); setLookupMsg("Host saved to this browser."); setRefreshKey((n) => n + 1);
+    } catch { setLookupMsg("Browser storage is unavailable. Log in to see hosts linked to your account."); }
+    finally { setTracking(false); }
   }
 
-  const totalEarned = detail.reduce((a, d) => a + BigInt(d.earningsWei ?? 0), BigInt(0));
+  const entries = [...(dashboard?.entries ?? [])].sort((a, b) => Number(b.status === "ready") - Number(a.status === "ready"));
+  const hosts = entries.flatMap((e) => e.status === "ready" ? [e.host] : []);
+  const active = hosts.filter((h) => h.active).length;
+  const requests = hosts.reduce((n, h) => n + h.calls24h, 0);
+  const balance = dashboard ? totalHostAmount(entries, "earningsWei") : null;
+  const stake = dashboard ? totalHostAmount(entries, "stake") : null;
+  const incomplete = entries.length - hosts.length;
 
   return (
-    <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
-      <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
-          <Link href="/host" className="text-sm text-[#6E6E73] hover:text-black">← Serve</Link>
-          <span className="text-[15px] font-semibold">My hosts</span>
-          <Link href="/host" className="text-sm text-[#2563EB] underline">+ register</Link>
+    <div className="min-h-screen bg-[#F8F9F6] font-sans text-[#1B231D]">
+      <header className="border-b border-[#E5E8E1] bg-white"><div className="mx-auto flex h-[72px] max-w-[1248px] items-center justify-between gap-5 px-5 sm:px-8"><Link href="/" className="text-lg font-semibold tracking-tight">Truly<span className="font-normal text-[#959B91]">OpenRouter</span></Link><nav className="hidden items-center gap-7 text-sm text-[#7A8275] sm:flex"><Link href="/chat" className="hover:text-black">Chat</Link><Link href="/network" className="hover:text-black">Network</Link><Link href="/host" className="font-medium text-[#263F2D]">Serve</Link></nav><Link href="/account" className="text-xs text-[#727B6D]">Account <ArrowUpRight className="ml-1 inline" size={13} /></Link></div></header>
+      <main className="mx-auto max-w-[1248px] px-5 pb-16 pt-9 sm:px-8 sm:pt-12">
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-5"><div><Link href="/host" className="text-xs font-medium text-[#7D8977]">Serve / Your workspace</Link><h1 className="mb-2 mt-3 text-[34px] font-semibold leading-tight tracking-[-0.04em] sm:text-[40px]">My hosts</h1><p className="m-0 text-sm text-[#7B8475]">Your models, activity, and earnings. All in one place.</p></div><div className="flex gap-2"><button onClick={() => setRefreshKey((n) => n + 1)} disabled={refreshing} className={button}><RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />Refresh</button><Link href="/host" className={primary}><Plus size={16} />Add a host</Link></div></div>
+        {dashboard?.notice && <div role="status" className="mb-5 rounded-xl border border-[#E7DFCC] bg-[#FFFCF5] px-4 py-3 text-sm text-[#816322]">{dashboard.notice}</div>}
+        <section aria-label="Host overview" className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
+          <div className="relative col-span-2 overflow-hidden rounded-2xl bg-[#203C2B] p-6 text-white sm:col-span-1"><div className="flex items-center justify-between text-[#BCD0BE]"><span className="text-xs font-medium">Available to withdraw</span><Wallet size={18} strokeWidth={1.5} /></div><p className="mb-5 mt-6 break-all font-mono text-[34px] leading-none tracking-tight">{hbarLabel(balance)} <span className="text-sm text-[#ABC5AE]">HBAR</span></p><p className="m-0 text-xs leading-relaxed text-[#A8C1AA]">{balance === null ? incomplete ? `${incomplete} tracked host ${incomplete === 1 ? "balance is" : "balances are"} unavailable` : "Loading host balances" : balance === "0" ? "Earnings appear as your hosts serve requests." : "Your earnings stay available until you withdraw."}</p></div>
+          <div className="rounded-2xl border border-[#E3E6DF] bg-white p-6"><div className="flex items-center justify-between text-[#838C7B]"><span className="text-xs font-medium">Active hosts</span><Server size={18} strokeWidth={1.5} /></div><p className="mb-5 mt-6 font-mono text-[34px] leading-none tracking-tight">{dashboard ? active : "—"} <span className="text-sm text-[#A2AA9A]">/ {dashboard ? entries.length : "—"} tracked</span></p><p className="m-0 text-xs text-[#838C7B]">{incomplete ? `${incomplete} ${incomplete === 1 ? "host needs" : "hosts need"} attention below` : dashboard ? `${hbarLabel(stake)} HBAR staked across your hosts` : "Loading your host registrations"}</p></div>
+          <div className="rounded-2xl border border-[#E3E6DF] bg-white p-6"><div className="flex items-center justify-between text-[#838C7B]"><span className="text-xs font-medium">Requests · 24h</span><ArrowDownLeft size={19} strokeWidth={1.5} /></div><p className="mb-5 mt-6 font-mono text-[34px] leading-none tracking-tight">{dashboard ? requests.toLocaleString("en-US") : "—"}</p><p className="m-0 text-xs text-[#838C7B]">{incomplete ? "Across hosts with available data" : "Routed requests in the last 24 hours"}</p></div>
+        </section>
+        <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_290px]">
+          <section aria-label="Your hosts" className="min-w-0"><div className="mb-4 flex items-center justify-between"><h2 className="m-0 text-base font-semibold">Your hosts <span className="ml-2 rounded-md bg-[#E9EDE5] px-2 py-0.5 font-mono text-xs font-normal text-[#788470]">{dashboard ? entries.length : "…"}</span></h2><span className="inline-flex items-center gap-1.5 text-[11px] text-[#939C8C]"><span className={`h-1.5 w-1.5 rounded-full ${refreshing ? "bg-[#B9C0B3]" : "bg-[#68A777]"}`} />{refreshing ? "Updating" : "Refreshes every 15s"}</span></div>
+            {!dashboard ? <div aria-label="Loading hosts" className="h-60 animate-pulse rounded-2xl border border-[#E3E6E1] bg-white" /> : !entries.length ? <div className="flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed border-[#D7DFD1] bg-white px-7 py-12 text-center"><div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#EFF4EB] text-[#5A7850]"><Server size={25} strokeWidth={1.4} /></div><h3 className="m-0 text-lg font-medium">Your first host starts here</h3><p className="mb-6 mt-2 max-w-sm text-sm leading-relaxed text-[#818A7B]">{userId ? "Set up a model on your machine, or link an existing host to your account." : "Log in to see your linked hosts, or track a host address in this browser."}</p><div className="flex flex-wrap justify-center gap-2">{!userId && <button onClick={login} className={primary}>Log in <ArrowUpRight size={14} /></button>}<Link href="/host" className={userId ? primary : button}>Set up a host <Plus size={14} /></Link></div></div> : <div className="space-y-4">{entries.map((entry) => <HostCard key={entry.address} entry={entry} />)}</div>}
+          </section>
+          <aside className="space-y-5 lg:pt-9">
+            <div className="rounded-2xl border border-[#E3E6DF] bg-white p-5"><h2 className="m-0 text-sm font-semibold">Connect your machine</h2><p className="mb-4 mt-2 text-xs leading-relaxed text-[#858D7D]">Already running a host? Link it to see its activity on any device.</p><Link href="/host/link" className="inline-flex items-center gap-2 text-xs font-medium text-[#3E7650]"><Link2 size={14} />Link an existing host <ArrowUpRight size={13} /></Link><div className="mb-4 mt-5 border-t border-[#EDF0E8]" /><form onSubmit={track}><label htmlFor="host-address" className="mb-2 block text-xs font-medium">Or track an address</label><input id="host-address" value={lookup} onChange={(e) => setLookup(e.target.value)} placeholder="0x…" spellCheck={false} autoComplete="off" className="h-10 w-full min-w-0 rounded-lg border border-[#DFE5D9] bg-[#FAFBF8] px-3 font-mono text-xs outline-none focus:border-[#6E9570] focus:ring-2 focus:ring-[#E3EDDE]" /><button disabled={tracking} type="submit" className={`${button} mt-2 w-full`}>{tracking ? <LoaderCircle size={14} className="animate-spin" /> : <Plus size={14} />}Track host</button>{lookupMsg && <p role="status" className="mb-0 mt-3 text-xs leading-relaxed text-[#75816B]">{lookupMsg}</p>}</form></div>
+            <div className="rounded-2xl border border-[#E3E6DF] bg-[#F0F3EC] p-5"><div className="mb-3 flex items-center gap-2 text-[#59724C]"><Wallet size={16} /><h2 className="m-0 text-sm font-semibold">Your earnings, your keys</h2></div><p className="m-0 text-xs leading-relaxed text-[#7C8872]">Withdrawals are signed on your host machine. Your host key stays with you.</p><Link href="/docs" className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-[#587749]">Host documentation <ExternalLink size={12} /></Link></div>
+            <Link href="/network" className="flex items-center justify-between px-1 text-xs text-[#77886C]">Explore the network <ArrowUpRight size={14} /></Link>
+          </aside>
         </div>
-      </header>
-      <main className="mx-auto flex max-w-[1200px] flex-col gap-6 px-6 py-8">
-        {!addrs ? (
-          <div className="h-24 animate-pulse rounded-[14px] bg-[#F4F4F4]" />
-        ) : !addrs.length ? (
-          <div className="flex flex-col items-center gap-3 rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-14 text-center">
-            <p className="m-0 max-w-md text-sm leading-relaxed text-[#6E6E73]">
-              {userId ? (
-                <>No hosts linked to this account yet, on your host machine run <span className="font-mono text-black">tor-host login</span> then <span className="font-mono text-black">tor-host link</span>, and they appear here in any browser.</>
-              ) : (
-                <>Log in to see your linked hosts anywhere, or paste an address to track it in this browser. Serving itself needs no account, every host is already public on <Link href="/network" className="text-[#2563EB] underline">/network</Link>.</>
-              )}
-            </p>
-            <div className="flex w-full max-w-md gap-2">
-              <input
-                value={lookup}
-                onChange={(e) => setLookup(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && track()}
-                placeholder="0x host address"
-                className="h-10 flex-1 rounded-lg border border-black/10 bg-white px-3 font-mono text-[13px]"
-                spellCheck={false}
-              />
-              <button onClick={track} className="h-10 rounded-full bg-black px-5 text-sm text-white">Track</button>
-            </div>
-            {lookupMsg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{lookupMsg}</p>}
-            <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-[13px]">
-              <Link href="/host" className="rounded-full bg-black px-5 py-2.5 text-sm text-white">Register your first host</Link>
-              <Link href="/host/link" className="self-center text-[#2563EB] underline">or claim via CLI code →</Link>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-end gap-6 rounded-[14px] border border-[#E5E5E0] p-5">
-              <div><div className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">Withdrawable earnings</div>
-                <div className="font-mono text-[28px]">{totalEarned.toString()} <span className="text-sm text-[#6E6E73]">units</span></div></div>
-              <p className="m-0 max-w-md font-mono text-[11px] leading-relaxed text-[#8F8F8F]">withdrawals need the host key, run <span className="text-black">cast send … withdraw()</span> where the key lives (Ledger-tapped over threshold). In-app withdraw lands with the security slice.</p>
-            </div>
-            {detail.map((d: any) => {
-              const toks = (d.receipts ?? []).reduce((a: number, r: any) => a + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0);
-              return (
-                <div key={d.address} className="flex flex-col gap-4 rounded-[14px] border border-[#E5E5E0] p-5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`inline-flex items-center gap-1.5 text-xs`}><span className={`h-1.5 w-1.5 rounded-full ${d.active ? "bg-[#10A37F]" : "bg-[#DC2626]"}`} />{d.active ? "serving" : "offline"}</span>
-                    <span className="font-mono text-xs">{d.address.slice(0, 10)}…</span>
-                    <span className="rounded-full bg-[#F4F4F4] px-2 py-0.5 text-xs">{d.modelId}</span>
-                    <a href={`/network/host/${d.address}`} className="ml-auto text-xs text-[#2563EB] underline">public page →</a>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                    {[
-                      ["QUERIES · 24H", String(d.calls24h ?? "—"), `${d.fail24h ?? 0} failed`],
-                      ["TOKENS · recent", toks.toLocaleString("en-US"), "last 20 receipts"],
-                      ["EARNED · withdrawable", `${d.earningsWei ?? "—"}`, d.earningsWei === null ? "vault not wired" : "units"],
-                      ["CHARGING", `${d.pricePerReq} /req`, `${d.pricePer1kTokens} /1k`],
-                    ].map(([l, v, s]) => (
-                      <div key={l} className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-[0.1em] text-[#5D5D5D]">{l}</span>
-                        <span className="font-mono text-lg">{v}</span>
-                        <span className="font-mono text-[11px] text-[#8F8F8F]">{s}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex flex-wrap gap-x-5 gap-y-1 font-mono text-[11px] text-[#8F8F8F]">
-                    <span>stake {d.stake}</span>
-                    <span>heartbeat {d.lastHeartbeat ? new Date(d.lastHeartbeat * 1000).toISOString().slice(11, 16) + " UTC" : "—"}</span>
-                    <span>region {d.region ?? "unreported"}</span>
-                    <span>reliability {d.reliability === null || d.reliability === undefined ? "—" : `${(d.reliability * 100).toFixed(1)}%`}</span>
-                    {d.challenged ? <span className="text-[#DC2626]">CHALLENGED, under review</span> : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 border-t border-[#E5E5E0] pt-3">
-                    <StakeCmds registry={d.registry} active={d.active} />
-                    <a href={`/network/host/${d.address}`} className="ml-auto font-mono text-[11px] text-[#2563EB] underline">receipts →</a>
-                  </div>
-                </div>
-              );
-            })}
-          </>
-        )}
       </main>
     </div>
   );
