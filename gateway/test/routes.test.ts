@@ -215,7 +215,7 @@ describe("routes", () => {
       await fetch(`${base}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "llama-3.1-8b", messages: [], userHandle: addr }),
+        body: JSON.stringify({ model: "llama-3.1-8b", messages: [{ role: "user", content: "wallet attribution fixture" }], userHandle: addr }),
       })
     ).json();
     const one: any = await (await fetch(`${base}/api/receipts/${chat.tor_receipt}`)).json();
