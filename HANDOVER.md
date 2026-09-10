@@ -57,7 +57,8 @@ gates run in the gateway per request.
   enables routes only after model and endpoint readiness. Quickstart transfers
   tunnel process ownership and updates effective routing even for an existing
   registration. Managed PIDs are verified against process start time/command.
-  Closing the console leaves services running. Model downloads retain files.
+  Closing the console leaves services running. Model downloads retain files and
+  show incremental percentage updates.
 - **Signed routing state**: `host_runtime` stores model/digest/endpoint/pause
   revisions in Postgres. Exact host-key signature, five-minute submission
   expiry, active stake, registry, original model, and next revision are checked.
@@ -77,7 +78,7 @@ gates run in the gateway per request.
   was attached, so physical approval remains unverified. User funds were not
   moved. An isolated Anvil test proves nonzero withdrawal, host receipt of funds,
   cleared earnings, and rejection of a second empty withdrawal.
-- **Validation and rollout**: CLI 70 tests plus the explicit Anvil withdrawal
+- **Validation and rollout**: CLI 72 tests plus the explicit Anvil withdrawal
   proof pass; terminal emulator checks cover stale rows and resizing. Gateway
   98 tests pass (9 database-dependent skips); a separate temporary-table test
   against production Postgres verifies runtime persistence and revision
@@ -90,6 +91,8 @@ gates run in the gateway per request.
   found Docker stopped, public endpoint offline, zero requests/earnings, and
   4 HBAR stake. Its services were left in that state. Live controls are available
   on reopening the console; physical start/stop was tested with service doubles.
+  Both the current package link and the older Node-version launcher now point
+  to this workspace build, replacing the temporary test-checkout link.
 - **Live host console (2026-09-11)**: quickstart opens the TUI immediately
   after registration. Reopen with `tor-host` or `tor-host dashboard`.
   Seven tabs cover overview, request activity, models, network, logs, controls,
