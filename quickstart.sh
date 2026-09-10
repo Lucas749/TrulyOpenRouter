@@ -42,10 +42,7 @@ qs_brand_head() {
 }
 
 if [ "${1:-}" = "--stop" ] || [ "${1:-}" = "stop" ]; then
-  pkill -f "cloudflared tunnel --url http://127.0.0.1:4122" 2>/dev/null && echo "tunnel down" || true
-  docker compose -f host-runner/docker-compose.yml down 2>/dev/null || true
-  echo "stack down — re-run sh quickstart.sh anytime"
-  exit 0
+  exec node host-runner/cli/dist/index.js stop --gateway="$PROD_GW"
 fi
 
 # --- style ------------------------------------------------------------------
@@ -681,6 +678,7 @@ while [ -z "$registered" ]; do
     UI_BODY="  checking registration and stake requirements…\n"; UI_FOOT=""; render
   fi
   set -- run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" --status-file="$QS_RUN_STATUS"
+  if [ -n "${TUNNEL_PID:-}" ]; then set -- "$@" --tunnel-pid="$TUNNEL_PID" --tunnel-log="$QS_TUNLOG"; fi
   if [ -n "$STAKE_HBAR" ]; then set -- "$@" --stake-hbar="$STAKE_HBAR"; fi
   rm -f "$QS_RUN_STATUS"
   if live_run 7 "checking registration + stake…" tor_host "$@"; then
@@ -773,4 +771,4 @@ if [ "$TUI" = 1 ]; then
   unset TOR_ALT
   tor_host dashboard --gateway="$PROD_GW" --tunnel-log="$QS_TUNLOG" --setup-log="$QS_SETUPLOG" < /dev/tty > /dev/tty 2>&1
 fi
-printf "\n  Host setup complete · %s\n  console    tor-host dashboard\n  snapshot   tor-host status\n  public URL %s\n  network    %s/network\n  dashboard  %s/host/dashboard\n  stop       sh quickstart.sh --stop\n" "$MODEL_ID" "$ENDPOINT" "$PROD_WEB" "$PROD_WEB"
+printf "\n  Host setup complete · %s\n  console    tor-host dashboard\n  snapshot   tor-host status\n  public URL %s\n  network    %s/network\n  dashboard  %s/host/dashboard\n  stop       tor-host stop\n  restart    tor-host start\n" "$MODEL_ID" "$ENDPOINT" "$PROD_WEB" "$PROD_WEB"

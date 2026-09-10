@@ -9,6 +9,8 @@ import { createPublicClient, createWalletClient, formatEther, http, parseAbi } f
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { configDir, loadConfig, saveConfig } from "./config.js";
 import { findHostRegistry } from "./host-registry.js";
+import { currentHostSettings, publishHostSettings } from "./host-runtime.js";
+import { healthyGuard, rememberTunnel } from "./host-tunnel.js";
 import { banner, box, ok, Spinner, warn } from "./ui.js";
 import { FundingRequiredError, GAS_RESERVE_WEI, registrationError, registrationStake, registryValueWei } from "./registration.js";
 export { DEFAULT_STAKE_HBAR } from "./registration.js";
@@ -52,6 +54,8 @@ export interface RunOptions {
   registry?: string;
   endpoint?: string; // override; default = auto-detected LAN IP :4122
   statusFile?: string; // structured progress for quickstart; contains no secrets
+  tunnelPid?: string;
+  tunnelLog?: string;
 }
 
 /// @notice Our own egress-IP geo, resolved host-side. The gateway cannot do this
@@ -203,8 +207,22 @@ export async function run(o: RunOptions): Promise<void> {
 
     // 8. guard up (paid serving; dev-mode without HOST_WALLET is local-only)
     spin.start("starting payment guard");
-    await sh("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d", "guard"]);
+    const guard = await sh("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d", "guard"]);
+    if (!guard.ok) throw new Error("Guard startup failed. Check the service logs and retry.");
     spin.stop(ok("guard up — set HOST_WALLET to your 0.0.x id for paid serving"));
+
+    spin.start("updating host routing");
+    const settings = await currentHostSettings(o.gateway);
+    const endpoint = o.endpoint ?? settings.endpoint;
+    let reachable = false;
+    for (let i = 0; i < 15; i++) {
+      if (await healthyGuard(endpoint)) { reachable = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    if (!reachable) throw new Error("The public guard URL is unreachable. Restore its tunnel, then retry.");
+    await publishHostSettings({ ...settings, modelId: o.model, modelDigest: digest, endpoint, paused: false }, o.gateway);
+    if (o.tunnelPid && o.tunnelLog) await rememberTunnel(Number(o.tunnelPid), o.tunnelLog);
+    spin.stop(ok("routing enabled for this model and endpoint"));
 
     // 9. region attach + owner claim (best-effort — serving works regardless).
     // --region wins; otherwise auto-resolve our own egress IP so every host

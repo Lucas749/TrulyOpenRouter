@@ -5,6 +5,8 @@ import { join } from "path";
 import { ensureHostKey, run } from "../src/run.js";
 import { loadConfig, saveConfig } from "../src/config.js";
 import { api, sh } from "../src/util.js";
+import { currentHostSettings, publishHostSettings } from "../src/host-runtime.js";
+import { healthyGuard } from "../src/host-tunnel.js";
 
 const chain = vi.hoisted(() => ({
   getBalance: vi.fn(),
@@ -19,6 +21,8 @@ vi.mock("viem", async (importOriginal) => ({
   createWalletClient: () => chain,
 }));
 vi.mock("../src/util.js", () => ({ api: vi.fn(), sh: vi.fn() }));
+vi.mock("../src/host-runtime.js", () => ({ currentHostSettings: vi.fn(), publishHostSettings: vi.fn() }));
+vi.mock("../src/host-tunnel.js", () => ({ healthyGuard: vi.fn(), rememberTunnel: vi.fn() }));
 
 describe("run registration funding", () => {
   const HBAR = 10n ** 18n;
@@ -45,6 +49,9 @@ describe("run registration funding", () => {
       functionName === "getHost" ? { active: false, stake: 0n } : 400_000_000n);
     chain.waitForTransactionReceipt.mockResolvedValue({ status: "success" });
     chain.writeContract.mockResolvedValue(`0x${"a".repeat(64)}`);
+    vi.mocked(currentHostSettings).mockResolvedValue({ endpoint: "https://previous.example", revision: 2 } as any);
+    vi.mocked(publishHostSettings).mockImplementation(async settings => settings);
+    vi.mocked(healthyGuard).mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -58,9 +65,10 @@ describe("run registration funding", () => {
     chain.readContract.mockResolvedValue({ active: true, stake: 1_000_000_000n });
     chain.getBalance.mockResolvedValue(0n);
 
-    await run(options);
+    await run({ ...options, endpoint: "https://replacement.example" });
 
     expect(chain.writeContract.mock.calls).toHaveLength(0);
+    expect(vi.mocked(publishHostSettings).mock.calls[0][0]).toMatchObject({ endpoint: "https://replacement.example", modelId: options.model, paused: false, revision: 2 });
     expect(vi.mocked(sh).mock.calls.some(([, args]) => args.slice(-3).join(" ") === "up -d guard")).toBe(true);
     expect(vi.mocked(api).mock.calls).toContainEqual([
       options.gateway, `/api/hosts/${address}/owner`,
