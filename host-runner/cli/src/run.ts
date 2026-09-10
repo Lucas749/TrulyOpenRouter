@@ -8,6 +8,7 @@ import { networkInterfaces } from "os";
 import { createPublicClient, createWalletClient, formatEther, http, parseAbi } from "viem";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { configDir, loadConfig, saveConfig } from "./config.js";
+import { findHostRegistry } from "./host-registry.js";
 import { banner, box, ok, Spinner, warn } from "./ui.js";
 import { FundingRequiredError, GAS_RESERVE_WEI, registrationError, registrationStake, registryValueWei } from "./registration.js";
 export { DEFAULT_STAKE_HBAR } from "./registration.js";
@@ -125,9 +126,9 @@ export async function run(o: RunOptions): Promise<void> {
     spin.start("reading chain config");
     const cfg = await api(o.gateway, "/api/config");
     const rpcUrl = o.rpcUrl ?? cfg.rpcUrl;
-    const registry = (o.registry ?? cfg.registry) as `0x${string}`;
-    if (!rpcUrl || !registry) throw new Error("gateway has no chain config yet (REGISTRY/RPC_URL unset server-side)");
-    spin.stop(ok(`chain ${cfg.chain} · registry ${registry.slice(0, 10)}…`));
+    const primaryRegistry = (o.registry ?? cfg.registry) as `0x${string}`;
+    if (!rpcUrl || !primaryRegistry) throw new Error("gateway has no chain config yet (REGISTRY/RPC_URL unset server-side)");
+    spin.stop(ok(`chain ${cfg.chain} · registry ${primaryRegistry.slice(0, 10)}…`));
 
     // 3. ollama up + model pulled
     spin.start("starting ollama");
@@ -163,12 +164,9 @@ export async function run(o: RunOptions): Promise<void> {
     spin.start("checking registration");
     const pub = createPublicClient({ transport: http(rpcUrl) });
     const chainId = Number(cfg.chainId ?? await pub.getChainId());
-    const existing = (await pub.readContract({
-      address: registry,
-      abi: REGISTRY_ABI,
-      functionName: "getHost",
-      args: [account.address],
-    })) as OnchainHost;
+    const { registry, host: existing } = await findHostRegistry(
+      pub, primaryRegistry, o.registry ? [] : (cfg.legacyRegistries ?? []), account.address,
+    );
     if (!shouldRegister(existing)) {
       spin.stop(ok(`already registered (stake ${formatEther(registryValueWei(existing.stake, chainId))} HBAR) — continuing`));
     } else {
@@ -201,7 +199,7 @@ export async function run(o: RunOptions): Promise<void> {
         throw new Error(registrationError(error, chainId));
       }
     }
-    saveConfig({ ...loadConfig(), gateway: o.gateway, hostAddress: account.address });
+    saveConfig({ ...loadConfig(), gateway: o.gateway, hostAddress: account.address, hostRegistry: registry });
 
     // 8. guard up (paid serving; dev-mode without HOST_WALLET is local-only)
     spin.start("starting payment guard");

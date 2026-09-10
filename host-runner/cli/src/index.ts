@@ -30,8 +30,9 @@ try {
     await leave({
       gateway: gateway(),
       rpcUrl: flag("rpc-url") ?? cfg.rpcUrl ?? "https://testnet.hashio.io/api",
-      registry: flag("registry") ?? cfg.registry ?? "",
-      vault: flag("vault") ?? "",
+      registry: flag("registry") ?? loadConfig().hostRegistry ?? cfg.registry ?? "",
+      legacyRegistries: flag("registry") ? [] : [cfg.registry, ...(cfg.legacyRegistries ?? [])].filter(Boolean),
+      vault: flag("vault") ?? cfg.vault ?? "",
       dryRun: rest.includes("--dry-run"),
     });
   } else if (cmd === "run") {

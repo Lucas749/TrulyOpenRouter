@@ -75,6 +75,16 @@ describe("run registration funding", () => {
     expect(chain.writeContract.mock.calls).toHaveLength(0);
   });
 
+  it("resumes a legacy host without funding the replacement registry", async () => {
+    const legacy = `0x${"2".repeat(40)}`;
+    vi.mocked(api).mockResolvedValue({ rpcUrl: "http://rpc.invalid", registry: `0x${"1".repeat(40)}`, chainId: 296, legacyRegistries: [legacy] });
+    chain.readContract.mockImplementation(async ({ address: registry }) => ({ active: registry === legacy, stake: registry === legacy ? 1_000_000_000n : 0n }));
+    chain.getBalance.mockResolvedValue(0n);
+    await run(options);
+    expect(chain.writeContract.mock.calls).toHaveLength(0);
+    expect(loadConfig().hostRegistry).toBe(legacy);
+  });
+
   it("writes the actual funding target for quickstart", async () => {
     chain.getBalance.mockResolvedValue(4n * HBAR);
     const statusFile = join(home, "run.json");

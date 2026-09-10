@@ -3,6 +3,7 @@ import { createPublicClient, createWalletClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { loadConfig } from "./config.js";
 import { box, ok, Spinner, warn } from "./ui.js";
+import { findHostRegistry } from "./host-registry.js";
 
 const REGISTRY_ABI = parseAbi([
   "function deregister()",
@@ -17,6 +18,7 @@ export interface LeaveOptions {
   gateway: string;
   rpcUrl: string;
   registry: string;
+  legacyRegistries?: `0x${string}`[];
   vault: string;
   dryRun?: boolean;
 }
@@ -26,14 +28,10 @@ export async function leave(o: LeaveOptions): Promise<void> {
   if (!cfg.hostKey || !cfg.hostAddress) throw new Error("no host here — nothing to leave (run tor-host run first)");
   const account = privateKeyToAccount(cfg.hostKey as `0x${string}`);
   const pub = createPublicClient({ transport: http(o.rpcUrl) });
-  const host: any = await pub.readContract({
-    address: o.registry as `0x${string}`,
-    abi: REGISTRY_ABI,
-    functionName: "getHost",
-    args: [account.address],
-  });
+  const { registry, host } = await findHostRegistry(pub, o.registry as `0x${string}`, o.legacyRegistries ?? [], account.address);
   const lines = [
     `host:     ${account.address}`,
+    `registry: ${registry}`,
     `active:   ${host.active} · stake ${host.stake} · releaseAfter ${host.releaseAfter}`,
   ];
   if (o.dryRun) {
@@ -44,7 +42,7 @@ export async function leave(o: LeaveOptions): Promise<void> {
   const wallet = createWalletClient({ account, transport: http(o.rpcUrl) });
   if (host.active) {
     spin.start("deregistering (stops new routes)");
-    await wallet.writeContract({ address: o.registry as `0x${string}`, abi: REGISTRY_ABI, functionName: "deregister", chain: undefined });
+    await wallet.writeContract({ address: registry, abi: REGISTRY_ABI, functionName: "deregister", chain: undefined });
     spin.stop(ok("deregistered — timelock running"));
   } else {
     console.log(warn("already deregistered — skipping"));
@@ -57,5 +55,5 @@ export async function leave(o: LeaveOptions): Promise<void> {
     spin.stop(warn("nothing to withdraw (or already claimed)"));
   }
   await sh("docker", ["compose", "-f", COMPOSE_FILE, "stop", "guard"]);
-  console.log(box("Left", [...lines.slice(0, 2), ``, `release() unlocks after the timelock — then funds return automatically on call`, `guest book stays: receipts remain verifiable on /network`]));
+  console.log(box("Left", [...lines, ``, `release() unlocks after the timelock — then funds return automatically on call`, `guest book stays: receipts remain verifiable on /network`]));
 }

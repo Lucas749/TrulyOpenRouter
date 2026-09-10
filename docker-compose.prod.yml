@@ -40,6 +40,8 @@ services:
       - UPSTREAM_URL=http://ollama:11434
       - HOSTS_JSON=${HOSTS_JSON:-}
       - REGISTRY=${REGISTRY:-}
+      - LEGACY_REGISTRIES=${LEGACY_REGISTRIES:-}
+      - TAP_REGISTRY=${TAP_REGISTRY:-${REGISTRY:-}}
       - RPC_URL=${RPC_URL:-https://testnet.hashio.io/api}
       - MODELS=${MODELS:-qwen2.5:0.5b}
       - VAULT_ADDRESS=${VAULT_ADDRESS:-}

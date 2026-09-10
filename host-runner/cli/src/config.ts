@@ -8,6 +8,7 @@ export interface TorConfig {
   userId: string | null;
   hostKey?: string; // hex ECDSA — chmod 0600, testnet only for now
   hostAddress?: string;
+  hostRegistry?: `0x${string}`;
 }
 
 export function configDir(): string {

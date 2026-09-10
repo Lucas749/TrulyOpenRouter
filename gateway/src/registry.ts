@@ -9,6 +9,7 @@ export const REGISTRY_ABI = parseAbi([
 
 export interface HostInfo {
   address: Address;
+  registry?: Address;
   endpoint: string;
   modelId: string;
   modelDigest: `0x${string}`;
@@ -45,6 +46,7 @@ export async function fetchEligibleHosts(
 
   return raws.map((h: any, i: number) => ({
     address: addrs[i],
+    registry,
     endpoint: h.endpoint ?? h[0],
     modelId: h.modelId ?? h[1],
     modelDigest: (h.modelDigest ?? h[2]) as `0x${string}`,

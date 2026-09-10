@@ -33,6 +33,7 @@ class OrgPolicyDenied extends Error {
 export interface GatewayOptions {
   payTo?: string; // Hedera service account; empty = dev mode (x402 gate off)
   registry?: Address;
+  legacyRegistries?: Address[];
   rpcUrl?: string;
   knownModels?: string[];
   vaultAddress?: Address; // pool balance source; absent = omitted (frontend shows —)
@@ -101,7 +102,7 @@ export async function verifyOnce(opts: GatewayOptions): Promise<CheckReport[]> {
         const tx = await fileChallenge(
           {
             rpcUrl: opts.rpcUrl,
-            registry: opts.registry,
+            registry: target.registry ?? opts.registry,
             operatorKey: process.env.OPERATOR_KEY as `0x${string}`,
           },
           target.address,
@@ -129,13 +130,14 @@ export function startVerifyLoop(opts: GatewayOptions): void {
   console.log(`verify loop on: every ${intervalMs}ms`);
 }
 
-async function resolveHosts(opts: GatewayOptions, modelId: string): Promise<HostInfo[]> {
+export async function resolveHosts(opts: GatewayOptions, modelId: string): Promise<HostInfo[]> {
   if (opts.fetchHosts) return opts.fetchHosts(modelId);
-  // Demo mode: static host list, no chain (HOSTS_JSON=[{endpoint,modelId,pricePerReq,...}]).
+  // Bootstrap hosts remain available alongside permissionless registry hosts.
+  let bootstrap: HostInfo[] = [];
   if (process.env.HOSTS_JSON) {
     try {
       const all = JSON.parse(process.env.HOSTS_JSON) as Partial<HostInfo>[];
-      return all
+      bootstrap = all
         .filter((h) => h.modelId === modelId)
         .map((h, i) => ({
           address: (h.address ?? `0x${String(i + 1).padStart(40, "0")}`) as `0x${string}`,
@@ -151,12 +153,25 @@ async function resolveHosts(opts: GatewayOptions, modelId: string): Promise<Host
           reliability: 1,
         }));
     } catch {
-      return [];
+      console.warn("HOSTS_JSON is invalid; using registry discovery");
     }
   }
-  if (!opts.registry || !opts.rpcUrl) return [];
+  if (!opts.registry || !opts.rpcUrl) return bootstrap;
   const client = createPublicClient({ transport: http(opts.rpcUrl) });
-  return fetchEligibleHosts(client, opts.registry, modelId);
+  const registries = [...new Set([opts.registry, ...(opts.legacyRegistries ?? [])].map((r) => r.toLowerCase() as Address))];
+  const results = await Promise.allSettled(registries.map((registry) => fetchEligibleHosts(client, registry, modelId)));
+  const hosts = new Map(bootstrap.map((h) => [h.address.toLowerCase(), h]));
+  // Prefer the primary registry over legacy records for the same key.
+  for (let i = results.length - 1; i >= 0; i--) {
+    const result = results[i];
+    if (result.status === "fulfilled") {
+      for (const host of result.value) hosts.set(host.address.toLowerCase(), host);
+    } else {
+      console.warn(`Registry discovery unavailable: ${registries[i]}`);
+    }
+  }
+  if (!hosts.size && results.every((r) => r.status === "rejected")) throw new Error("Host registries are unavailable");
+  return [...hosts.values()];
 }
 
 export function createApp(opts: GatewayOptions = {}) {
@@ -170,7 +185,8 @@ export function createApp(opts: GatewayOptions = {}) {
       chainId: 296,
       chain: "hedera-testnet",
       rpcUrl: opts.rpcUrl ?? process.env.RPC_URL ?? null,
-      registry: process.env.REGISTRY ?? null,
+      registry: opts.registry ?? process.env.REGISTRY ?? null,
+      legacyRegistries: opts.legacyRegistries ?? [],
       vault: process.env.VAULT_ADDRESS ?? null,
       models: opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean),
       facilitator: "https://api.testnet.blocky402.com",
@@ -529,6 +545,7 @@ export function createApp(opts: GatewayOptions = {}) {
           ]);
           return {
           address: h.address,
+          registry: h.registry ?? null,
           endpoint: h.endpoint,
           modelId: h.modelId,
           modelDigest: h.modelDigest,
@@ -692,6 +709,7 @@ export function createApp(opts: GatewayOptions = {}) {
     }
     res.json({
       address: found.address,
+      registry: found.registry ?? null,
       endpoint: found.endpoint,
       modelId: found.modelId,
       modelDigest: found.modelDigest,
@@ -1100,7 +1118,7 @@ export function createApp(opts: GatewayOptions = {}) {
         return res.status(409).json({ error: { message: `tap is ${tap.status}, needs device approval first`, type: "tap_unapproved" } });
       }
       const rpcUrl = process.env.RPC_URL ?? "";
-      const registry = process.env.REGISTRY ?? "";
+      const registry = process.env.TAP_REGISTRY ?? process.env.REGISTRY ?? "";
       const hostKey = process.env.HOST_KEY ?? "";
       if (!opts.tapExecutor && (!rpcUrl || !registry || !hostKey)) {
         return res.status(501).json({ error: { message: "RPC_URL + REGISTRY + HOST_KEY required", type: "unavailable" } });
@@ -1158,6 +1176,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     orgRules: pg ? new PgOrgRules() : new MemoryOrgRules(),
   };
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
+  opts.legacyRegistries = (process.env.LEGACY_REGISTRIES ?? "").split(",").map((r) => r.trim()).filter(Boolean) as Address[];
   if (rpcUrl) opts.rpcUrl = rpcUrl;
   if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;
   if (process.env.X402_PAYER_ID && process.env.X402_PAYER_KEY) {
