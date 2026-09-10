@@ -156,20 +156,10 @@ export async function run(o: RunOptions): Promise<void> {
     const account = privateKeyToAccount(loadConfig().hostKey as `0x${string}`);
     console.log(ok(`host ${account.address}`));
 
-    // 6. funded? (stake + 1 HBAR gas headroom — see stakeShortfall)
-    spin.start("checking stake funding");
+    // 6. Check registration before funding: an active host's stake is
+    // already locked onchain, so resuming does not require another stake.
+    spin.start("checking registration");
     const pub = createPublicClient({ transport: http(rpcUrl) });
-    const balance = await pub.getBalance({ address: account.address });
-    const shortfall = stakeShortfall(balance, Number(o.stakeHbar ?? DEFAULT_STAKE_HBAR));
-    if (shortfall > 0n) {
-      const need = ((shortfall + BigInt(1e18) - 1n) / BigInt(1e18)).toString(); // ceil HBAR
-      spin.stop();
-      throw new Error(`underfunded: send ≥ ${need} HBAR testnet to ${account.address} (faucet.hedera.com), then re-run`);
-    }
-    spin.stop(ok(`funded ${(Number(balance) / 1e18).toFixed(1)} HBAR`));
-
-    // 7. register onchain (skipped when this key is already active — re-runs
-    // after a partial success must not double-stake or revert).
     const existing = (await pub.readContract({
       address: registry,
       abi: REGISTRY_ABI,
@@ -177,8 +167,19 @@ export async function run(o: RunOptions): Promise<void> {
       args: [account.address],
     }).catch(() => null)) as OnchainHost | null;
     if (!shouldRegister(existing)) {
-      console.log(ok(`already registered (stake ${(Number(existing!.stake) / 1e18).toFixed(1)} HBAR) — continuing`));
+      spin.stop(ok(`already registered (stake ${(Number(existing!.stake) / 1e18).toFixed(1)} HBAR) — continuing`));
     } else {
+      // 7. Fund and register only when this key is not already active.
+      spin.message("checking stake funding");
+      const balance = await pub.getBalance({ address: account.address });
+      const shortfall = stakeShortfall(balance, Number(o.stakeHbar ?? DEFAULT_STAKE_HBAR));
+      if (shortfall > 0n) {
+        const need = ((shortfall + BigInt(1e18) - 1n) / BigInt(1e18)).toString(); // ceil HBAR
+        spin.stop();
+        throw new Error(`underfunded: send ≥ ${need} HBAR testnet to ${account.address} (faucet.hedera.com), then re-run`);
+      }
+      spin.stop(ok(`funded ${(Number(balance) / 1e18).toFixed(1)} HBAR`));
+
       spin.start("registering onchain");
       const wallet = createWalletClient({ account, transport: http(rpcUrl) });
       const stakeWei = BigInt(Math.round(Number(o.stakeHbar ?? DEFAULT_STAKE_HBAR))) * BigInt(1e18);
