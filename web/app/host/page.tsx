@@ -63,7 +63,7 @@ export default function HostPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {[
             ["1 · Run", "One compose file: Ollama + payment guard."],
-            ["2 · Stake", "10 HBAR locked on testnet, to avoid spam. Unlocks after a timelock when you leave."],
+            ["2 · Stake", "4 HBAR staked on testnet, plus 1 HBAR reserved for gas. Stake unlocks after a waiting period when you leave."],
             ["3 · Earn", "90% of every routed call, withdrawable onchain. No platform rent."],
           ].map(([t, d]) => (
             <div key={t} className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-5">
