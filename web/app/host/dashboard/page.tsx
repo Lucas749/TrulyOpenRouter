@@ -24,11 +24,12 @@ export function saveClaimed(list: string[]) {
 
 // Stake lifecycle runs where the host key lives (CLI), never in the browser:
 // copy-paste commands with the exact address filled in.
-function StakeCmds({ address, active }: { address: string; active: boolean }) {
+function StakeCmds({ registry, active }: { registry: string | null; active: boolean }) {
   const [copied, setCopied] = useState<string | null>(null);
+  if (!registry) return null;
   const cmds: [string, string][] = active
-    ? [["Deregister", `cast send 0xa45461bdefef422a81b22f36ebfd0995c7642dc3 "deregister()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>  # stake unlocks after timelock, release via /security tap`]]
-    : [["Release stake", `cast send 0xa45461bdefef422a81b22f36ebfd0995c7642dc3 "release()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>  # only after deregister + timelock`]];
+    ? [["Deregister", `cast send ${registry} "deregister()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>  # stake unlocks after timelock, release via /security tap`]]
+    : [["Release stake", `cast send ${registry} "release()" --rpc-url https://testnet.hashio.io/api --private-key <your-host-key>  # only after deregister + timelock`]];
   return (
     <>
       {cmds.map(([label, cmd]) => (
@@ -194,7 +195,7 @@ export default function HostDashboardPage() {
                     {d.challenged ? <span className="text-[#DC2626]">CHALLENGED, under review</span> : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 border-t border-[#E5E5E0] pt-3">
-                    <StakeCmds address={d.address} active={d.active} />
+                    <StakeCmds registry={d.registry} active={d.active} />
                     <a href={`/network/host/${d.address}`} className="ml-auto font-mono text-[11px] text-[#2563EB] underline">receipts →</a>
                   </div>
                 </div>

@@ -10,7 +10,6 @@ import { MOCK_HOSTS } from "../../../../lib/mock";
 import { accountUrl, topicUrl, txUrl } from "../../../../lib/chain";
 
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
-const REGISTRY = "0xa45461bdefef422a81b22f36ebfd0995c7642dc3";
 const REGISTRY_ABI = parseAbi(["function challenge(address host, bytes32 receiptId)"]);
 
 export default function HostDetailPage({ params }: { params: Promise<{ address: string }> }) {
@@ -88,7 +87,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
   async function flag() {
     const w = wallets[0];
     const from = w?.address as `0x${string}` | undefined;
-    if (!w || !from || !d) return;
+    if (!w || !from || !d?.registry) return;
     setFlagBusy(true);
     setFlagMsg(null);
     try {
@@ -98,7 +97,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
       const receiptId = ((d.receipts ?? [])[0]?.id ?? "") as string;
       const id32 = receiptId.length >= 64 ? `0x${receiptId.slice(0, 64)}` : `0x${"00".repeat(32)}`;
       const hash = await client.writeContract({
-        address: REGISTRY,
+        address: d.registry,
         abi: REGISTRY_ABI,
         functionName: "challenge",
         args: [address as `0x${string}`, id32 as `0x${string}`],
@@ -130,7 +129,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
               <span className="inline-flex items-center gap-1.5 text-sm"><span className={`h-2 w-2 rounded-full ${d.active ? "bg-[#10A37F]" : "bg-[#DC2626]"}`} />{d.active ? "serving" : "offline"}</span>
               <span className="rounded-full bg-[#F4F4F4] px-2.5 py-0.5 text-xs">{d.modelId}</span>
               {d.challenged ? <span className="rounded-full bg-[#FDECEA] px-2.5 py-0.5 text-xs text-[#B3261E]">challenged, under review</span> : null}
-              {!mock && !d.challenged && (
+              {!mock && d.registry && !d.challenged && (
                 <button onClick={flag} disabled={flagBusy || !authenticated} title={authenticated ? "Flag with latest receipt (wallet signs)" : "Log in to flag"} className="rounded-full border border-black/10 px-2.5 py-0.5 text-xs disabled:opacity-40">
                   {flagBusy ? "flagging…" : "Flag host"}
                 </button>
