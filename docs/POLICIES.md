@@ -195,3 +195,17 @@ gateway    = team policy per request (fast, operator-controlled)
 Privy      = per-tx signing limits (key-custody boundary)
 our server = identity + roles via signed messages (no keys held)
 ```
+
+## Host routing settings
+
+Hosts can sign a revision of their model, model digest, endpoint, and paused
+state for the gateway. These are routing settings; the registry retains the
+original registration and stake. The gateway verifies the host signature,
+five-minute submission expiry, registry membership, active stake, original
+model, and next revision before storing an update in Postgres. A signature
+cannot change balances, stake, ownership, or another host's settings.
+
+Pausing drains new routes without starting the stake release timer. Resuming
+requires the registration to remain active. Model discovery includes signed
+model updates; verification summaries are specific to the effective model.
+Deregistering and releasing stake remain separate onchain actions.

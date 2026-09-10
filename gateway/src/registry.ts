@@ -10,6 +10,9 @@ export const REGISTRY_ABI = parseAbi([
 export interface HostInfo {
   address: Address;
   registry?: Address;
+  registeredModelId?: string;
+  registeredEndpoint?: string;
+  paused?: boolean;
   endpoint: string;
   modelId: string;
   modelDigest: `0x${string}`;

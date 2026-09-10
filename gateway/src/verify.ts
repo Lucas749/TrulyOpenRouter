@@ -179,7 +179,7 @@ export interface VerifySummary {
 export interface Verifier {
   record(report: CheckReport): Promise<void>;
   reports(address: string): Promise<CheckReport[]>;
-  verification(address: string): Promise<VerifySummary>;
+  verification(address: string, modelId?: string): Promise<VerifySummary>;
   /// @notice 0..1 multiplier for the scorer. Unchecked hosts route normally (null-safe).
   scoreMultiplier(address: string): Promise<number>;
 }
@@ -215,8 +215,8 @@ export class MemoryVerifier implements Verifier {
     return this.history.get(address.toLowerCase()) ?? [];
   }
 
-  async verification(address: string): Promise<VerifySummary> {
-    return summarize(await this.reports(address), this.policy);
+  async verification(address: string, modelId?: string): Promise<VerifySummary> {
+    return summarize((await this.reports(address)).filter(r => modelId === undefined || r.modelId === modelId), this.policy);
   }
 
   async scoreMultiplier(address: string): Promise<number> {
@@ -278,8 +278,8 @@ export class PgVerifier implements Verifier {
     return rows.map(PgVerifier.row);
   }
 
-  async verification(address: string): Promise<VerifySummary> {
-    return summarize(await this.reports(address), this.policy);
+  async verification(address: string, modelId?: string): Promise<VerifySummary> {
+    return summarize((await this.reports(address)).filter(r => modelId === undefined || r.modelId === modelId), this.policy);
   }
 
   async scoreMultiplier(address: string): Promise<number> {

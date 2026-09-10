@@ -79,6 +79,12 @@ CREATE TABLE IF NOT EXISTS host_fails (
   ts bigint NOT NULL
 );
 CREATE INDEX IF NOT EXISTS host_fails_host_idx ON host_fails (host, ts DESC);
+-- Signed operating settings; registration and stake remain onchain.
+CREATE TABLE IF NOT EXISTS host_runtime (
+  address text PRIMARY KEY,
+  revision integer NOT NULL,
+  settings jsonb NOT NULL
+);
 CREATE TABLE IF NOT EXISTS host_latency (
   host text PRIMARY KEY,
   ema_ms double precision NOT NULL

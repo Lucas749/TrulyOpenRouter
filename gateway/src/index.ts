@@ -2,7 +2,7 @@ import express from "express";
 import { createPublicClient, createWalletClient, http, parseAbi, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
-import { fetchEligibleHosts, fileChallenge, type HostInfo } from "./registry.js";
+import { fetchEligibleHosts, fileChallenge, REGISTRY_ABI, type HostInfo } from "./registry.js";
 import { issueKey, type KeyStore, MemoryKeyStore, PgKeyStore, verifyKey, type KeyScopes } from "./keys.js";
 import { allowanceExceeded, type CapStore, PgCapStore, SpendCapStore, sumSpent } from "./allowances.js";
 import { MemoryOrgRules, type OrgRuleStore, PgOrgRules } from "./orgrules.js";
@@ -21,6 +21,7 @@ import { settleCall, type DebitFn } from "./settle.js";
 import { FileTapStore, PgTapStore, tapInstruction, type TapKind, type TapStatus, type TapStore, verifyTapTransfer } from "./taps.js";
 import { cachedGeo } from "./geo.js";
 import { createTapExecutor } from "./tap-exec.js";
+import { applyHostSettings, authorizeHostSettings, HostSettingsError, MemoryHostRuntime, PgHostRuntime, type HostRuntimeStore } from "./host-runtime.js";
 
 /// @notice Thrown when an org rule blocks a call. Caught by the chat handler
 /// into a plain-language 403 (module scope: the catch lives outside try).
@@ -36,6 +37,7 @@ export interface GatewayOptions {
   legacyRegistries?: Address[];
   rpcUrl?: string;
   knownModels?: string[];
+  runtime?: HostRuntimeStore;
   vaultAddress?: Address; // pool balance source; absent = omitted (frontend shows —)
   fallbackUpstream?: string; // e.g. http://localhost:11434
   fetchHosts?: (modelId: string) => Promise<HostInfo[]>;
@@ -73,7 +75,7 @@ function verificationSender(opts: GatewayOptions, endpoint: string) {
 /// + registry + OPERATOR_KEY); otherwise the failure is logged and routing drains regardless.
 export async function verifyOnce(opts: GatewayOptions): Promise<CheckReport[]> {
   if (!opts.verifier) return [];
-  const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+  const models = await knownModels(opts);
   const refs = loadReferences();
   const seen = new Map<string, HostInfo>();
   for (const id of models) {
@@ -90,7 +92,7 @@ export async function verifyOnce(opts: GatewayOptions): Promise<CheckReport[]> {
     { model: target.modelId },
   );
   await opts.verifier.record(report);
-  const summary = await opts.verifier.verification(target.address);
+  const summary = await opts.verifier.verification(target.address, target.modelId);
   console.log(
     `verify ${target.address.slice(0, 10)}… ${target.modelId}: ${report.passed}/${report.total}` +
       (report.inconclusive ? " (inconclusive)" : "") +
@@ -130,7 +132,7 @@ export function startVerifyLoop(opts: GatewayOptions): void {
   console.log(`verify loop on: every ${intervalMs}ms`);
 }
 
-export async function resolveHosts(opts: GatewayOptions, modelId: string): Promise<HostInfo[]> {
+async function resolveRegisteredHosts(opts: GatewayOptions, modelId: string): Promise<HostInfo[]> {
   if (opts.fetchHosts) return opts.fetchHosts(modelId);
   // Bootstrap hosts remain available alongside permissionless registry hosts.
   let bootstrap: HostInfo[] = [];
@@ -174,21 +176,41 @@ export async function resolveHosts(opts: GatewayOptions, modelId: string): Promi
   return [...hosts.values()];
 }
 
+export async function knownModels(opts: GatewayOptions): Promise<string[]> {
+  const records = await opts.runtime?.list() ?? [];
+  return [...new Set([...(opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean)), ...records.flatMap(r => [r.registeredModelId, r.modelId])])];
+}
+
+export async function resolveHosts(opts: GatewayOptions, modelId: string): Promise<HostInfo[]> {
+  const records = await opts.runtime?.list() ?? [];
+  const models = new Set([modelId, ...records.filter(r => r.modelId === modelId).map(r => r.registeredModelId)]);
+  const settings = new Map(records.map(r => [r.address.toLowerCase(), r]));
+  const groups = await Promise.all([...models].map(id => resolveRegisteredHosts(opts, id)));
+  const hosts = new Map<string, HostInfo>();
+  for (const base of groups.flat()) {
+    const host = applyHostSettings(base, settings.get(base.address.toLowerCase()));
+    if (host.modelId === modelId) hosts.set(host.address.toLowerCase(), host);
+  }
+  return [...hosts.values()];
+}
+
 export function createApp(opts: GatewayOptions = {}) {
+  opts.runtime ??= new MemoryHostRuntime();
   const app = express();
   app.use(express.json({ limit: "10mb" }));
   app.get("/health", (_req, res) => res.json({ ok: true, service: "tor-gateway" }));
 
   // Single source of chain truth for CLIs and frontends (no hardcoded addresses downstream).
-  app.get("/api/config", (_req, res) => {
+  app.get("/api/config", async (_req, res) => {
     res.json({
       chainId: 296,
       chain: "hedera-testnet",
       rpcUrl: opts.rpcUrl ?? process.env.RPC_URL ?? null,
       registry: opts.registry ?? process.env.REGISTRY ?? null,
       legacyRegistries: opts.legacyRegistries ?? [],
-      vault: process.env.VAULT_ADDRESS ?? null,
-      models: opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean),
+      vault: opts.vaultAddress ?? process.env.VAULT_ADDRESS ?? null,
+      models: await knownModels(opts),
+      hostRuntime: true,
       facilitator: "https://api.testnet.blocky402.com",
       usdc: "0.0.429274",
     });
@@ -213,13 +235,13 @@ export function createApp(opts: GatewayOptions = {}) {
   }
 
   app.get("/v1/models", async (_req, res) => {
-    const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    const models = await knownModels(opts);
     const now = Date.now();
     const all = (await opts.receipts?.list(10_000)) ?? [];
     const day = 86_400_000;
     const data = [];
     for (const id of models) {
-      const hosts = await resolveHosts(opts, id);
+      const hosts = (await resolveHosts(opts, id)).filter(h => h.active);
       const mine = all.filter((r) => r.modelId === id && now - r.ts < day);
       const tokens = mine.reduce((a, r) => a + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0);
       const credits = mine.reduce((a, r) => a + BigInt(r.amountCredits ?? "0"), 0n);
@@ -376,7 +398,7 @@ export function createApp(opts: GatewayOptions = {}) {
         const ver = opts.verifier;
         let pool = hosts;
         if (ver) {
-          const checks = await Promise.all(hosts.map(async (h) => ({ h, failing: (await ver.verification(h.address)).failing })));
+          const checks = await Promise.all(hosts.map(async (h) => ({ h, failing: (await ver.verification(h.address, h.modelId)).failing })));
           pool = checks.filter((c) => !c.failing).map((c) => c.h);
         }
         // Org routing policy: pinned hosts, allowed regions (observed geo,
@@ -393,7 +415,7 @@ export function createApp(opts: GatewayOptions = {}) {
               if (![geo, region].filter(Boolean).some((r) => orgRegionAllow!.includes(r as string))) continue;
             }
             if (orgVerifiedOnly && ver) {
-              const v = await ver.verification(h.address);
+              const v = await ver.verification(h.address, h.modelId);
               if (!(v.checks > 0 && !v.failing)) continue;
             }
             kept.push(h);
@@ -517,7 +539,7 @@ export function createApp(opts: GatewayOptions = {}) {
 
   // Host directory for the explorer. Onchain truth + 24h call counts from receipts.
   app.get("/api/hosts", async (_req, res) => {
-    const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    const models = await knownModels(opts);
     const seen = new Map<string, HostInfo>();
     for (const id of models) {
       for (const h of await resolveHosts(opts, id)) seen.set(h.address, h);
@@ -541,7 +563,7 @@ export function createApp(opts: GatewayOptions = {}) {
             opts.meta ? cachedGeo(h.address, h.endpoint, opts.meta).catch(() => null) : null,
             opts.health?.latencyMs(h.address) ?? null,
             opts.health?.reliability(success24h, h.address) ?? null,
-            opts.verifier?.verification(h.address) ?? null,
+            opts.verifier?.verification(h.address, h.modelId) ?? null,
           ]);
           return {
           address: h.address,
@@ -549,6 +571,9 @@ export function createApp(opts: GatewayOptions = {}) {
           endpoint: h.endpoint,
           modelId: h.modelId,
           modelDigest: h.modelDigest,
+          registeredModelId: h.registeredModelId ?? h.modelId,
+          registeredEndpoint: h.registeredEndpoint ?? h.endpoint,
+          paused: h.paused ?? false,
           pricePerReq: String(h.pricePerReq),
           pricePer1kTokens: String(h.pricePer1kTokens),
           stake: String(h.stake),
@@ -575,7 +600,7 @@ export function createApp(opts: GatewayOptions = {}) {
       res.status(501).json({ error: { message: "verifier not configured", type: "unavailable" } });
       return;
     }
-    const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    const models = await knownModels(opts);
     let found: HostInfo | undefined;
     for (const id of models) {
       found = (await resolveHosts(opts, id)).find(
@@ -601,9 +626,33 @@ export function createApp(opts: GatewayOptions = {}) {
         { model: found.modelId },
       );
       await opts.verifier.record(report);
-      res.json({ ...report, verification: await opts.verifier.verification(found.address) });
+      res.json({ ...report, verification: await opts.verifier.verification(found.address, found.modelId) });
     } catch (e) {
       res.status(502).json({ error: { message: String(e).slice(0, 200), type: "upstream_error" } });
+    }
+  });
+
+  app.get("/api/hosts/:address/runtime", async (req, res) => {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(req.params.address)) { res.status(400).json({ error: { message: "Invalid host address" } }); return; }
+    res.json(await opts.runtime!.get(req.params.address) ?? { revision: 0 });
+  });
+
+  app.post("/api/hosts/:address/runtime", async (req, res) => {
+    try {
+      const record = await authorizeHostSettings(req.body?.settings, req.body?.signature);
+      if (record.address !== req.params.address.toLowerCase()) throw new HostSettingsError(403, "Host address mismatch");
+      const registries = [opts.registry, ...(opts.legacyRegistries ?? [])].filter(Boolean).map(r => r!.toLowerCase());
+      if (!registries.includes(record.registry)) throw new HostSettingsError(403, "Registry is not part of this network");
+      const host = opts.fetchHosts
+        ? (await opts.fetchHosts(record.registeredModelId)).find(h => h.address.toLowerCase() === record.address && h.registry?.toLowerCase() === record.registry)
+        : await createPublicClient({ transport: http(opts.rpcUrl) }).readContract({ address: record.registry, abi: REGISTRY_ABI, functionName: "getHost", args: [record.address] });
+      if (!host?.active || host.stake <= 0n || host.modelId !== record.registeredModelId) throw new HostSettingsError(403, "An active staked registration is required");
+      if (!await opts.runtime!.put(record)) throw new HostSettingsError(409, "Settings changed. Refresh before trying again");
+      // A replaced tunnel may resolve to another region. Discard its cached geo.
+      await opts.meta?.setGeo(record.address, "").catch(() => {});
+      res.json(record);
+    } catch (error) {
+      res.status(error instanceof HostSettingsError ? error.status : 503).json({ error: { message: error instanceof HostSettingsError ? error.message : "Host settings could not be verified. Try again" } });
     }
   });
 
@@ -674,7 +723,7 @@ export function createApp(opts: GatewayOptions = {}) {
   // Per-host detail for explorer pages: onchain record + 24h activity + withdrawable earnings
   // (vault read when configured, else null — frontend shows "—").
   app.get("/api/hosts/:address", async (req, res) => {
-    const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    const models = await knownModels(opts);
     let found: HostInfo | undefined;
     for (const id of models) {
       found = (await resolveHosts(opts, id)).find(
@@ -713,6 +762,9 @@ export function createApp(opts: GatewayOptions = {}) {
       endpoint: found.endpoint,
       modelId: found.modelId,
       modelDigest: found.modelDigest,
+      registeredModelId: found.registeredModelId ?? found.modelId,
+      registeredEndpoint: found.registeredEndpoint ?? found.endpoint,
+      paused: found.paused ?? false,
       pricePerReq: String(found.pricePerReq),
       pricePer1kTokens: String(found.pricePer1kTokens),
       stake: String(found.stake),
@@ -725,7 +777,7 @@ export function createApp(opts: GatewayOptions = {}) {
       fail24h: (await opts.health?.fails24h(found.address)) ?? 0,
       reliability: (await opts.health?.reliability(success24h, found.address)) ?? null,
       latencyMs: (await opts.health?.latencyMs(found.address)) ?? null,
-      verification: (await opts.verifier?.verification(found.address)) ?? null,
+      verification: (await opts.verifier?.verification(found.address, found.modelId)) ?? null,
       earningsWei,
       calls7d: mine7d.length,
       earnings7d,
@@ -764,7 +816,7 @@ export function createApp(opts: GatewayOptions = {}) {
   // Network stats for the landing strip + explorer. Only real aggregates; anything
   // unwired is null (frontend renders "—", never a guess).
   app.get("/api/stats", async (_req, res) => {
-    const models = opts.knownModels ?? (process.env.MODELS ?? "").split(",").filter(Boolean);
+    const models = await knownModels(opts);
     const seen = new Map<string, HostInfo>();
     for (const id of models) {
       for (const h of await resolveHosts(opts, id)) seen.set(h.address, h);
@@ -1165,6 +1217,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const pg = dbEnabled();
   const opts: GatewayOptions = {
+    runtime: pg ? new PgHostRuntime() : new MemoryHostRuntime(),
     keys: pg ? new PgKeyStore() : new MemoryKeyStore(),
     receipts: pg ? new PgReceiptLog() : new MemoryReceiptLog(),
     devices: pg ? new PgDeviceFlow() : new MemoryDeviceFlow(),
