@@ -3,9 +3,9 @@ import { execFile } from "child_process";
 // Shared CLI plumbing: shell-out, gateway fetch, --flag parsing.
 // One home for the helpers previously copied across run/leave/status/login.
 
-export function sh(cmd: string, args: string[], opts?: { timeoutMs?: number; maxOut?: number }): Promise<{ ok: boolean; out: string }> {
+export function sh(cmd: string, args: string[], opts?: { timeoutMs?: number; maxOut?: number; signal?: AbortSignal }): Promise<{ ok: boolean; out: string }> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: opts?.timeoutMs ?? 30000 }, (err, stdout, stderr) => {
+    execFile(cmd, args, { timeout: opts?.timeoutMs ?? 30000, signal: opts?.signal }, (err, stdout, stderr) => {
       resolve({ ok: !err, out: String(stdout || stderr).trim().slice(0, opts?.maxOut ?? 2000) });
     });
   });

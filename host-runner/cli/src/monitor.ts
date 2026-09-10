@@ -93,9 +93,9 @@ export async function collectMonitor(
   const ollama = (options.ollamaUrl ?? "http://127.0.0.1:11434").replace(/\/+$/, "");
   const guard = (options.guardUrl ?? "http://127.0.0.1:4122").replace(/\/+$/, "");
   const [docker, localGuard, models, loaded, host, network] = await Promise.all([
-    deps.shell("docker", ["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 4000 }).then(async d => {
+    deps.shell("docker", ["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 4000, signal }).then(async d => {
       if (d.ok) return { state: "ok" as const, data: d.out };
-      const cli = await deps.shell("docker", ["--version"], { timeoutMs: 2000 });
+      const cli = await deps.shell("docker", ["--version"], { timeoutMs: 2000, signal });
       return cli.ok ? unavailable<string>("Engine stopped or unreachable · start Docker") : missing<string>("Docker CLI missing · install Docker Desktop");
     }),
     read(`${guard}/health`, guardHealth, deps.fetch, signal),
