@@ -55,10 +55,10 @@ export function box(title: string, lines: string[], width = 56): string {
   return `${ansi("gray")}${top}${ansi("reset")}\n${body}\n${ansi("gray")}${bottom}${ansi("reset")}`;
 }
 
-const MARK = ["█████   ███   ████ ", "  █    █   █  █   █", "  █    █   █  ████ ", "  █    █   █  █ █  ", "  █     ███   █  █ "];
+export const BRAND_MARK = ["█████   ███   ████ ", "  █    █   █  █   █", "  █    █   █  ████ ", "  █    █   █  █ █  ", "  █     ███   █  █ "];
 
 export function mark(): string {
-  return MARK.map((l) => `${ansi("bold")}${l}${ansi("reset")}`).join("\n");
+  return BRAND_MARK.map((l) => `${ansi("bold")}${l}${ansi("reset")}`).join("\n");
 }
 
 export function banner(): string {
@@ -116,5 +116,4 @@ export class Spinner {
     this.stream.write(`\r${ansi("cyan")}${FRAMES[this.i++ % FRAMES.length]}${ansi("reset")} ${this.text}`);
   }
 }
-
 

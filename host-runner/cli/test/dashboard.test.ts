@@ -2,14 +2,39 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Terminal } from "@xterm/headless";
 import { initialView, navigate, webLink } from "../src/dashboard.js";
-import { cleanText, renderMonitor, textWidth, wrap } from "../src/monitor-view.js";
+import { cleanText, renderMonitor, terminalFrame, textWidth, wrap } from "../src/monitor-view.js";
 import { collectLog, rememberLogFiles } from "../src/monitor-logs.js";
 import { serviceControl } from "../src/monitor-controls.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe("terminal dashboard", () => {
+  it("erases old tab text and blank rows while preserving the banner through refresh and resize", async () => {
+    const terminal = new Terminal({ cols: 120, rows: 40, allowProposedApi: true });
+    const fresh = new Terminal({ cols: 120, rows: 40, allowProposedApi: true });
+    const write = (t: Terminal, value: string) => new Promise<void>(resolve => t.write(value, resolve));
+    const screen = (t: Terminal) => Array.from({ length: t.rows }, (_, i) => t.buffer.active.getLine(i)?.translateToString(true) ?? "").join("\n");
+    try {
+      await write(terminal, "\x1b[?1049h");
+      await write(fresh, "\x1b[?1049h");
+      for (const tab of [0, 4, 6, 2, 1]) {
+        const state = { ...initialView(), tab, logs: Array.from({ length: 32 }, (_, i) => `Old log ${i} ${"long text ".repeat(10)}`) };
+        await write(terminal, terminalFrame(renderMonitor(null, state, 120, 40)));
+      }
+      await write(fresh, terminalFrame(renderMonitor(null, { ...initialView(), tab: 1 }, 120, 40)));
+      expect(screen(terminal)).toBe(screen(fresh));
+      expect(screen(terminal)).toContain("█████   ███   ████");
+      expect(screen(terminal)).not.toContain("Old log");
+      terminal.resize(40, 16); fresh.resize(40, 16);
+      await write(terminal, terminalFrame(renderMonitor(null, initialView(), 40, 16, false)));
+      await write(fresh, "\x1b[2J" + terminalFrame(renderMonitor(null, initialView(), 40, 16, false)));
+      expect(screen(terminal)).toBe(screen(fresh));
+      expect(screen(terminal)).not.toContain("█████");
+    } finally { terminal.dispose(); fresh.dispose(); }
+  });
+
   it("navigates tabs, scrolls, and switches log sources without losing the selected tab", () => {
     const state = navigate(initialView(), { sequence: "5" });
     expect(state.tab).toBe(4);

@@ -1,7 +1,7 @@
 import { emitKeypressEvents, type Key } from "node:readline";
 import { collectMonitor, type MonitorOptions, type MonitorSnapshot } from "./monitor.js";
 import { collectLog, LOG_SOURCES, rememberLogFiles, type LogFiles } from "./monitor-logs.js";
-import { cleanText, renderMonitor, TABS, viewLines, type ViewState } from "./monitor-view.js";
+import { cleanText, renderMonitor, terminalFrame, viewportHeight, TABS, viewLines, type ViewState } from "./monitor-view.js";
 import { sh } from "./util.js";
 import { SERVICE_ACTIONS, serviceControl, type ServiceKey } from "./monitor-controls.js";
 
@@ -58,8 +58,8 @@ export async function dashboard(options: DashboardOptions = {}): Promise<void> {
     if (closed) return;
     const width = output.columns || 100, rows = output.rows || 30;
     const lines = viewLines(snapshot, state, Math.max(1, width - 4));
-    state.scroll = Math.min(state.scroll, Math.max(0, lines.length - Math.max(1, rows - 7)));
-    output.write(`\x1b[H${renderMonitor(snapshot, state, width, rows, color)}\x1b[J`);
+    state.scroll = Math.min(state.scroll, Math.max(0, lines.length - viewportHeight(width, rows)));
+    output.write(terminalFrame(renderMonitor(snapshot, state, width, rows, color)));
   };
   const restore = () => {
     try { input.setRawMode(oldRaw); } catch {}
@@ -129,7 +129,7 @@ export async function dashboard(options: DashboardOptions = {}): Promise<void> {
       return;
     }
     const previous = state;
-    state = navigate(state, key, Math.max(1, (output.rows || 30) - 7));
+    state = navigate(state, key, viewportHeight(output.columns || 100, output.rows || 30));
     if (state.tab === 4 && (previous.tab !== state.tab || previous.logSource !== state.logSource)) {
       state.logs = ["Loading service logs…"]; void refresh();
     }

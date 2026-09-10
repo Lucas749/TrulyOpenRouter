@@ -1,6 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import { decimalAmount, servingState, type MonitorSnapshot, type Reading } from "./monitor.js";
 import { type LogSource } from "./monitor-logs.js";
+import { BRAND_MARK } from "./ui.js";
 
 export const TABS = ["Overview", "Activity", "Models", "Network", "Logs", "Controls", "Help"] as const;
 export interface ViewState { tab: number; scroll: number; refreshing: boolean; logSource: LogSource; logs: string[]; notice: string; controlBusy?: boolean; controlMessage?: string }
@@ -137,6 +138,14 @@ export function viewLines(snapshot: MonitorSnapshot | null, state: ViewState, wi
   return [];
 }
 
+const showBanner = (columns: number, rows: number) => columns >= 60 && rows >= 30;
+export const viewportHeight = (columns: number, rows: number): number => Math.max(1, rows - 7 - (showBanner(columns, rows) ? 6 : 0));
+
+// Replace the full viewport in one write, including blank rows and resize tails.
+export function terminalFrame(frame: string): string {
+  return `\x1b[H\x1b[2J${frame}\x1b[J`;
+}
+
 export function renderMonitor(snapshot: MonitorSnapshot | null, state: ViewState, columns = 100, rows = 30, color = true): string {
   const width = Math.max(1, columns - 4);
   const paint = (text: string, code: string) => color ? `\x1b[${code}m${text}\x1b[0m` : text;
@@ -144,9 +153,12 @@ export function renderMonitor(snapshot: MonitorSnapshot | null, state: ViewState
   if (columns < 36 || rows < 10) return [title, "Resize for the full dashboard", "q: close"].slice(0, rows - 1).map(l => fit(l, columns - 1)).join("\r\n");
   const labels = width >= 98 ? TABS : ["Over", "Req", "Models", "Net", "Logs", "Ctrl", "Help"];
   const tabs = width < 70 ? `${TABS[state.tab]} [${state.tab + 1}/${TABS.length}] · ←/→ switch tabs` : labels.map((name, i) => `${i + 1} ${i === state.tab ? `[${name}]` : name}`).join("  ");
-  const header = [paint(title, "1"), fit(tabs, width), paint("─".repeat(width), "90")];
+  const header = [
+    ...(showBanner(columns, rows) ? [...BRAND_MARK.map(line => paint(line, "1")), ""] : []),
+    paint(title, "1"), fit(tabs, width), paint("─".repeat(width), "90"),
+  ];
   const footer = [paint("─".repeat(width), "90"), fit(state.notice || `${state.refreshing ? "Refreshing…" : snapshot ? `Updated ${time(snapshot.at)}` : "Connecting…"} · auto-refresh 10s`, width), fit(width < 60 ? "←/→ tabs  ↑/↓ scroll  q quit" : "←/→ tabs  ↑/↓ scroll  r refresh  d web  q close", width)];
-  const height = Math.max(1, rows - header.length - footer.length - 1);
+  const height = viewportHeight(columns, rows);
   const lines = viewLines(snapshot, state, width);
   const offset = Math.min(Math.max(0, state.scroll), Math.max(0, lines.length - height));
   const visible = lines.slice(offset, offset + height).map(l => fit(l, width));
