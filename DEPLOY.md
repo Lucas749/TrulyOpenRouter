@@ -87,3 +87,23 @@ Then in the **Privy dashboard** (your app → Settings → Allowed origins) add
 - Data persists in docker volumes (`web-data`, `gateway-data`, `ollama-data`).
   Back up `/var/lib/docker/volumes` if teams matter to you.
 - Re-deploy: `git pull && docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build`.
+
+## Registry replacement (5 HBAR onboarding)
+
+The current testnet registry is `0x5f83c19413fc15181e2e79512947e374c7b8dc56`:
+4 HBAR stake plus a 1 HBAR gas reserve. The former registry has an immutable
+10 HBAR minimum, so lowering the requirement needs a new deployment.
+`contracts/script/DeployHostRegistry.s.sol` deploys only the registry in
+Hedera tinybar units; the vault remains at its existing address.
+
+Set `REGISTRY` to the new address and retain
+`LEGACY_REGISTRIES=0xa45461bdefef422a81b22f36ebfd0995c7642dc3`. Gateway discovery
+merges current, legacy, and bootstrap hosts. CLI resume and leave find the
+registry holding the host's stake; existing keys do not stake again.
+Keep `TAP_REGISTRY` on the registry holding the configured demo host stake.
+
+Build the gateway image, then recreate only that service with
+`docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-deps gateway`.
+Verify `/api/config` through the hosted proxy and read `MIN_STAKE()` (400000000).
+Registration simulation with 4 HBAR succeeds; gas estimate was 0.33 HBAR at rollout.
+Retain the previous image and private environment backup for rollback.

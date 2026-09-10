@@ -2,13 +2,17 @@
   "network": "hedera-testnet",
   "chainId": 296,
   "deployer": "0x6579522f330205d45f7418c75be08bc42c93882a",
-  "valueUnit": "tinybar — the hashio relay delivers contract msg.value in tinybars, not wei (sent_wei / 1e10). All params below are in DELIVERED units. Display: units / 1e8 = HBAR. See SPEC money rule.",
+  "valueUnit": "tinybar \u2014 the hashio relay delivers contract msg.value in tinybars, not wei (sent_wei / 1e10). All params below are in DELIVERED units. Display: units / 1e8 = HBAR. See SPEC money rule.",
   "contracts": {
     "HostRegistry": {
-      "address": "0xa45461bdefef422a81b22f36ebfd0995c7642dc3",
-      "constructorArgs": { "minStakeDeliveredUnits": "1000000000", "unstakeDelaySec": 86400 },
-      "minStakeMeans": "10 HBAR sent",
-      "hashscan": "https://hashscan.io/testnet/contract/0xa45461bdefef422a81b22f36ebfd0995c7642dc3"
+      "address": "0x5f83c19413fc15181e2e79512947e374c7b8dc56",
+      "constructorArgs": {
+        "minStakeDeliveredUnits": "400000000",
+        "unstakeDelaySec": 86400
+      },
+      "minStakeMeans": "4 HBAR stake; 5 HBAR total onboarding balance includes 1 HBAR gas reserve",
+      "hashscan": "https://hashscan.io/testnet/contract/0x5f83c19413fc15181e2e79512947e374c7b8dc56",
+      "deploymentTx": "0xd067f6b37d160fb3fd410c566a0009c9a956ef675e36e7d2ec13e5e8441bba8e"
     },
     "SubscriptionVault": {
       "address": "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576",
@@ -17,7 +21,11 @@
         "dailyQuota": 2000,
         "refundRateDeliveredUnitsPerCredit": "100000"
       },
-      "plan0": { "priceDeliveredUnits": "1000000000", "priceMeans": "10 HBAR sent", "credits": 10000 },
+      "plan0": {
+        "priceDeliveredUnits": "1000000000",
+        "priceMeans": "10 HBAR sent",
+        "credits": 10000
+      },
       "hashscan": "https://hashscan.io/testnet/contract/0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576"
     }
   },
@@ -47,5 +55,17 @@
     "SubscriptionVault": "0x6cb798173d51f35a9b724473dcc188ead7dff8f6",
     "reason": "wei-denominated params unreachable through relay value scaling"
   },
-  "notes": "Deploy with explicit cast nonces (relay mirror lags; forge script sequences go stale). Gateway role = deployer until setGateway to the gateway operator."
+  "notes": "Deploy with explicit cast nonces (relay mirror lags; forge script sequences go stale). Gateway role = deployer until setGateway to the gateway operator.",
+  "legacyHostRegistries": [
+    {
+      "address": "0xa45461bdefef422a81b22f36ebfd0995c7642dc3",
+      "constructorArgs": {
+        "minStakeDeliveredUnits": "1000000000",
+        "unstakeDelaySec": 86400
+      },
+      "minStakeMeans": "10 HBAR sent",
+      "hashscan": "https://hashscan.io/testnet/contract/0xa45461bdefef422a81b22f36ebfd0995c7642dc3",
+      "reason": "Existing stakes remain here; gateway discovery and CLI resume/leave retain access."
+    }
+  ]
 }

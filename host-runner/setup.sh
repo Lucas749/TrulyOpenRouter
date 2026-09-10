@@ -32,7 +32,7 @@ ask_secret() {
   eval "$1=\$val"
 }
 
-REGISTRY="${REGISTRY:-0xa45461bdefef422a81b22f36ebfd0995c7642dc3}"
+REGISTRY="${REGISTRY:-0x5f83c19413fc15181e2e79512947e374c7b8dc56}"
 RPC_URL="${RPC_URL:-https://testnet.hashio.io/api}"
 ask MODEL_ID "Model to serve" "qwen2.5:0.5b"
 ask ENDPOINT "Public endpoint of YOUR guard (https://… — LAN ips won't route)" ""

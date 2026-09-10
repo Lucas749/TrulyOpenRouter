@@ -15,7 +15,7 @@ contract Deploy is Script {
         address gateway = vm.envAddress("GATEWAY_ADDR");
         vm.startBroadcast(key);
 
-        HostRegistry registry = new HostRegistry(10 ether, 1 days);
+        HostRegistry registry = new HostRegistry(400_000_000, 1 days);
         // gateway set at construction; daily quota 2000 credits; 1 credit = 1e15 wei
         SubscriptionVault vault = new SubscriptionVault(gateway, 2_000, 1e15);
         vault.setPlan(0, 10_000 * 1e15, 10_000); // $10-style plan: 10k credits

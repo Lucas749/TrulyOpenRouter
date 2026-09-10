@@ -16,7 +16,7 @@ sh host-runner/setup.sh
 
 It prompts for your host key (hidden input, stays on your machine) and public
 endpoint, then pulls the model, computes its digest, starts the stack,
-registers onchain (stakes 10 HBAR), verifies, and offers the heartbeat cron.
+registers onchain (4 HBAR stake + 1 HBAR gas reserve, 5 HBAR overall), verifies, and offers the heartbeat cron.
 `--dry-run` prints every step without touching anything. Your endpoint must be
 publicly reachable — LAN IPs won't route.
 
@@ -43,14 +43,14 @@ Prefix with `0x`. A host serving anything else gets drained out of rotation.
 ### 3. Register onchain (stakes real testnet HBAR)
 
 ```sh
-export REGISTRY=0xa45461bdefef422a81b22f36ebfd0995c7642dc3 RPC_URL=https://testnet.hashio.io/api
+export REGISTRY=0x5f83c19413fc15181e2e79512947e374c7b8dc56 RPC_URL=https://testnet.hashio.io/api
 export HOST_KEY=<your-key> ENDPOINT=https://your-public-url MODEL_ID=qwen2.5:0.5b MODEL_DIGEST=0x…
-export PRICE_PER_REQ_WEI=100000 PRICE_PER_1K_WEI=100000 STAKE_WEI=10000000000000000000
+export PRICE_PER_REQ_WEI=100000 PRICE_PER_1K_WEI=100000 STAKE_WEI=4000000000000000000
 sh host-runner/register.sh
 ```
 
 Units are delivered tinybars (relay sends value/1e10): 100000 ≈ 1 credit,
-1e19 = 10 HBAR. Check yourself on `/network`.
+4e18 = 4 HBAR. Fund at least 5 HBAR overall to cover stake and gas. Check yourself on `/network`.
 
 ## 3. Get paid
 

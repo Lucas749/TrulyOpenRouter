@@ -13,7 +13,7 @@ about regions, models, or daily caps lives onchain.
 | Allowed models / regions / verified-only / rate / pinned hosts | /team → Firm rules | Gateway org-rules gate (`gateway/src/index.ts` ~365) | Per request; violation → `403 org_policy` with a plain-language reason | No |
 | Per-tx USD cap on the team wallet | Team creation (`capUsd`) | **Privy**, not us | At signing time: Privy refuses to sign a tx over the cap | No — Privy-side |
 | Per-tx display cap | /team → Firm rules | Nobody (display only) | — | No |
-| Subscriptions, relay payment, withdraw, stake | Contracts | **Hedera contracts** (Registry `0xa454…`, Vault `0xd75c…`) | Consensus | **Yes** |
+| Subscriptions, relay payment, withdraw, stake | Contracts | **Hedera contracts** (Registry `0x5f83…` + legacy `0xa454…`, Vault `0xd75c…`) | Consensus | **Yes** |
 | "This signature authorizes that action" | Every signed button | Chain (tx auth) + our server (`viem` recover) | See below | Half |
 
 ## 1. What the blockchain actually enforces

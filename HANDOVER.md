@@ -1,4 +1,4 @@
-# Handover — TrulyOpenRouter (as of `3d2bd48`, 2026-09-10)
+# Handover — TrulyOpenRouter (as of the 5 HBAR onboarding rollout, 2026-09-10)
 
 ## What this is
 Decentralized OpenRouter on Hedera testnet: users chat with LLMs through a
@@ -13,8 +13,9 @@ gates run in the gateway per request.
   (`0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576`) — subscribe/debit/withdraw/
   refund, per-user daily quota, per-account `SpendCap`, org-pool
   `poolSpendCaps` + `debitFrom`. `HostRegistry`
-  (`0xa45461bdefef422a81b22f36ebfd0995c7642dc3`) — register/heartbeat/
-  deregister. NOTE: onchain `MIN_STAKE` is 1e9 tinybar = 10 HBAR. Hedera
+  (`0x5f83c19413fc15181e2e79512947e374c7b8dc56`) — register/heartbeat/
+  deregister. Onchain `MIN_STAKE` is 4e8 tinybar = 4 HBAR. Legacy registry
+  `0xa45461bdefef422a81b22f36ebfd0995c7642dc3` retains existing stakes. Hedera
   contract values use tinybar; JSON-RPC transaction values use weibars. Live vault **predates** `SpendCap`/
   `poolSpendCaps` — onchain caps activate at the next vault redeploy.
 - **Gateway enforces policy** (offchain, per request): member allowances
@@ -69,9 +70,11 @@ gates run in the gateway per request.
 readback), fund-wait loop, underfunded errors with address.
 **Registration funding**: use the live registry minimum with Hedera's
 8-decimal contract units, converted to the relay's 18-decimal transaction
-value. The deployed minimum is 10 HBAR; keep another 1 HBAR for gas (11 total).
-The earlier 5-stake/6-fund guidance was wrong. Confirmed by read-only testnet
-simulation: 5 HBAR reverts `InsufficientStake`, 10 HBAR succeeds.
+value. The current minimum is 4 HBAR; keep another 1 HBAR for gas (5 total).
+The immutable 10 HBAR registry was replaced on testnet. `LEGACY_REGISTRIES`
+keeps old hosts discoverable; CLI resume/leave locate their original stake.
+`TAP_REGISTRY` keeps device-approved actions on the existing demo host registry.
+The vault address and balances are unchanged.
 Quickstart reads structured funding details from its own freshly built CLI;
 other registration failures stop immediately without another faucet loop.
 **Docker readiness**: quickstart now checks the engine during dependencies,
@@ -81,6 +84,9 @@ recovery steps. Verified locally from a stopped engine to ready.
 **To verify next**: full green run to "ROUTABLE" (blocked only on real testnet
 funds + browser clicks, which can't be automated here).
 **Known sharp edges**:
+- Receipt IDs currently hash content and latency but omit payer/request identity.
+  Identical completions at equal latency can collide; the wallet route fixture
+  now uses a distinct prompt. Receipt uniqueness needs a separate fix.
 - `git pull -q || true` in `install.sh` swallows failures → stale clones;
   quickstart prints its rev in the session line — always ask for it.
 - `tor-host` resolves to the repo checkout (npm link), NOT the installer
