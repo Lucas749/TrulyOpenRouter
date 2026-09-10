@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { ensureHostKey, run } from "../src/run.js";
@@ -10,6 +10,7 @@ const chain = vi.hoisted(() => ({
   getBalance: vi.fn(),
   readContract: vi.fn(),
   writeContract: vi.fn(),
+  waitForTransactionReceipt: vi.fn(),
 }));
 
 vi.mock("viem", async (importOriginal) => ({
@@ -34,14 +35,15 @@ describe("run registration funding", () => {
     saveConfig({ ...loadConfig(), userId: "test-owner" });
     vi.mocked(sh).mockResolvedValue({ ok: true, out: "test-output" });
     vi.mocked(api).mockResolvedValue({
-      rpcUrl: "http://rpc.invalid", registry: `0x${"1".repeat(40)}`, chain: "testnet",
+      rpcUrl: "http://rpc.invalid", registry: `0x${"1".repeat(40)}`, chain: "testnet", chainId: 296,
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       json: async () => ({ models: [{ name: options.model }] }),
     }));
-    chain.getBalance.mockResolvedValue(6n * HBAR);
+    chain.getBalance.mockResolvedValue(11n * HBAR);
     chain.readContract.mockImplementation(async ({ functionName }) =>
-      functionName === "getHost" ? { active: false, stake: 0n } : 1n);
+      functionName === "getHost" ? { active: false, stake: 0n } : 1_000_000_000n);
+    chain.waitForTransactionReceipt.mockResolvedValue({ status: "success" });
     chain.writeContract.mockResolvedValue(`0x${"a".repeat(64)}`);
   });
 
@@ -53,7 +55,7 @@ describe("run registration funding", () => {
   });
 
   it("resumes an active host with no liquid balance through guard startup and owner claim", async () => {
-    chain.readContract.mockResolvedValue({ active: true, stake: 5n * HBAR });
+    chain.readContract.mockResolvedValue({ active: true, stake: 1_000_000_000n });
     chain.getBalance.mockResolvedValue(0n);
 
     await run(options);
@@ -67,16 +69,37 @@ describe("run registration funding", () => {
   });
 
   it("still requires gas headroom when registering an inactive host", async () => {
-    chain.getBalance.mockResolvedValue(5n * HBAR);
+    chain.getBalance.mockResolvedValue(10n * HBAR);
 
-    await expect(run(options)).rejects.toThrow(`underfunded: send ≥ 1 HBAR testnet to ${address}`);
+    await expect(run(options)).rejects.toThrow("Add 1 testnet HBAR to your host wallet");
     expect(chain.writeContract.mock.calls).toHaveLength(0);
+  });
+
+  it("writes the actual funding target for quickstart", async () => {
+    chain.getBalance.mockResolvedValue(10n * HBAR);
+    const statusFile = join(home, "run.json");
+    await expect(run({ ...options, statusFile })).rejects.toThrow("Add 1 testnet HBAR");
+    expect(JSON.parse(readFileSync(statusFile, "utf8"))).toMatchObject({
+      kind: "needs_funds", address, stakeHbar: "10", totalHbar: "11", totalWei: String(11n * HBAR),
+    });
+  });
+
+  it("does not register when reading the current host fails", async () => {
+    chain.readContract.mockRejectedValue(new Error("RPC unavailable"));
+    await expect(run(options)).rejects.toThrow("RPC unavailable");
+    expect(chain.writeContract.mock.calls).toHaveLength(0);
+  });
+
+  it("does not report a reverted transaction as a successful registration", async () => {
+    chain.waitForTransactionReceipt.mockResolvedValue({ status: "reverted" });
+    await expect(run(options)).rejects.toThrow("Registration transaction reverted");
+    expect(vi.mocked(sh).mock.calls.some(([, args]) => args.slice(-3).join(" ") === "up -d guard")).toBe(false);
   });
 
   it("stakes once when an inactive host has enough balance", async () => {
     await run(options);
 
     expect(chain.writeContract.mock.calls).toHaveLength(1);
-    expect(chain.writeContract.mock.calls[0][0]).toMatchObject({ functionName: "register", value: 5n * HBAR });
+    expect(chain.writeContract.mock.calls[0][0]).toMatchObject({ functionName: "register", value: 10n * HBAR });
   });
 });

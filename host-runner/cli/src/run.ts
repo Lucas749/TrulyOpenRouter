@@ -1,18 +1,23 @@
 import { api, sh } from "./util.js";
 import { createHash } from "crypto";
-import { chmodSync, existsSync } from "fs";
+import { chmodSync, existsSync, writeFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 import { networkInterfaces } from "os";
-import { createPublicClient, createWalletClient, http, parseAbi } from "viem";
+import { createPublicClient, createWalletClient, formatEther, http, parseAbi } from "viem";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { configDir, loadConfig, saveConfig } from "./config.js";
 import { banner, box, ok, Spinner, warn } from "./ui.js";
+import { FundingRequiredError, GAS_RESERVE_WEI, registrationError, registrationStake, registryValueWei } from "./registration.js";
+export { DEFAULT_STAKE_HBAR } from "./registration.js";
 
 const REGISTRY_ABI = parseAbi([
   "function register(string endpoint, string modelId, bytes32 modelDigest, bytes32 imageDigest, uint256 pricePerReq, uint256 pricePer1kTokens, bytes teePubkey) payable",
   "function MIN_STAKE() view returns (uint256)",
+  "error InsufficientStake(uint256 sent, uint256 required)",
+  "error AlreadyRegistered()",
+  "error TimelockActive(uint64 releaseAfter)",
   "function getHost(address) view returns ((string endpoint, string modelId, bytes32 modelDigest, bytes32 imageDigest, uint256 pricePerReq, uint256 pricePer1kTokens, bytes teePubkey, uint256 stake, bool active, uint64 registeredAt, uint64 lastHeartbeat, uint64 releaseAfter, bool challenged))",
 ]);
 
@@ -35,11 +40,6 @@ export function stakeShortfall(balanceWei: bigint, stakeHbar: number): bigint {
   return balanceWei >= need ? 0n : need - balanceWei;
 }
 
-/// @notice Default stake (HBAR). Faucet pays 10/trip, so 5 + 1 gas headroom
-/// keeps onboarding to a single faucet visit. Onchain MIN_STAKE is dust —
-/// this default is policy, not consensus.
-export const DEFAULT_STAKE_HBAR = 5;
-
 export interface RunOptions {
   gateway: string;
   model: string;
@@ -50,6 +50,7 @@ export interface RunOptions {
   rpcUrl?: string;
   registry?: string;
   endpoint?: string; // override; default = auto-detected LAN IP :4122
+  statusFile?: string; // structured progress for quickstart; contains no secrets
 }
 
 /// @notice Our own egress-IP geo, resolved host-side. The gateway cannot do this
@@ -112,6 +113,7 @@ const COMPOSE_FILE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "
 export async function run(o: RunOptions): Promise<void> {
   console.log(banner());
   const spin = new Spinner();
+  if (o.statusFile) writeFileSync(o.statusFile, JSON.stringify({ kind: "running" }), { mode: 0o600 });
   try {
     // 1. docker
     spin.start("checking docker");
@@ -160,40 +162,44 @@ export async function run(o: RunOptions): Promise<void> {
     // already locked onchain, so resuming does not require another stake.
     spin.start("checking registration");
     const pub = createPublicClient({ transport: http(rpcUrl) });
+    const chainId = Number(cfg.chainId ?? await pub.getChainId());
     const existing = (await pub.readContract({
       address: registry,
       abi: REGISTRY_ABI,
       functionName: "getHost",
       args: [account.address],
-    }).catch(() => null)) as OnchainHost | null;
+    })) as OnchainHost;
     if (!shouldRegister(existing)) {
-      spin.stop(ok(`already registered (stake ${(Number(existing!.stake) / 1e18).toFixed(1)} HBAR) — continuing`));
+      spin.stop(ok(`already registered (stake ${formatEther(registryValueWei(existing.stake, chainId))} HBAR) — continuing`));
     } else {
       // 7. Fund and register only when this key is not already active.
       spin.message("checking stake funding");
+      const minStake = await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: "MIN_STAKE" });
+      const stakeWei = registrationStake(minStake, chainId, o.stakeHbar);
       const balance = await pub.getBalance({ address: account.address });
-      const shortfall = stakeShortfall(balance, Number(o.stakeHbar ?? DEFAULT_STAKE_HBAR));
-      if (shortfall > 0n) {
-        const need = ((shortfall + BigInt(1e18) - 1n) / BigInt(1e18)).toString(); // ceil HBAR
-        spin.stop();
-        throw new Error(`underfunded: send ≥ ${need} HBAR testnet to ${account.address} (faucet.hedera.com), then re-run`);
+      if (balance < stakeWei + GAS_RESERVE_WEI) {
+        throw new FundingRequiredError(account.address, balance, stakeWei, rpcUrl);
       }
       spin.stop(ok(`funded ${(Number(balance) / 1e18).toFixed(1)} HBAR`));
 
-      spin.start("registering onchain");
+      spin.start(`registering with ${formatEther(stakeWei)} HBAR stake`);
       const wallet = createWalletClient({ account, transport: http(rpcUrl) });
-      const stakeWei = BigInt(Math.round(Number(o.stakeHbar ?? DEFAULT_STAKE_HBAR))) * BigInt(1e18);
-      const minStake = (await pub.readContract({ address: registry, abi: REGISTRY_ABI, functionName: "MIN_STAKE" })) as bigint;
-      if (stakeWei < minStake) throw new Error(`stake below registry minimum`);
-      const hash = await wallet.writeContract({
-        address: registry,
-        abi: REGISTRY_ABI,
-        functionName: "register",
-        args: [o.endpoint ?? `http://${lanIp()}:4122`, o.model, digest, "0x0000000000000000000000000000000000000000000000000000000000000000", BigInt(o.priceReq ?? 100000), BigInt(o.price1k ?? 100000), "0x"],
-        value: stakeWei,
-        chain: undefined,
-      });
-      spin.stop(ok(`registered ${hash.slice(0, 18)}…`));
+      try {
+        const hash = await wallet.writeContract({
+          address: registry,
+          abi: REGISTRY_ABI,
+          functionName: "register",
+          args: [o.endpoint ?? `http://${lanIp()}:4122`, o.model, digest, "0x0000000000000000000000000000000000000000000000000000000000000000", BigInt(o.priceReq ?? 100000), BigInt(o.price1k ?? 100000), "0x"],
+          value: stakeWei,
+          chain: undefined,
+        });
+        spin.message("waiting for registration confirmation");
+        const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 120000 });
+        if (receipt.status !== "success") throw new Error(`Registration transaction reverted. Transaction: ${hash}`);
+        spin.stop(ok(`registered ${hash.slice(0, 18)}…`));
+      } catch (error) {
+        throw new Error(registrationError(error, chainId));
+      }
     }
     saveConfig({ ...loadConfig(), gateway: o.gateway, hostAddress: account.address });
 
@@ -233,6 +239,11 @@ export async function run(o: RunOptions): Promise<void> {
     }
     console.log(box("Discoverable", [`model:    ${o.model}`, `host:     ${account.address}`, `watch:    ${o.gateway.replace(/:\d+$/, ":3002")}/network`]));
   } catch (e) {
+    if (o.statusFile) writeFileSync(o.statusFile, JSON.stringify(e instanceof FundingRequiredError
+      ? { kind: "needs_funds", ...e.funding }
+      : { kind: "error" }), { mode: 0o600 });
     throw e; // index.ts renders once
+  } finally {
+    spin.stop();
   }
 }

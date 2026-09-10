@@ -14,8 +14,8 @@ gates run in the gateway per request.
   refund, per-user daily quota, per-account `SpendCap`, org-pool
   `poolSpendCaps` + `debitFrom`. `HostRegistry`
   (`0xa45461bdefef422a81b22f36ebfd0995c7642dc3`) — register/heartbeat/
-  deregister. NOTE: onchain `MIN_STAKE` is dust (1e9 wei); the 5 HBAR stake is
-  our CLI default, not consensus. Live vault **predates** `SpendCap`/
+  deregister. NOTE: onchain `MIN_STAKE` is 1e9 tinybar = 10 HBAR. Hedera
+  contract values use tinybar; JSON-RPC transaction values use weibars. Live vault **predates** `SpendCap`/
   `poolSpendCaps` — onchain caps activate at the next vault redeploy.
 - **Gateway enforces policy** (offchain, per request): member allowances
   (429), org rules (403 `org_policy`), model allowlists, region allowlists
@@ -67,9 +67,13 @@ gates run in the gateway per request.
 **Goal**: fresh Mac → serving host, guided, zero dead ends.
 **Works now**: steps 0–6, tunnel, login+claim (proven live incl. owners-index
 readback), fund-wait loop, underfunded errors with address.
-**Just fixed**: stake 5 / fund 6 so one faucet trip (10 HBAR) suffices —
-previously exactly-10 keys failed the register tx on gas with zero visibility
-(log truncation wiped the error; waits now append).
+**Registration funding**: use the live registry minimum with Hedera's
+8-decimal contract units, converted to the relay's 18-decimal transaction
+value. The deployed minimum is 10 HBAR; keep another 1 HBAR for gas (11 total).
+The earlier 5-stake/6-fund guidance was wrong. Confirmed by read-only testnet
+simulation: 5 HBAR reverts `InsufficientStake`, 10 HBAR succeeds.
+Quickstart reads structured funding details from its own freshly built CLI;
+other registration failures stop immediately without another faucet loop.
 **Docker readiness**: quickstart now checks the engine during dependencies,
 opens Docker Desktop on macOS when needed, and waits up to 2 minutes with
 setup guidance. Missing Docker/Compose and startup failures have explicit

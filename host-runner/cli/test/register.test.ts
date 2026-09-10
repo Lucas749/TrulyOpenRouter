@@ -19,10 +19,10 @@ describe("shouldRegister (idempotent re-runs)", () => {
   });
 });
 
-describe("stake default (one faucet trip covers it)", () => {
-  it("defaults to 5 HBAR (faucet pays 10)", () => {
-    expect(DEFAULT_STAKE_HBAR).toBe(5);
-    expect(stakeShortfall(0n, DEFAULT_STAKE_HBAR)).toBe(6n * 10n ** 18n);
+describe("stake default (live registry minimum)", () => {
+  it("defaults to 10 HBAR plus gas reserve", () => {
+    expect(DEFAULT_STAKE_HBAR).toBe(10);
+    expect(stakeShortfall(0n, DEFAULT_STAKE_HBAR)).toBe(11n * 10n ** 18n);
   });
 });
 

@@ -14,6 +14,7 @@ cd "$(dirname "$0")"
 QS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/tor-qs.XXXXXX")
 QS_LOG="$QS_TMP/step.log"
 QS_TUNLOG="$QS_TMP/tunnel.log"
+QS_RUN_STATUS="$QS_TMP/run-status.json"
 # tor-host prints its own TOR banner on every command — the app frame already
 # carries the brand, so nested runs stay quiet (boxes/spinners still print).
 export TOR_QUIET=1
@@ -21,9 +22,7 @@ export TOR_QUIET=1
 PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
 MODEL_ID="${MODEL_ID:-}" # env pin; step 2 fills it. Declared here so set -u never trips.
-STAKE_HBAR="${STAKE_HBAR:-5}" # onchain MIN_STAKE is dust; faucet pays 10, so 5 + 1 gas fits one trip.
-case "$STAKE_HBAR" in ''|*[!0-9]*) STAKE_HBAR=5;; esac
-FUND_NEED=$((STAKE_HBAR + 1))
+STAKE_HBAR="${STAKE_HBAR:-}" # Omit to use the live registry minimum, with a 10 HBAR default.
 QS_SESS=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo "session")
 QS_REV=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 # Brand mark (TOR block glyphs — widths verified 19 cols, keep aligned).
@@ -341,15 +340,19 @@ ok "tools ready · Docker running"
 step 1 "fetching the CLI"
 if [ "$TUI" = 1 ]; then
   live_run 1 "installing + building tor-host…" sh -c 'cd host-runner/cli && npm install --no-audit --no-fund >/dev/null 2>&1 && npm run build >/dev/null 2>&1' \
-    && ok "tor-host ready" || warn "build hiccup — continuing, will retry at link time"
+    && ok "tor-host ready" || die "CLI build failed — see the error below"
 else
-  (cd host-runner/cli && npm install --no-audit --no-fund >/dev/null 2>&1 || true && npm run build >/dev/null 2>&1 || true)
+  (cd host-runner/cli && npm install --no-audit --no-fund && npm run build) || die "CLI build failed"
 fi
 if have tor-host; then ok "tor-host on PATH"; else
   warn "linking tor-host (may ask for sudo)…"
   (cd host-runner/cli && (npm link 2>/dev/null || sudo npm link)) || hint "link failed — use: npx --prefix host-runner/cli tsx src/index.ts"
   have tor-host && ok "tor-host on PATH" || warn "tor-host not on PATH yet — open a new terminal"
 fi
+
+# Use the CLI we just built, even if a global npm link points to another checkout.
+QS_CLI="$PWD/host-runner/cli/dist/index.js"
+tor_host() { node "$QS_CLI" "$@"; }
 
 # === 2/7 hardware → model =====================================================
 step 2 "checking your machine"
@@ -542,10 +545,10 @@ step 6 "linking your account"
 # exactly once, at step 7, pre-filled with your host address — only if it is
 # actually unfunded. A funding page with no address is never useful.
 pause "Continue to login (an approval page opens by itself)…"
-if have tor-host; then
+if have tor_host; then
   if [ "$TUI" = 1 ]; then
     UI_BODY="  linking this machine — the approval page opens by itself, one click…\n"; UI_FOOT="approve in the browser, I wait here"; render
-    if run_logged tor-host login --gateway="$PROD_GW"; then
+    if run_logged tor_host login --gateway="$PROD_GW"; then
       ok "logged in — this machine's host key is attached to your account now"
     else
       warn "login skipped — run later: tor-host login --gateway=$PROD_GW"
@@ -553,7 +556,7 @@ if have tor-host; then
     UI_BODY=""; UI_FOOT=""; render
   else
     hint "linking this machine — the approval page opens by itself, one click…"
-    if run_logged tor-host login --gateway="$PROD_GW"; then
+    if run_logged tor_host login --gateway="$PROD_GW"; then
       ok "logged in — this machine's host key is attached to your account now"
     else
       warn "login skipped — run later: tor-host login --gateway=$PROD_GW"
@@ -623,7 +626,7 @@ fund_wait() {
   while [ "$_fw_i" -lt "${FW_MAX:-600}" ]; do
     # cast's exit code first (a pipeline would report tr's) — blind ≠ zero.
     # < /dev/null: cast must not slurp Enters meant for the recheck read below.
-    if _fw_raw=$(cast balance "$1" --rpc-url https://testnet.hashio.io/api < /dev/null 2>/dev/null) && [ -n "$_fw_raw" ]; then
+    if _fw_raw=$(cast balance "$1" --rpc-url "$FUND_RPC" < /dev/null 2>/dev/null) && [ -n "$_fw_raw" ]; then
       _fw_wei=$(printf '%s' "$_fw_raw" | tr -d ' \n')
       case "$_fw_wei" in ''|*[!0-9]*) _fw_ok=0;; *) _fw_ok=1;; esac
     else
@@ -634,10 +637,10 @@ fund_wait() {
       [ -z "$_fw_int" ] && _fw_int=0
       # One line per balance (tail shows a single updating status, not a stack).
       if [ "$_fw_int" != "$_fw_last" ] || [ "$_fw_i" = 0 ]; then
-        echo "balance: ${_fw_int} HBAR / need ≥${FUND_NEED:-6} (${STAKE_HBAR:-5} stake + gas — Enter = recheck now)"
+        echo "balance: ${_fw_int} HBAR / need ≥$FUND_NEED ($STAKE_HBAR stake + gas — Enter = recheck now)"
         _fw_last="$_fw_int"
       fi
-      if [ "$_fw_int" -ge "${FUND_NEED:-6}" ] 2>/dev/null; then return 0; fi
+      if node -e 'process.exit(BigInt(process.argv[1]) >= BigInt(process.argv[2]) ? 0 : 1)' "$_fw_wei" "$FUND_WEI"; then return 0; fi
     else
       echo "balance: ? (RPC unreachable — retrying, NOT counted as zero)"
       _fw_last="?"
@@ -653,32 +656,40 @@ fund_wait() {
   return 1
 }
 host_addr() {
-  node -e "console.log(require(require('os').homedir()+'/.tor/config.json').hostAddress||'')" 2>/dev/null || echo ""
+  node -e 'const p=require("path"); console.log(require(p.join(process.env.TOR_HOME || p.join(require("os").homedir(),".tor"),"config.json")).hostAddress || "")'  2>/dev/null || echo ""
 }
-tries=0; registered=""
-while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
-  tries=$((tries + 1))
+registered=""
+while [ -z "$registered" ]; do
   if [ "$TUI" = 1 ]; then
-    UI_BODY="  registering — attempt $tries/3 (host key, testnet stake, owner-claim)…\n"; UI_FOOT="underfunded key? I wait for funds below, no re-typing"; render
+    UI_BODY="  checking registration and stake requirements…\n"; UI_FOOT="underfunded key? I wait for funds below, no re-typing"; render
   fi
-  if run_logged tor-host run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT"; then
+  set -- run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" --status-file="$QS_RUN_STATUS"
+  if [ -n "$STAKE_HBAR" ]; then set -- "$@" --stake-hbar="$STAKE_HBAR"; fi
+  rm -f "$QS_RUN_STATUS"
+  if run_logged tor_host "$@"; then
     registered=1
   else
-    # First attempt mints the host key, so the address exists now even though
-    # funding failed — show it big, open its funding page, and WAIT for the
-    # money instead of making you re-run anything.
-    HOST_ADDR=$(host_addr)
+    # Only a funding shortfall may enter the faucet wait. Other failures stop
+    # with their actual error instead of spending three attempts on funding.
+    RUN_KIND=$(node -e 'try { console.log(require(process.argv[1]).kind) } catch { console.log("error") }' "$QS_RUN_STATUS")
+    [ "$RUN_KIND" = "needs_funds" ] || die "Registration stopped — see the error below"
+    funding_field() { node -e 'console.log(require(process.argv[1])[process.argv[2]])' "$QS_RUN_STATUS" "$1"; }
+    HOST_ADDR=$(funding_field address)
+    STAKE_HBAR=$(funding_field stakeHbar)
+    FUND_NEED=$(funding_field totalHbar)
+    FUND_WEI=$(funding_field totalWei)
+    FUND_RPC=$(funding_field rpcUrl)
     if [ -n "$HOST_ADDR" ]; then
       printf '%s' "$HOST_ADDR" | pbcopy 2>/dev/null || printf '%s' "$HOST_ADDR" | xclip -selection clipboard 2>/dev/null || true
       if [ "$TUI" = 1 ]; then
-        UI_BODY="  fund THIS address (≥${FUND_NEED:-6} HBAR = ${STAKE_HBAR:-5} stake + gas) — your host key, not your login wallet:\n  ${B}$HOST_ADDR${RST}\n  (copied to clipboard — paste at faucet.hedera.com)\n"; UI_FOOT="watching it live below — Enter rechecks, funding auto-continues"; render
+        UI_BODY="  fund THIS address (≥$FUND_NEED HBAR = $STAKE_HBAR stake + gas) — your host key, not your login wallet:\n  ${B}$HOST_ADDR${RST}\n  (copied to clipboard — paste at faucet.hedera.com)\n"; UI_FOOT="watching it live below — Enter rechecks, funding auto-continues"; render
       else
-        ok "fund THIS address (≥${FUND_NEED:-6} HBAR = ${STAKE_HBAR:-5} stake + gas) — host key, not login wallet: $HOST_ADDR"
+        ok "fund THIS address (≥$FUND_NEED HBAR = $STAKE_HBAR stake + gas) — host key, not login wallet: $HOST_ADDR"
         hint "copied to clipboard — paste at faucet.hedera.com"
       fi
-      (open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding?address=$HOST_ADDR" 2>/dev/null || true)
+      (open "$PROD_WEB/host/onboarding?address=$HOST_ADDR&stake=$STAKE_HBAR" 2>/dev/null || xdg-open "$PROD_WEB/host/onboarding?address=$HOST_ADDR&stake=$STAKE_HBAR" 2>/dev/null || true)
       # Each 10-min window ends in keep-waiting-or-quit — the script never
-      # times out from under you. Only failed registers consume tries.
+      # times out from under you. Funding waits do not consume retry attempts.
       while :; do
       if [ "$TUI" = 1 ]; then
         UI_LOG=1
@@ -690,8 +701,7 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
           UI_LOG=0
         else
           hint "watching $HOST_ADDR for stake (faucet payouts can lag minutes — keep this open)…"
-          fund_wait "$HOST_ADDR" || _fw_rc=$?
-          _fw_rc=${_fw_rc:-0}
+          fund_wait "$HOST_ADDR" && _fw_rc=0 || _fw_rc=$?
         fi
         [ "$_fw_rc" = 0 ] && break
         _wf_more=""
@@ -709,20 +719,16 @@ while [ "$tries" -lt 3 ] && [ -z "$registered" ]; do
         fi
       done
       [ "$TUI" = 1 ] && { UI_BODY="  funded ✓ retrying register…\n"; render; } || ok "funded ✓ retrying register…"
-    elif [ "$tries" -ge 3 ]; then
-      die "run exited 3× — fund $HOST_ADDR (host key, not login wallet), then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
     else
-      pause "Run exited — check above, Enter retries ($tries/3)…"
+      die "Host address is missing — rerun quickstart to generate a host key"
     fi
   fi
 done
 [ "$TUI" = 1 ] && { UI_BODY=""; UI_FOOT=""; render; }
-if [ -z "$registered" ]; then
-  die "run exited 3× — fund the host key shown above, then re-run just this: tor-host run --gateway=$PROD_GW --model $MODEL_ID --endpoint=$ENDPOINT"
-fi
+
 ok "registered"
 # Belt-and-braces claim (run already claims when logged in; free when not).
-run_logged tor-host link --gateway="$PROD_GW" 2>/dev/null && ok "claimed for your account" || hint "claim later: tor-host link (needs login + registered host)"
+run_logged tor_host link --gateway="$PROD_GW" 2>/dev/null && ok "claimed for your account" || hint "claim later: tor-host link (needs login + registered host)"
 HOST_ADDR=$(host_addr)
 if [ -n "$HOST_ADDR" ]; then
   SEEN=$(curl -sf "$PROD_GW/api/hosts/$HOST_ADDR" 2>/dev/null || echo "")
