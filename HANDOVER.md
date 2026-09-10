@@ -1,4 +1,4 @@
-# Handover — TrulyOpenRouter (as of the live host console rollout, 2026-09-11)
+# Handover — TrulyOpenRouter (as of the host controls rollout, 2026-09-11)
 
 ## What this is
 Decentralized OpenRouter on Hedera testnet: users chat with LLMs through a
@@ -43,6 +43,53 @@ gates run in the gateway per request.
 - Repo: `https://github.com/Lucas749/TrulyOpenRouter`, small commits on `main`.
 
 ## What is built (this session worked newest-first)
+- **Host controls and visual polish (2026-09-11)**: terminal redraw replaces
+  the full viewport, preventing old tab text from overlapping; the TOR banner
+  is restored on larger screens. Web host dashboard uses the landing page's
+  white, black, and neutral-gray palette. Vercel deployment
+  `dpl_FBQM4YTAFKu7JuDyhHzra6uyNNp1` (code `a6c9730`) is ready; production
+  desktop/mobile checks show no browser errors or horizontal overflow.
+- **CLI lifecycle**: Controls has start (`s`), shutdown (`p`), restart (`x`),
+  model chooser (`m`), software-key withdrawal (`w`), and Ledger approval (`l`).
+  Equivalent commands: `tor-host start|stop|restart`, `tor-host model <tag>`,
+  `tor-host withdraw [--ledger]`. Stop pauses new gateway routes before stopping
+  guard, Ollama, and the managed tunnel. Start restores services/tunnel and
+  enables routes only after model and endpoint readiness. Quickstart transfers
+  tunnel process ownership and updates effective routing even for an existing
+  registration. Managed PIDs are verified against process start time/command.
+  Closing the console leaves services running. Model downloads retain files.
+- **Signed routing state**: `host_runtime` stores model/digest/endpoint/pause
+  revisions in Postgres. Exact host-key signature, five-minute submission
+  expiry, active stake, registry, original model, and next revision are checked.
+  Original onchain registration and stake remain unchanged; no contract redeploy
+  was needed for these controls. Discovery includes updated models and model
+  verification is specific to the effective model. APIs distinguish paused
+  routing from active registration so the web never offers stake release merely
+  because routing is paused. See `docs/POLICIES.md` and `host-runner/README.md`.
+- **Earnings**: vault `hostEarnings` is credits, not tinybar. Available HBAR now
+  uses the live `REFUND_RATE_WEI_PER_CREDIT`; compatibility field `earningsWei`
+  carries tinybar. CLI also shows settled seven-day host earnings. Withdrawals
+  quote all available earnings, destination, and maximum fee, then require a
+  successful receipt; pending/reverted transactions stay explicit. The Ledger
+  option verifies a USB device signature before the existing software host key
+  submits on Hedera. It is local approval, not a hardware-held host key or
+  onchain multisig. USB libraries load and enumerate successfully; no device
+  was attached, so physical approval remains unverified. User funds were not
+  moved. An isolated Anvil test proves nonzero withdrawal, host receipt of funds,
+  cleared earnings, and rejection of a second empty withdrawal.
+- **Validation and rollout**: CLI 70 tests plus the explicit Anvil withdrawal
+  proof pass; terminal emulator checks cover stale rows and resizing. Gateway
+  98 tests pass (9 database-dependent skips); a separate temporary-table test
+  against production Postgres verifies runtime persistence and revision
+  conflicts without changing real records. HTTP routing tests prove updated
+  model/endpoint routing and pause exclusion. Shell suite: 13 pass. Web typecheck,
+  targeted lint, and 5 dashboard tests pass. Gateway was rebuilt from committed
+  sources and recreated; rollback image `tor-gateway:before-host-controls`.
+  The remote checkout has no `.git`; deploy source archives, not `git pull`.
+  Final read-only check of local host `0xe0D003aE8B216Bd3c1C45081598A24221F944F89`
+  found Docker stopped, public endpoint offline, zero requests/earnings, and
+  4 HBAR stake. Its services were left in that state. Live controls are available
+  on reopening the console; physical start/stop was tested with service doubles.
 - **Live host console (2026-09-11)**: quickstart opens the TUI immediately
   after registration. Reopen with `tor-host` or `tor-host dashboard`.
   Seven tabs cover overview, request activity, models, network, logs, controls,
