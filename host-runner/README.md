@@ -9,10 +9,14 @@ tor-host
 # or: tor-host dashboard
 ```
 
-Use **1–6** or **← / →** to explore the overview, request activity, local models,
-network, service logs, and help. **↑ / ↓** scroll, **r** refreshes, **l** switches
+Use **1–7** or **← / →** to explore the overview, request activity, local models,
+network, service logs, controls, and help. **↑ / ↓** scroll, **r** refreshes, **l** switches
 the log source, and **q** closes the view. Closing the console leaves services
 running. It refreshes every 10 seconds and keeps the selected tab in place.
+On **Controls (6)**, **s** starts existing services, **p** pauses the guard,
+**g** restarts the guard, and **o** restarts Ollama. Restarting a service
+interrupts its current requests. These actions preserve container settings,
+registration, and stake.
 
 The overview checks the registered public endpoint, local guard, and Ollama.
 “Ready to serve” means these checks pass; “Serving · recent traffic” means a

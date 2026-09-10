@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { initialView, navigate, webLink } from "../src/dashboard.js";
 import { cleanText, renderMonitor, textWidth, wrap } from "../src/monitor-view.js";
 import { collectLog, rememberLogFiles } from "../src/monitor-logs.js";
+import { serviceControl } from "../src/monitor-controls.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -15,7 +16,7 @@ describe("terminal dashboard", () => {
     expect(navigate(state, { name: "l" }).logSource).toBe("ollama");
     expect(navigate(state, { name: "pagedown" }, 15).scroll).toBe(15);
     expect(navigate({ ...state, scroll: 15 }, { name: "right" })).toMatchObject({ tab: 5, scroll: 0 });
-    expect(navigate({ ...state, tab: 0 }, { name: "left" }).tab).toBe(5);
+    expect(navigate({ ...state, tab: 0 }, { name: "left" }).tab).toBe(6);
   });
 
   it("fits small and large terminals, including wide model names and long logs", () => {
@@ -55,5 +56,21 @@ describe("terminal dashboard", () => {
       rmSync(log);
       expect((await collectLog("tunnel"))[0]).toContain("no longer available");
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("resumes existing containers without rebuilding or changing their configuration", async () => {
+    const shell = vi.fn().mockResolvedValue({ ok: true, out: "" });
+    expect(await serviceControl("s", undefined, shell)).toContain("Local services started");
+    expect(shell.mock.calls[0][1].slice(-3)).toEqual(["start", "ollama", "guard"]);
+    expect(shell.mock.calls[0][1]).not.toContain("up");
+    await serviceControl("p", undefined, shell);
+    expect(shell.mock.calls[1][1].slice(-2)).toEqual(["stop", "guard"]);
+    expect(shell.mock.calls[1][1]).not.toContain("down");
+  });
+
+  it("keeps failed service actions visible instead of claiming a successful pause", async () => {
+    const result = await serviceControl("p", undefined, vi.fn().mockResolvedValue({ ok: false, out: "daemon unreachable" }));
+    expect(result).toContain("did not finish");
+    expect(result).not.toContain("Local guard paused");
   });
 });

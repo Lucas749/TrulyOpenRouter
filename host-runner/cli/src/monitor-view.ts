@@ -2,8 +2,8 @@ import { stripVTControlCharacters } from "node:util";
 import { decimalAmount, servingState, type MonitorSnapshot, type Reading } from "./monitor.js";
 import { type LogSource } from "./monitor-logs.js";
 
-export const TABS = ["Overview", "Activity", "Models", "Network", "Logs", "Help"] as const;
-export interface ViewState { tab: number; scroll: number; refreshing: boolean; logSource: LogSource; logs: string[]; notice: string }
+export const TABS = ["Overview", "Activity", "Models", "Network", "Logs", "Controls", "Help"] as const;
+export interface ViewState { tab: number; scroll: number; refreshing: boolean; logSource: LogSource; logs: string[]; notice: string; controlBusy?: boolean; controlMessage?: string }
 
 // External model names, URLs, and logs are data, never terminal instructions.
 export function cleanText(value: unknown): string {
@@ -59,9 +59,20 @@ function tableRow(values: unknown[], widths: number[]): string {
 }
 
 export function viewLines(snapshot: MonitorSnapshot | null, state: ViewState, width: number): string[] {
-  if (state.tab === 5) return [
-    "YOUR HOST CONSOLE", "", "← / → or Tab       Switch tabs", "1–6                 Jump to a tab", "↑ / ↓, PgUp / PgDn   Scroll", "r / Enter           Refresh now", "l                   Switch log source on Logs", "d                   Open your web dashboard", "n                   Open the network explorer", "q / Ctrl+C          Close this view", "",
+  if (state.tab === 6) return [
+    "YOUR HOST CONSOLE", "", "← / → or Tab       Switch tabs", "1–7                 Jump to a tab", "↑ / ↓, PgUp / PgDn   Scroll", "r / Enter           Refresh now", "l                   Switch log source on Logs", "6                   Start, pause, restart services", "d                   Open your web dashboard", "n                   Open the network explorer", "q / Ctrl+C          Close this view", "",
     "Closing this dashboard does not stop the model, guard, or tunnel.", "", "OTHER COMMANDS", "tor-host dashboard       Reopen this console", "tor-host status          Print one snapshot", "tor-host status --json   Export public telemetry", "tor-host login           Link your account", "tor-host verify          Run a paid model spot-check", "tor-host ledger status   Inspect your device setup", "tor-host leave --dry-run Preview unstaking and withdrawal", "", "Readiness checks use health endpoints. They do not send inference requests.",
+  ].flatMap(line => wrap(line, width));
+  if (state.tab === 5) return [
+    "SERVING CONTROLS", "",
+    "s  Start local services", "   Resume the existing Ollama and guard containers.", "",
+    "p  Pause serving", "   Stop the local guard. Registration and stake stay in place.", "",
+    "g  Restart guard", "   Restart the request endpoint without restarting Ollama.", "",
+    "o  Restart model service", "   Restart Ollama. This interrupts in-flight inference.", "",
+    "r  Refresh readiness     d  Open web dashboard     n  Open network", "",
+    ...(state.controlMessage ? [state.controlBusy ? "IN PROGRESS" : "LAST ACTION", state.controlMessage, ""] : []),
+    "These controls manage the Docker services from quickstart. They preserve the container configuration and do not move funds.",
+    "Closing this console leaves services running. Pause serving explicitly with p.",
   ].flatMap(line => wrap(line, width));
   if (state.tab === 4) return [
     `SERVICE LOGS · ${state.logSource}`, "l: guard → ollama → tunnel → setup", "", ...state.logs.flatMap(line => wrap(line, width)),
@@ -131,10 +142,10 @@ export function renderMonitor(snapshot: MonitorSnapshot | null, state: ViewState
   const paint = (text: string, code: string) => color ? `\x1b[${code}m${text}\x1b[0m` : text;
   const title = fit("TrulyOpenRouter  /  Host console", width);
   if (columns < 36 || rows < 10) return [title, "Resize for the full dashboard", "q: close"].slice(0, rows - 1).map(l => fit(l, columns - 1)).join("\r\n");
-  const labels = width >= 85 ? TABS : ["Over", "Req", "Models", "Net", "Logs", "Help"];
-  const tabs = width < 58 ? `${TABS[state.tab]} [${state.tab + 1}/6] · ←/→ switch tabs` : labels.map((name, i) => `${i + 1} ${i === state.tab ? `[${name}]` : name}`).join("  ");
+  const labels = width >= 98 ? TABS : ["Over", "Req", "Models", "Net", "Logs", "Ctrl", "Help"];
+  const tabs = width < 70 ? `${TABS[state.tab]} [${state.tab + 1}/${TABS.length}] · ←/→ switch tabs` : labels.map((name, i) => `${i + 1} ${i === state.tab ? `[${name}]` : name}`).join("  ");
   const header = [paint(title, "1"), fit(tabs, width), paint("─".repeat(width), "90")];
-  const footer = [paint("─".repeat(width), "90"), fit(state.notice || `${state.refreshing ? "Refreshing…" : snapshot ? `Updated ${time(snapshot.at)}` : "Connecting…"} · auto-refresh 10s`, width), fit("←/→ tabs  ↑/↓ scroll  r refresh  d web  q close", width)];
+  const footer = [paint("─".repeat(width), "90"), fit(state.notice || `${state.refreshing ? "Refreshing…" : snapshot ? `Updated ${time(snapshot.at)}` : "Connecting…"} · auto-refresh 10s`, width), fit(width < 60 ? "←/→ tabs  ↑/↓ scroll  q quit" : "←/→ tabs  ↑/↓ scroll  r refresh  d web  q close", width)];
   const height = Math.max(1, rows - header.length - footer.length - 1);
   const lines = viewLines(snapshot, state, width);
   const offset = Math.min(Math.max(0, state.scroll), Math.max(0, lines.length - height));

@@ -3,6 +3,7 @@ import { collectMonitor, type MonitorOptions, type MonitorSnapshot } from "./mon
 import { collectLog, LOG_SOURCES, rememberLogFiles, type LogFiles } from "./monitor-logs.js";
 import { cleanText, renderMonitor, TABS, viewLines, type ViewState } from "./monitor-view.js";
 import { sh } from "./util.js";
+import { SERVICE_ACTIONS, serviceControl, type ServiceKey } from "./monitor-controls.js";
 
 export interface DashboardOptions extends MonitorOptions, LogFiles { once?: boolean; json?: boolean }
 export function initialView(): ViewState {
@@ -12,7 +13,8 @@ export function initialView(): ViewState {
 export function navigate(state: ViewState, key: Key, pageSize = 12): ViewState {
   const next = { ...state, notice: "" };
   const number = Number(key.sequence);
-  if (/^[1-6]$/.test(key.sequence ?? "")) next.tab = number - 1;
+  if (/^[1-7]$/.test(key.sequence ?? "")) next.tab = number - 1;
+  else if (key.sequence === "?") next.tab = 6;
   else if (key.name === "right" || (key.name === "tab" && !key.shift)) next.tab = (next.tab + 1) % TABS.length;
   else if (key.name === "left" || (key.name === "tab" && key.shift)) next.tab = (next.tab + TABS.length - 1) % TABS.length;
   else if (key.name === "down" || key.name === "j") next.scroll += 1;
@@ -97,6 +99,26 @@ export async function dashboard(options: DashboardOptions = {}): Promise<void> {
   };
   const keypress = (_text: string, key: Key) => {
     if (key.name === "q" || (key.ctrl && key.name === "c")) { finish(); return; }
+    if (state.tab === 5 && !key.ctrl && !key.meta && key.name && Object.hasOwn(SERVICE_ACTIONS, key.name)) {
+      if (state.controlBusy) return;
+      const action = key.name as ServiceKey;
+      state.controlBusy = true;
+      state.controlMessage = `${SERVICE_ACTIONS[action].label}…`;
+      state.notice = state.controlMessage;
+      render();
+      void serviceControl(action, controller.signal).then(message => {
+        if (closed) return;
+        state.controlMessage = message; state.notice = message; state.controlBusy = false;
+        void refresh(); render();
+      }).catch(() => {
+        if (!closed) {
+          state.controlBusy = false;
+          state.controlMessage = "Service action failed. Check Docker and the service logs.";
+          state.notice = state.controlMessage; render();
+        }
+      });
+      return;
+    }
     if (key.name === "r" || key.name === "return") { void refresh(); return; }
     if (key.name === "d" || key.name === "n") {
       const url = webLink(snapshot?.gateway ?? options.gateway ?? "", key.name === "d" ? "/host/dashboard" : "/network");
