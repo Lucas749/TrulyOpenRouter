@@ -4,15 +4,13 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { createPublicClient, formatEther, http } from "viem";
+import { createPublicClient, formatEther, http, parseEther } from "viem";
 import LoginButton from "../../components/login-button";
 import { contractUrl } from "../../../lib/chain";
+import { loadHostFunding } from "../../../lib/host-funding";
 
 const RPC = "https://testnet.hashio.io/api";
 const GW = "/api/gw"; // same-origin proxy, never localhost
-const STAKE_HBAR = 5; // default stake, mirrored from tor-host run (onchain MIN_STAKE is dust)
-// Users fund STAKE + 1 gas headroom in a single faucet trip (faucet pays 10).
-const NEED_HBAR = STAKE_HBAR + 1;
 
 function short(a: string) {
   return `${a.slice(0, 10)}…${a.slice(-4)}`;
@@ -63,6 +61,26 @@ function HostOnboardingInner() {
   const [msg, setMsg] = useState<string | null>(null);
   const [balances, setBalances] = useState<Record<string, string | null>>({});
   const [checking, setChecking] = useState(false);
+  const [funding, setFunding] = useState<{ stakeHbar: string; totalHbar: string } | null>(null);
+  const [fundingError, setFundingError] = useState(false);
+  const requestedStake = params.get("stake");
+  const STAKE_HBAR = funding?.stakeHbar ?? "—";
+  const NEED_HBAR = funding?.totalHbar ?? "—";
+
+  useEffect(() => {
+    let stopped = false;
+    const load = async () => {
+      try {
+        const next = await loadHostFunding(requestedStake);
+        if (!stopped) { setFunding(next); setFundingError(false); }
+      } catch {
+        if (!stopped) { setFunding(null); setFundingError(true); }
+      }
+    };
+    void load();
+    const timer = setInterval(load, 15000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [requestedStake]);
 
   const clean = addr.trim();
   const valid = /^0x[0-9a-fA-F]{40}$/.test(clean);
@@ -178,7 +196,7 @@ function HostOnboardingInner() {
   }
 
   // Live hosts read low (stake is locked) — done counts as funded.
-  const funded = done || (balance !== null && Number(balance) >= NEED_HBAR);
+  const funded = done || (funding !== null && balance !== null && parseEther(balance) >= parseEther(funding.totalHbar));
   const step = !authenticated ? 1 : hostState === "live" ? 3 : 2;
 
   return (
@@ -215,13 +233,14 @@ function HostOnboardingInner() {
             2 · Your host keys — serve models, pay stake {funded ? "✓" : ""}
           </div>
           <p className="m-0 mb-3 text-sm text-[#6E6E73]">
-            One row per machine on this account — pick one to fund (≥ {NEED_HBAR} HBAR = {STAKE_HBAR} stake + gas).
+            One row per machine on this account — pick one to fund (≥ {NEED_HBAR} HBAR = {STAKE_HBAR} stake + gas reserve).
           </p>
+          {fundingError && <p className="text-sm text-amber-700">Cannot check the current stake requirement. Retrying automatically.</p>}
           {visibleOwned.length > 0 && (
             <div className="mb-3 flex flex-col gap-2">
               {visibleOwned.map((a) => {
                 const bal = balances[a.toLowerCase()];
-                const ready = bal != null && Number(bal) >= NEED_HBAR;
+                const ready = bal != null && funding !== null && parseEther(bal) >= parseEther(funding.totalHbar);
                 const active = a.toLowerCase() === clean.toLowerCase();
                 return (
                   <div
