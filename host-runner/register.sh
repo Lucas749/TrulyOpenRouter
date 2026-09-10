@@ -3,7 +3,7 @@
 #   REGISTRY, RPC_URL, HOST_KEY, ENDPOINT, MODEL_ID, MODEL_DIGEST,
 #   PRICE_PER_REQ_WEI, PRICE_PER_1K_WEI  (IMAGE_DIGEST, STAKE_WEI optional)
 # Value units: the hashio relay delivers contract msg.value in TINYBARS (sent/1e10).
-# STAKE_WEI default = 10 HBAR sent = 1e9 delivered = testnet MIN_STAKE.
+# STAKE_WEI default = 4 HBAR sent = 4e8 delivered = testnet MIN_STAKE.
 set -eu
 : "${REGISTRY:?set REGISTRY (HostRegistry address)}"
 : "${RPC_URL:?set RPC_URL}"
@@ -16,4 +16,4 @@ cast send "$REGISTRY" \
   "register(string,string,bytes32,bytes32,uint256,uint256,bytes)" \
   "$ENDPOINT" "$MODEL_ID" "$MODEL_DIGEST" "${IMAGE_DIGEST:-0x0000000000000000000000000000000000000000000000000000000000000000}" \
   "${PRICE_PER_REQ_WEI:-1000000000000}" "${PRICE_PER_1K_WEI:-100000000000}" "0x" \
-  --rpc-url "$RPC_URL" --private-key "$HOST_KEY" --value "${STAKE_WEI:-100000000000000000}"
+  --rpc-url "$RPC_URL" --private-key "$HOST_KEY" --value "${STAKE_WEI:-4000000000000000000}"

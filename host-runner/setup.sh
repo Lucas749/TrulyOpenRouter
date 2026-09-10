@@ -40,7 +40,7 @@ ask ENDPOINT "Public endpoint of YOUR guard (https://… — LAN ips won't route
 ask HOST_HEDERA_ID "Your Hedera account id (0.0.…, receives USDC)" ""
 [ -n "$HOST_HEDERA_ID" ] || { echo "HOST_HEDERA_ID is required"; exit 1; }
 ask_secret HOST_KEY "Your host ECDSA private key (0x…, testnet only)"
-ask STAKE_HBAR "Stake in HBAR (min 5, locked until release)" "5"
+ask STAKE_HBAR "Stake in HBAR (min 4; keep 1 HBAR for gas)" "4"
 ask PRICE_PER_REQ "Price per req, delivered units (100000 = 1 credit)" "100000"
 ask PRICE_PER_1K "Price per 1k tokens, delivered units" "100000"
 

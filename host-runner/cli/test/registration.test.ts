@@ -3,7 +3,10 @@ import { ContractFunctionRevertedError, encodeErrorResult, parseAbi } from "viem
 import { registrationError, registrationStake, registryValueWei } from "../src/registration.js";
 
 describe("registration units", () => {
-  it("converts the deployed Hedera minimum to 10 HBAR", () => {
+  it("uses 4 HBAR on the lower-stake registry", () => {
+    expect(registrationStake(400_000_000n, 296)).toBe(4n * 10n ** 18n);
+  });
+  it("still honors the legacy 10 HBAR registry minimum", () => {
     expect(registrationStake(1_000_000_000n, 296)).toBe(10n * 10n ** 18n);
     expect(registryValueWei(1_000_000_000n, 296)).toBe(10n * 10n ** 18n);
   });

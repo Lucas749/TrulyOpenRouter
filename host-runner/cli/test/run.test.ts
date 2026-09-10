@@ -40,9 +40,9 @@ describe("run registration funding", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       json: async () => ({ models: [{ name: options.model }] }),
     }));
-    chain.getBalance.mockResolvedValue(11n * HBAR);
+    chain.getBalance.mockResolvedValue(5n * HBAR);
     chain.readContract.mockImplementation(async ({ functionName }) =>
-      functionName === "getHost" ? { active: false, stake: 0n } : 1_000_000_000n);
+      functionName === "getHost" ? { active: false, stake: 0n } : 400_000_000n);
     chain.waitForTransactionReceipt.mockResolvedValue({ status: "success" });
     chain.writeContract.mockResolvedValue(`0x${"a".repeat(64)}`);
   });
@@ -69,18 +69,18 @@ describe("run registration funding", () => {
   });
 
   it("still requires gas headroom when registering an inactive host", async () => {
-    chain.getBalance.mockResolvedValue(10n * HBAR);
+    chain.getBalance.mockResolvedValue(4n * HBAR);
 
     await expect(run(options)).rejects.toThrow("Add 1 testnet HBAR to your host wallet");
     expect(chain.writeContract.mock.calls).toHaveLength(0);
   });
 
   it("writes the actual funding target for quickstart", async () => {
-    chain.getBalance.mockResolvedValue(10n * HBAR);
+    chain.getBalance.mockResolvedValue(4n * HBAR);
     const statusFile = join(home, "run.json");
     await expect(run({ ...options, statusFile })).rejects.toThrow("Add 1 testnet HBAR");
     expect(JSON.parse(readFileSync(statusFile, "utf8"))).toMatchObject({
-      kind: "needs_funds", address, stakeHbar: "10", totalHbar: "11", totalWei: String(11n * HBAR),
+      kind: "needs_funds", address, stakeHbar: "4", totalHbar: "5", totalWei: String(5n * HBAR),
     });
   });
 
@@ -96,10 +96,10 @@ describe("run registration funding", () => {
     expect(vi.mocked(sh).mock.calls.some(([, args]) => args.slice(-3).join(" ") === "up -d guard")).toBe(false);
   });
 
-  it("stakes once when an inactive host has enough balance", async () => {
+  it("registers with exactly 5 HBAR overall and leaves gas reserve", async () => {
     await run(options);
 
     expect(chain.writeContract.mock.calls).toHaveLength(1);
-    expect(chain.writeContract.mock.calls[0][0]).toMatchObject({ functionName: "register", value: 10n * HBAR });
+    expect(chain.writeContract.mock.calls[0][0]).toMatchObject({ functionName: "register", value: 4n * HBAR });
   });
 });

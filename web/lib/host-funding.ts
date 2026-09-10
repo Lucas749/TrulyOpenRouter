@@ -2,7 +2,7 @@ import { createPublicClient, formatEther, http, parseAbi, parseEther } from "vie
 
 export function hostFunding(minimum: bigint, chainId: number, requested: string | null = null) {
   const minWei = [295, 296, 297, 298].includes(chainId) ? minimum * BigInt(1e10) : minimum;
-  const preferred = requested && /^\d+(\.\d{1,8})?$/.test(requested) ? parseEther(requested) : parseEther("10");
+  const preferred = requested && /^\d+(\.\d{1,8})?$/.test(requested) ? parseEther(requested) : parseEther("4");
   const stakeWei = preferred > minWei ? preferred : minWei;
   return { stakeHbar: formatEther(stakeWei), totalHbar: formatEther(stakeWei + parseEther("1")) };
 }

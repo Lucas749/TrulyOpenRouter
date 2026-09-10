@@ -23,7 +23,7 @@ export TOR_QUIET=1
 PROD_GW="${PROD_GW:-https://trulyopenrouter.vercel.app/api/gw}"
 PROD_WEB="${PROD_WEB:-https://trulyopenrouter.vercel.app}"
 MODEL_ID="${MODEL_ID:-}" # env pin; step 2 fills it. Declared here so set -u never trips.
-STAKE_HBAR="${STAKE_HBAR:-}" # Omit to use the live registry minimum, with a 10 HBAR default.
+STAKE_HBAR="${STAKE_HBAR:-}" # Omit to use the live registry minimum, with a 4 HBAR default (5 total including gas).
 QS_SESS=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo "session")
 QS_REV=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 # Brand mark (TOR block glyphs — widths verified 19 cols, keep aligned).

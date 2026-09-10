@@ -1,6 +1,6 @@
 import { BaseError, ContractFunctionRevertedError, formatEther, parseEther } from "viem";
 
-export const DEFAULT_STAKE_HBAR = 10;
+export const DEFAULT_STAKE_HBAR = 4;
 export const GAS_RESERVE_WEI = 10n ** 18n;
 
 // Hedera contract values are tinybar; JSON-RPC transaction values use weibars.

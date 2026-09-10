@@ -20,9 +20,9 @@ describe("shouldRegister (idempotent re-runs)", () => {
 });
 
 describe("stake default (live registry minimum)", () => {
-  it("defaults to 10 HBAR plus gas reserve", () => {
-    expect(DEFAULT_STAKE_HBAR).toBe(10);
-    expect(stakeShortfall(0n, DEFAULT_STAKE_HBAR)).toBe(11n * 10n ** 18n);
+  it("needs 5 HBAR overall: 4 stake plus 1 gas reserve", () => {
+    expect(DEFAULT_STAKE_HBAR).toBe(4);
+    expect(stakeShortfall(0n, DEFAULT_STAKE_HBAR)).toBe(5n * 10n ** 18n);
   });
 });
 

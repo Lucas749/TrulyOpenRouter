@@ -102,7 +102,7 @@ curl -X POST http://127.0.0.1:4121/api/keys -d '{"scopes":{"models":["qwen2.5:0.
 # member allowance: 429 quota_exceeded past cap · vault debit is the backstop
 # key budget accounts derive per prefix (HKDF) — fund explicitly, never auto`} />
         <div id="hosts"></div>
-        <Snippet title="Host API (serve + earn)" code={`# register (stakes 10 HBAR, key never leaves your machine)
+        <Snippet title="Host API (serve + earn)" code={`# register (4 HBAR stake + 1 HBAR gas reserve; key stays on your machine)
 sh host-runner/setup.sh
 # directory + detail + verify
 curl http://127.0.0.1:4121/api/hosts
