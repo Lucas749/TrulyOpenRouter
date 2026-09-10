@@ -11,6 +11,11 @@ import { dashboard, type DashboardOptions } from "./dashboard.js";
 import { ledgerCmd } from "./ledger.js";
 import { flag as flagArg } from "./util.js";
 import { myHostAddress, verifyHost } from "./verify.js";
+import { lifecycleDeps, operateHost, type HostAction } from "./host-lifecycle.js";
+import { withdrawEarnings } from "./withdraw.js";
+import { decimalAmount } from "./monitor.js";
+import { createInterface } from "node:readline/promises";
+import { formatEther } from "viem";
 
 const [, , cmd, ...rest] = process.argv;
 const flag = (name: string, def?: string) => flagArg(rest, name, def);
@@ -31,6 +36,21 @@ try {
   }
   else if (cmd === "link") await link(gateway());
   else if (cmd === "verify") await verifyHost(gateway(), flag("address") ?? myHostAddress());
+  else if (["start", "stop", "restart", "model"].includes(cmd)) {
+    console.log(await operateHost(cmd as HostAction, lifecycleDeps(gateway()), cmd === "model" ? (rest[0]?.startsWith("--") ? flag("model") : rest[0]) : undefined, message => console.log(message)));
+  }
+  else if (cmd === "withdraw") {
+    const method = rest.includes("--ledger") ? "ledger" : "softkey";
+    console.log(await withdrawEarnings(gateway(), method, async quote => {
+      console.log(`Withdraw all earnings to ${quote.address}\nCurrent balance: ${decimalAmount(String(quote.tinybar), 8)} HBAR\nMaximum fee: ${formatEther(quote.maxFeeWei)} HBAR\nNew earnings before confirmation are included. Stake stays locked.`);
+      if (rest.includes("--dry-run")) return false;
+      if (rest.includes("--yes")) return true;
+      if (!process.stdin.isTTY) { console.log("Run interactively to confirm, or pass --yes."); return false; }
+      const input = createInterface({ input: process.stdin, output: process.stdout });
+      try { return /^y(es)?$/i.test((await input.question(`Withdraw using ${method === "ledger" ? "Ledger approval + host key" : "the software host key"}? [y/N] `)).trim()); }
+      finally { input.close(); }
+    }, message => console.log(message)));
+  }
   else if (cmd === "leave") {
     const cfg = await (await fetch(`${gateway()}/api/config`)).json().catch(() => ({}));
     await leave({
@@ -53,10 +73,12 @@ try {
       stakeHbar: flag("stake-hbar"),
       endpoint: flag("endpoint"),
       statusFile: flag("status-file"),
+      tunnelPid: flag("tunnel-pid"),
+      tunnelLog: flag("tunnel-log"),
     });
     if (!flag("status-file") && !rest.includes("--no-dashboard") && process.stdin.isTTY && process.stdout.isTTY) await dashboard(dashboardOptions());
   } else {
-    console.log("tor-host — serve open models on TrulyOpenRouter\n\n  tor-host                            open the host console\n  tor-host dashboard                  live status, activity, models, network, logs\n  tor-host status [--json|--watch]     snapshot or live console\n  tor-host login [--gateway=URL]       link this machine to your web account\n  tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N]\n  tor-host link                       claim this host for your account\n  tor-host ledger [status|init|taps]    device + key-ring state, guided setup, tap queue\n  tor-host verify [--address 0x…]      fingerprint spot-check my host\n  tor-host leave [--dry-run]           deregister, withdraw, stop guard\n\n  Dashboard: --once, --gateway URL, --guard-url URL, --ollama-url URL\n  Run: --no-dashboard keeps sequential output after setup");
+    console.log("tor-host — serve open models on TrulyOpenRouter\n\n  tor-host                            open the host console\n  tor-host dashboard                  live status, activity, models, network, logs\n  tor-host status [--json|--watch]     snapshot or live console\n  tor-host login [--gateway=URL]       link this machine to your web account\n  tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N]\n  tor-host link                       claim this host for your account\n  tor-host ledger [status|init|taps]    device + key-ring state, guided setup, tap queue\n  tor-host verify [--address 0x…]      fingerprint spot-check my host\n  tor-host start | stop | restart      manage services, tunnel, and routing\n  tor-host model <tag>                 change the serving model\n  tor-host withdraw [--ledger]         withdraw earnings (review first)\n  tor-host leave [--dry-run]           deregister and begin unstaking\n\n  Dashboard: --once, --gateway URL, --guard-url URL, --ollama-url URL\n  Run: --no-dashboard keeps sequential output after setup");
     if (cmd && !["help", "--help", "-h"].includes(cmd)) process.exitCode = 1;
   }
 } catch (e) {

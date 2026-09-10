@@ -1,9 +1,11 @@
 import { emitKeypressEvents, type Key } from "node:readline";
-import { collectMonitor, type MonitorOptions, type MonitorSnapshot } from "./monitor.js";
+import { collectMonitor, decimalAmount, type MonitorOptions, type MonitorSnapshot } from "./monitor.js";
 import { collectLog, LOG_SOURCES, rememberLogFiles, type LogFiles } from "./monitor-logs.js";
 import { cleanText, renderMonitor, terminalFrame, viewportHeight, TABS, viewLines, type ViewState } from "./monitor-view.js";
 import { sh } from "./util.js";
-import { SERVICE_ACTIONS, serviceControl, type ServiceKey } from "./monitor-controls.js";
+import { lifecycleDeps, operateHost, type HostAction } from "./host-lifecycle.js";
+import { withdrawEarnings } from "./withdraw.js";
+import { formatEther } from "viem";
 
 export interface DashboardOptions extends MonitorOptions, LogFiles { once?: boolean; json?: boolean }
 export function initialView(): ViewState {
@@ -48,6 +50,7 @@ export async function dashboard(options: DashboardOptions = {}): Promise<void> {
   let snapshot: MonitorSnapshot | null = null;
   let state = initialView(), closed = false, busy = false, queued = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let confirmWithdrawal: ((value: boolean) => void) | undefined;
   const controller = new AbortController();
   const oldRaw = Boolean(input.isRaw);
   const color = process.env.NO_COLOR === undefined;
@@ -70,6 +73,7 @@ export async function dashboard(options: DashboardOptions = {}): Promise<void> {
     closed = true;
     clearTimeout(timer);
     controller.abort();
+    confirmWithdrawal?.(false);
     resolveDone();
   };
   const refresh = async () => {
@@ -97,27 +101,55 @@ export async function dashboard(options: DashboardOptions = {}): Promise<void> {
       }
     }
   };
-  const keypress = (_text: string, key: Key) => {
-    if (key.name === "q" || (key.ctrl && key.name === "c")) { finish(); return; }
-    if (state.tab === 5 && !key.ctrl && !key.meta && key.name && Object.hasOwn(SERVICE_ACTIONS, key.name)) {
-      if (state.controlBusy) return;
-      const action = key.name as ServiceKey;
-      state.controlBusy = true;
-      state.controlMessage = `${SERVICE_ACTIONS[action].label}…`;
-      state.notice = state.controlMessage;
-      render();
-      void serviceControl(action, controller.signal).then(message => {
-        if (closed) return;
-        state.controlMessage = message; state.notice = message; state.controlBusy = false;
-        void refresh(); render();
-      }).catch(() => {
-        if (!closed) {
-          state.controlBusy = false;
-          state.controlMessage = "Service action failed. Check Docker and the service logs.";
-          state.notice = state.controlMessage; render();
+  const progress = (message: string) => { state.controlMessage = cleanText(message); state.notice = state.controlMessage; render(); };
+  const execute = (work: () => Promise<string>) => {
+    state.controlBusy = true;
+    void work().then(progress).catch(error => progress(`Action incomplete: ${cleanText(error.shortMessage ?? error.message ?? error)}`)).finally(() => {
+      state.controlBusy = false; state.dialog = undefined; confirmWithdrawal = undefined;
+      if (!closed) { void refresh(); render(); }
+    });
+  };
+  const lifecycle = (action: HostAction, model?: string) => operateHost(action, lifecycleDeps(options.gateway, controller.signal), model, progress);
+  const keypress = (text: string, key: Key) => {
+    if (state.dialog) {
+      if (state.dialog.kind === "withdraw") {
+        if (["y", "n", "escape", "q"].includes(key.name ?? "")) {
+          const accept = key.name === "y"; state.dialog = undefined; confirmWithdrawal?.(accept); render();
         }
-      });
+      } else if (key.name === "escape") { state.dialog = undefined; render(); }
+      else if (key.name === "up" || key.name === "down") {
+        const choices = snapshot?.models.state === "ok" ? snapshot.models.data.map(model => model.name) : [];
+        if (choices.length) {
+          const index = choices.indexOf(state.dialog.input);
+          state.dialog.input = choices[(index + (key.name === "down" ? 1 : choices.length - 1) + choices.length) % choices.length];
+          render();
+        }
+      }
+      else if (key.name === "return") { const model = state.dialog.input.trim(); state.dialog = undefined; execute(() => lifecycle("model", model)); }
+      else if (key.name === "backspace") { state.dialog.input = state.dialog.input.slice(0, -1); render(); }
+      else if (text && !key.ctrl && !key.meta && /^[a-zA-Z0-9._:/-]+$/.test(text)) { state.dialog.input = (state.dialog.input + text).slice(0, 128); render(); }
       return;
+    }
+    if (key.name === "q" || (key.ctrl && key.name === "c")) {
+      if (state.controlBusy) { state.notice = "Action in progress. Wait for its result before closing."; render(); return; }
+      finish(); return;
+    }
+    if (state.tab === 5 && !state.controlBusy && !key.ctrl && !key.meta) {
+      const actions: Record<string, HostAction> = { s: "start", p: "stop", x: "restart" };
+      if (actions[key.name ?? ""]) { execute(() => lifecycle(actions[key.name!])); return; }
+      if (key.name === "m") {
+        state.dialog = { kind: "model", input: "", lines: ["CHANGE MODEL", "", "Downloaded models:", ...(snapshot?.models.state === "ok" ? snapshot.models.data.map(m => `  ${m.name}`) : ["  Loading or unavailable"]), "", "↑ / ↓ choose a downloaded model, or type a model tag.", "Existing model files stay on disk.", "Your stake stays in place; pricing stays unchanged."] };
+        state.scroll = 0; render(); return;
+      }
+      if (key.name === "w" || key.name === "l") {
+        const method = key.name === "l" ? "ledger" : "softkey";
+        execute(() => withdrawEarnings(options.gateway, method, quote => new Promise<boolean>(resolve => {
+          if (closed) { resolve(false); return; }
+          confirmWithdrawal = resolve;
+          state.dialog = { kind: "withdraw", input: "", lines: ["WITHDRAW ALL EARNINGS", "", `Current balance: ${decimalAmount(String(quote.tinybar), 8)} HBAR`, `Maximum network fee: ${formatEther(quote.maxFeeWei)} HBAR`, "", "Destination: your host wallet", quote.address, "", method === "ledger" ? "Ledger approval, then host-key submission." : "Sign with this machine's software host key.", "New earnings before confirmation are included. Your stake stays locked."] };
+          state.scroll = 0; render();
+        }), progress)); return;
+      }
     }
     if (key.name === "r" || key.name === "return") { void refresh(); return; }
     if (key.name === "d" || key.name === "n") {

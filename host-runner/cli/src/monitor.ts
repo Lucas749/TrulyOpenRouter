@@ -8,6 +8,8 @@ export interface Receipt {
 export interface Host {
   address: string; modelId: string; endpoint: string; active: boolean;
   region: string | null; stake: string | null; earnings: string | null;
+  earnings7d?: string | null;
+  paused?: boolean;
   requests24h: number | null; requests7d: number | null; failures24h: number | null;
   latencyMs: number | null; reliability: number | null; heartbeat: number | null;
   priceReq: string | null; price1k: string | null; verification: string; failing: boolean;
@@ -47,6 +49,8 @@ export function parseHost(value: unknown): Host {
   return {
     address: d.address, modelId: d.modelId, endpoint: str(d.endpoint) ?? "", active: d.active,
     region: str(d.geo) ?? str(d.region), stake: amount(d.stake), earnings: amount(d.earningsWei),
+    earnings7d: amount(d.earnings7dTinybar),
+    paused: d.paused === true,
     requests24h: count(d.calls24h), requests7d: count(d.calls7d), failures24h: count(d.fail24h),
     latencyMs: count(d.latencyMs), reliability: count(d.reliability),
     heartbeat: heartbeat === null ? null : heartbeat < 1e12 ? heartbeat * 1000 : heartbeat,
@@ -127,6 +131,7 @@ export function servingState(s: MonitorSnapshot): { tone: "good" | "warn" | "bad
   if (!s.address) return { tone: "warn", title: "Setup needed", detail: "Finish quickstart to register this machine." };
   if (s.host.state === "missing") return { tone: "warn", title: "Not listed", detail: "The gateway has no active registration for this host key." };
   if (s.host.state !== "ok") return { tone: "warn", title: "Status unavailable", detail: "Host lookup failed. Request counts and earnings are unknown." };
+  if (s.host.data.paused) return { tone: "warn", title: "Paused", detail: "New requests are paused. Open Controls and press s to start serving again." };
   if (!s.host.data.active) return { tone: "warn", title: "Inactive", detail: "This host is not active in the registry." };
   if (s.host.data.failing) return { tone: "bad", title: "Out of rotation", detail: "The model check is failing. Review the model and service logs." };
   if (s.guard.state !== "ok") return { tone: "bad", title: "Local guard offline", detail: "The payment guard on this machine did not pass its health check." };

@@ -4,7 +4,7 @@ import { type LogSource } from "./monitor-logs.js";
 import { BRAND_MARK } from "./ui.js";
 
 export const TABS = ["Overview", "Activity", "Models", "Network", "Logs", "Controls", "Help"] as const;
-export interface ViewState { tab: number; scroll: number; refreshing: boolean; logSource: LogSource; logs: string[]; notice: string; controlBusy?: boolean; controlMessage?: string }
+export interface ViewState { tab: number; scroll: number; refreshing: boolean; logSource: LogSource; logs: string[]; notice: string; controlBusy?: boolean; controlMessage?: string; dialog?: { kind: "model" | "withdraw"; lines: string[]; input: string } }
 
 // External model names, URLs, and logs are data, never terminal instructions.
 export function cleanText(value: unknown): string {
@@ -60,20 +60,22 @@ function tableRow(values: unknown[], widths: number[]): string {
 }
 
 export function viewLines(snapshot: MonitorSnapshot | null, state: ViewState, width: number): string[] {
+  if (state.dialog) return [...state.dialog.lines, "", ...(state.dialog.kind === "model" ? [`Model > ${state.dialog.input}▏`, "", "Enter: prepare model and update your host     Esc: cancel"] : ["y: withdraw all earnings     Esc / n: cancel"])].flatMap(line => wrap(line, width));
   if (state.tab === 6) return [
-    "YOUR HOST CONSOLE", "", "← / → or Tab       Switch tabs", "1–7                 Jump to a tab", "↑ / ↓, PgUp / PgDn   Scroll", "r / Enter           Refresh now", "l                   Switch log source on Logs", "6                   Start, pause, restart services", "d                   Open your web dashboard", "n                   Open the network explorer", "q / Ctrl+C          Close this view", "",
-    "Closing this dashboard does not stop the model, guard, or tunnel.", "", "OTHER COMMANDS", "tor-host dashboard       Reopen this console", "tor-host status          Print one snapshot", "tor-host status --json   Export public telemetry", "tor-host login           Link your account", "tor-host verify          Run a paid model spot-check", "tor-host ledger status   Inspect your device setup", "tor-host leave --dry-run Preview unstaking and withdrawal", "", "Readiness checks use health endpoints. They do not send inference requests.",
+    "YOUR HOST CONSOLE", "", "← / → or Tab       Switch tabs", "1–7                 Jump to a tab", "↑ / ↓, PgUp / PgDn   Scroll", "r / Enter           Refresh now", "l                   Switch log source on Logs", "6                   Host controls and withdrawals", "d                   Open your web dashboard", "n                   Open the network explorer", "q / Ctrl+C          Close this view", "",
+    "Closing this dashboard does not stop the model, guard, or tunnel.", "", "OTHER COMMANDS", "tor-host dashboard       Reopen this console", "tor-host status          Print one snapshot", "tor-host status --json   Export public telemetry", "tor-host login           Link your account", "tor-host verify          Run a paid model spot-check", "tor-host ledger status   Inspect your device setup", "tor-host withdraw        Withdraw host earnings", "", "Readiness checks use health endpoints. They do not send inference requests.",
   ].flatMap(line => wrap(line, width));
   if (state.tab === 5) return [
     "SERVING CONTROLS", "",
-    "s  Start local services", "   Resume the existing Ollama and guard containers.", "",
-    "p  Pause serving", "   Stop the local guard. Registration and stake stay in place.", "",
-    "g  Restart guard", "   Restart the request endpoint without restarting Ollama.", "",
-    "o  Restart model service", "   Restart Ollama. This interrupts in-flight inference.", "",
+    "s  Start serving", "   Start services, restore the tunnel, and enable network routing.", "",
+    "p  Shut down host", "   Pause new routes; stop guard, Ollama, and the managed tunnel.", "",
+    "x  Restart host", "   Reconnect services and publish the current public endpoint.", "",
+    "m  Change model", "   Choose a downloaded model or enter an Ollama tag to download.", "",
+    "w  Withdraw earnings · software key", "l  Withdraw earnings · Ledger approval + host key", "   Review the destination and fee before submitting.", "",
     "r  Refresh readiness     d  Open web dashboard     n  Open network", "",
     ...(state.controlMessage ? [state.controlBusy ? "IN PROGRESS" : "LAST ACTION", state.controlMessage, ""] : []),
-    "These controls manage the Docker services from quickstart. They preserve the container configuration and do not move funds.",
-    "Closing this console leaves services running. Pause serving explicitly with p.",
+    "Stop/start and model changes preserve your stake. Earnings withdrawals are separate from unstaking.",
+    "Closing this console leaves services running. Shut down explicitly with p.",
   ].flatMap(line => wrap(line, width));
   if (state.tab === 4) return [
     `SERVICE LOGS · ${state.logSource}`, "l: guard → ollama → tunnel → setup", "", ...state.logs.flatMap(line => wrap(line, width)),
@@ -86,7 +88,7 @@ export function viewLines(snapshot: MonitorSnapshot | null, state: ViewState, wi
       `${serving.tone === "good" ? "●" : "!"} ${serving.title.toUpperCase()}`, ...wrap(serving.detail, width), "",
       kv("Model", host?.modelId ?? "—"), kv("Host", s.address ?? "Not configured"), kv("Location", host?.region ?? "Not reported"), "",
       kv("Requests · 24h", number(host?.requests24h)), kv("Requests · 7d", number(host?.requests7d)), kv("Failed · 24h", number(host?.failures24h)),
-      kv("Available earnings", `${decimalAmount(host?.earnings ?? null, 8)} HBAR`), kv("Staked", `${decimalAmount(host?.stake ?? null, 8)} HBAR`),
+      kv("Available earnings", `${decimalAmount(host?.earnings ?? null, 8)} HBAR`), kv("Earned · 7d", `${decimalAmount(host?.earnings7d ?? null, 8)} HBAR`), kv("Staked", `${decimalAmount(host?.stake ?? null, 8)} HBAR`),
       kv("Typical latency", host?.latencyMs === null || !host ? "—" : `${Math.round(host.latencyMs)} ms`),
       kv("Success rate · 24h", host?.reliability === null || !host ? "—" : `${(Math.min(1, host.reliability) * 100).toFixed(1)}%`), "",
       "READINESS", check("Docker", s.docker, d => `Running · ${d}`),
@@ -113,11 +115,11 @@ export function viewLines(snapshot: MonitorSnapshot | null, state: ViewState, wi
     ].flatMap(line => wrap(line, width));
   }
   if (state.tab === 2) return [
-    "YOUR MODELS", kv("Registered model", host?.modelId ?? "—"),
+    "YOUR MODELS", kv("Serving model", host?.modelId ?? "—"),
     kv("Price / request", host?.priceReq === null || !host ? "—" : `$${decimalAmount(host.priceReq, 8)}`),
     kv("Price / 1k tokens", host?.price1k === null || !host ? "—" : `$${decimalAmount(host.price1k, 8)}`), "", "DOWNLOADED IN OLLAMA", "",
     ...(s.models.state === "ok" ? s.models.data.length ? s.models.data.flatMap(m => [
-      `${m.name}${m.name === host?.modelId ? "  [registered]" : ""}`,
+      `${m.name}${m.name === host?.modelId ? "  [selected]" : ""}`,
       `  ${m.size === null ? "—" : `${(m.size / 1e9).toFixed(2)} GB`} · ${m.parameters ?? "unknown size"} · ${m.quantization ?? "unknown quantization"} · ${s.loaded.state !== "ok" ? "memory status unknown" : s.loaded.data.includes(m.name) ? "loaded in memory" : "on disk"}`,
       "",
     ]) : ["No downloaded models."] : [s.models.message]),
