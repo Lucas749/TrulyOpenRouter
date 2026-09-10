@@ -37,7 +37,8 @@ try {
   else if (cmd === "link") await link(gateway());
   else if (cmd === "verify") await verifyHost(gateway(), flag("address") ?? myHostAddress());
   else if (["start", "stop", "restart", "model"].includes(cmd)) {
-    console.log(await operateHost(cmd as HostAction, lifecycleDeps(gateway()), cmd === "model" ? (rest[0]?.startsWith("--") ? flag("model") : rest[0]) : undefined, message => console.log(message)));
+    const progress = (message: string) => console.log(message);
+    console.log(await operateHost(cmd as HostAction, lifecycleDeps(gateway(), undefined, progress), cmd === "model" ? (rest[0]?.startsWith("--") ? flag("model") : rest[0]) : undefined, progress));
   }
   else if (cmd === "withdraw") {
     const method = rest.includes("--ledger") ? "ledger" : "softkey";

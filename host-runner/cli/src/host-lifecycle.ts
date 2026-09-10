@@ -5,6 +5,7 @@ import { currentHostSettings, publishHostSettings } from "./host-runtime.js";
 import { ensureTunnel, healthyGuard, stopTunnel } from "./host-tunnel.js";
 import { type HostSettings } from "./host-settings.js";
 import { sh } from "./util.js";
+import { readPullProgress } from "./model-pull.js";
 
 export type HostAction = "start" | "stop" | "restart" | "model";
 export interface LifecycleDeps {
@@ -51,7 +52,7 @@ export async function operateHost(action: HostAction, deps: LifecycleDeps, model
 }
 
 const compose = fileURLToPath(new URL("../../docker-compose.yml", import.meta.url));
-export function lifecycleDeps(gateway?: string, signal?: AbortSignal): LifecycleDeps {
+export function lifecycleDeps(gateway?: string, signal?: AbortSignal, progress = (_message: string) => {}): LifecycleDeps {
   const command = async (args: string[], timeoutMs = 30000) => {
     const result = await sh("docker", ["compose", "-f", compose, ...args], { timeoutMs, signal, maxOut: 16000 });
     if (!result.ok) throw new Error(`Docker ${args[0]} did not finish. Check Docker and the service logs, then retry.`);
@@ -73,13 +74,12 @@ export function lifecycleDeps(gateway?: string, signal?: AbortSignal): Lifecycle
     stop: async () => { await command(["stop", "guard", "ollama"]); },
     tunnel: endpoint => ensureTunnel(endpoint, signal), stopTunnel,
     model: async id => {
-      // Request one JSON response so download progress cannot flood the terminal.
+      // Read incremental progress so long downloads stay visible and responsive.
       const response = await fetch("http://127.0.0.1:11434/api/pull", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: id, stream: false }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: id, stream: true }),
         signal: AbortSignal.any([AbortSignal.timeout(1800000), ...(signal ? [signal] : [])]),
       });
-      const result = await response.json() as { status?: string; error?: string };
-      if (!response.ok || result.status !== "success") throw new Error(`Model download failed: ${result.error ?? response.status}`);
+      await readPullProgress(response, progress);
       const modelfile = await command(["exec", "-T", "ollama", "ollama", "show", "--modelfile", id]);
       return `0x${createHash("sha256").update(modelfile).digest("hex")}`;
     },

@@ -109,7 +109,7 @@ export async function dashboard(options: DashboardOptions = {}): Promise<void> {
       if (!closed) { void refresh(); render(); }
     });
   };
-  const lifecycle = (action: HostAction, model?: string) => operateHost(action, lifecycleDeps(options.gateway, controller.signal), model, progress);
+  const lifecycle = (action: HostAction, model?: string) => operateHost(action, lifecycleDeps(options.gateway, controller.signal, progress), model, progress);
   const keypress = (text: string, key: Key) => {
     if (state.dialog) {
       if (state.dialog.kind === "withdraw") {
