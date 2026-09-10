@@ -74,32 +74,38 @@ export default function NetworkPage() {
   const [hosts, setHosts] = useState<Host[] | null>(null);
   const [receipts, setReceipts] = useState<Receipt[] | null>(null);
   const [models, setModels] = useState<any[]>([]);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [hostError, setHostError] = useState(false);
 
   useEffect(() => {
     if (mock) return;
     let live = true;
-    (async () => {
+    async function read(path: string) {
+      const response = await fetch(`${GATEWAY}${path}`, { signal: AbortSignal.timeout(12000) });
+      if (!response.ok) throw new Error("Network data is unavailable");
+      const data = await response.json();
+      if (!Array.isArray(data.data)) throw new Error("Invalid network data");
+      return data.data;
+    }
+    const refreshHosts = async () => {
       try {
-        const h: any = await (await fetch(`${GATEWAY}/api/hosts`)).json();
-        const r: any = await (await fetch(`${GATEWAY}/api/receipts?limit=50`)).json();
-        const m: any = await (await fetch(`${GATEWAY}/v1/models`)).json();
-        if (!live) return;
-        setHosts(h.data ?? []);
-        setReceipts(r.data ?? []);
-        setModels(m.data ?? []);
-      } catch {
-        /* gateway down: skeletons stay */
-      }
-    })();
-    const t = setInterval(async () => {
-      try {
-        const r: any = await (await fetch(`${GATEWAY}/api/receipts?limit=50`)).json();
-        if (live) setReceipts(r.data ?? []);
-      } catch {}
-    }, 5000);
+        const next = await read("/api/hosts");
+        if (live) { setHosts(next); setUpdatedAt(Date.now()); setHostError(false); }
+      } catch { if (live) setHostError(true); }
+    };
+    const refreshReceipts = async () => {
+      try { const next = await read("/api/receipts?limit=50"); if (live) setReceipts(next); } catch {}
+    };
+    const refreshModels = async () => {
+      try { const next = await read("/v1/models"); if (live) setModels(next); } catch {}
+    };
+    void refreshHosts(); void refreshReceipts(); void refreshModels();
+    const hostTimer = setInterval(refreshHosts, 15000);
+    const receiptTimer = setInterval(refreshReceipts, 5000);
+    const modelTimer = setInterval(refreshModels, 30000);
     return () => {
       live = false;
-      clearInterval(t);
+      clearInterval(hostTimer); clearInterval(receiptTimer); clearInterval(modelTimer);
     };
   }, [mock]);
 
@@ -137,20 +143,21 @@ export default function NetworkPage() {
       <main className="mx-auto flex max-w-[1200px] flex-col gap-6 px-6 py-8">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
           <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">Network</h1>
-          <span className="font-mono text-xs text-[#8F8F8F]">Updated {new Date().toISOString().slice(11, 16)} UTC</span>
+          <span className="font-mono text-xs text-[#8F8F8F]">{mock ? "Preview data" : updatedAt ? `Updated ${new Date(updatedAt).toISOString().slice(11, 16)} UTC · refreshes every 15s` : "Loading network"}</span>
         </div>
+
+        {hostError && <p role="status" className="m-0 rounded-xl border border-[#E7DFCC] bg-[#FFFCF5] px-4 py-3 text-sm text-[#816322]">Host updates are temporarily unavailable. Retrying automatically.</p>}
 
         <div className="flex min-h-[380px] flex-col overflow-hidden rounded-[14px] border border-[#0A0E14] bg-[#0A0E14] sm:min-h-[440px]">
           <div className="flex items-center gap-2 px-[18px] pt-4 font-mono text-[10px] uppercase tracking-[0.12em] text-[#6B7686]">◉ Live network</div>
           <div className="relative min-h-[300px] flex-1">
             <div className="absolute inset-0">
-              <Globe hosts={shownHosts.map((h: any) => ({ id: h.address, region: h.region ?? null, active: h.active }))} />
+              <Globe hosts={shownHosts.map((h: any) => ({ id: h.address, region: h.geo ?? h.region ?? null, active: h.active }))} />
             </div>
           </div>
           <div className="flex items-end justify-between gap-3 p-[14px_18px]">
             <div className="flex items-center gap-1.5 text-[11px] text-[#8B95A5]">
               <span className="h-1.5 w-1.5 rounded-full bg-[#10A37F]" /> serving
-              <span className="ml-2 h-1.5 w-1.5 rounded-full bg-[#D97706]" /> degraded
               <span className="ml-2 h-1.5 w-1.5 rounded-full bg-[#DC2626]" /> offline
             </div>
             <span className="font-mono text-xs text-[#E6EAF0]">{shownHosts.length} hosts · table below ↓</span>
@@ -195,7 +202,7 @@ export default function NetworkPage() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-[#8F8F8F]">no hosts registered yet, <Link href="/host" className="text-[#2563EB] underline">be the first to serve</Link></td></tr>
+                  <tr><td colSpan={9} className="px-4 py-10 text-center text-sm text-[#8F8F8F]">no hosts registered yet, <Link href="/host" className="text-[#2563EB] underline">be the first to serve</Link></td></tr>
                 )}
               </tbody>
             </table>

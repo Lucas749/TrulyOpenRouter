@@ -1,145 +1,127 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
-import { feature, mesh } from "topojson-client";
+import { feature } from "topojson-client";
+import type { GeometryCollection, Topology } from "topojson-specification";
+import { MapPin, Pause, Play } from "lucide-react";
+import { hostLocation } from "../../lib/host-locations";
 
-// Region slug → lon/lat. Hosts with unknown regions stay in the table (honest globe:
-// every dot is a registered host, no invented nodes).
-const COORDS: Record<string, [number, number]> = {
-  "us-west": [-122.4, 37.8], "us-east": [-77.5, 39.0], "us-central": [-98.5, 29.4],
-  "ca-central": [-79.4, 43.7], "sa-east": [-46.6, -23.5],
-  "eu-central": [8.7, 50.1], "eu-west": [4.9, 52.4], "eu-north": [18.1, 59.3], "eu-south": [14.5, 41.9],
-  "af-west": [3.4, 6.5], "af-south": [18.4, -33.9],
-  "ap-south": [72.9, 19.1], "ap-se": [103.8, 1.35], "ap-ne": [139.7, 35.7], "ap-east": [114.1, 22.3], "ap-oce": [151.2, -33.9],
-};
-
-export interface GlobeHost {
-  id: string;
-  region: string | null;
-  active: boolean;
-}
-
-const COLOR = { ok: "#10A37F", down: "#DC2626" };
-const GATEWAY: [number, number] = [-0.13, 51.5];
+export interface GlobeHost { id: string; region: string | null; active: boolean }
+type Node = GlobeHost & { coordinates: [number, number]; label: string; approximate: boolean };
 
 export default function Globe({ hosts }: { hosts: GlobeHost[] }) {
-  const ref = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const nodesRef = useRef<Node[]>([]);
+  const landRef = useRef<d3.GeoPermissibleObjects | null>(null);
+  const rotationRef = useRef<[number, number]>([-35, -20]);
+  const redrawRef = useRef<() => void>(() => {});
+  const rotatingRef = useRef(true);
+  const centeredRef = useRef(false);
+  const [rotating, setRotating] = useState(true);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [countries, setCountries] = useState<Record<string, [number, number]>>({});
+  const nodes = useMemo(() => hosts.flatMap((h) => {
+    const location = hostLocation(h.region, countries);
+    return location ? [{ ...h, ...location }] : [];
+  }), [hosts, countries]);
+  const locations = [...new Map(nodes.map((node) => [node.region, node])).values()];
 
   useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const nodes = hosts
-      .filter((h) => h.region && COORDS[h.region])
-      .map((h) => ({ ...h, lon: COORDS[h.region as string][0], lat: COORDS[h.region as string][1] }));
-    const projection = d3.geoOrthographic().clipAngle(90);
-    const path = d3.geoPath(projection, ctx as any);
-    const graticule = d3.geoGraticule10();
-    let land: any = null;
-    let W = 0, H = 0, rotation = -8;
-    const arcs: { host: (typeof nodes)[number]; interp: (t: number) => [number, number]; t: number; speed: number; tier: number; settledAt: number | null }[] = [];
-
-    const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      W = canvas.clientWidth; H = canvas.clientHeight;
-      canvas.width = W * dpr; canvas.height = H * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      projection.scale(Math.min(W, H) * 0.46).translate([W / 2, H * 0.5]);
-    };
-    const visible = (lon: number, lat: number) => {
-      const c = projection.rotate();
-      return d3.geoDistance([lon, lat], [-c[0], -c[1]]) < Math.PI / 2 - 0.03;
-    };
-    const spawn = () => {
-      const pool = nodes.filter((h) => h.active);
-      if (!pool.length || arcs.length >= 40) return;
-      const host = pool[Math.floor(Math.random() * pool.length)];
-      arcs.push({ host, interp: d3.geoInterpolate(GATEWAY, [host.lon, host.lat]), t: 0, speed: 0.0055 + Math.random() * 0.0045, tier: 1 + Math.floor(Math.random() * 3), settledAt: null });
-    };
-    const draw = (elapsed: number) => {
-      if (!REDUCED) rotation = -8 + elapsed * 0.0038;
-      ctx.clearRect(0, 0, W, H);
-      projection.rotate([rotation, -14, 0]);
-      ctx.beginPath(); path({ type: "Sphere" } as any);
-      ctx.fillStyle = "#0C1119"; ctx.fill();
-      ctx.strokeStyle = "#1E2632"; ctx.lineWidth = 1; ctx.stroke();
-      ctx.beginPath(); path(graticule as any);
-      ctx.strokeStyle = "rgba(30,38,50,0.9)"; ctx.lineWidth = 0.5; ctx.stroke();
-      if (land) {
-        ctx.beginPath(); path(land);
-        ctx.fillStyle = "#161C27"; ctx.fill();
-        ctx.strokeStyle = "#232C3A"; ctx.lineWidth = 0.4; ctx.stroke();
-      }
-      for (let i = arcs.length - 1; i >= 0; i--) {
-        const a = arcs[i];
-        if (!REDUCED) {
-          a.t += a.speed;
-          if (a.t >= 1 && !a.settledAt) a.settledAt = Date.now();
-          if (a.settledAt && Date.now() - a.settledAt > 720) { arcs.splice(i, 1); continue; }
-        }
-        const head = Math.min(a.t, 1), tail = Math.max(0, head - 0.55);
-        ctx.beginPath();
-        let started = false;
-        for (let s = 0; s <= 44; s++) {
-          const pt = projection(a.interp(tail + (head - tail) * (s / 44)));
-          if (!pt) { started = false; continue; }
-          if (!started) { ctx.moveTo(pt[0], pt[1]); started = true; }
-          else ctx.lineTo(pt[0], pt[1]);
-        }
-        const grad = ctx.createLinearGradient(0, 0, W, H);
-        grad.addColorStop(0, "rgba(37,99,235,0.85)");
-        grad.addColorStop(1, "rgba(16,163,127,0.95)");
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = 0.6 + a.tier * 0.4;
-        ctx.globalAlpha = a.settledAt ? Math.max(0, 1 - (Date.now() - a.settledAt) / 700) : 1;
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-      if (visible(GATEWAY[0], GATEWAY[1])) {
-        const g = projection(GATEWAY)!;
-        ctx.beginPath(); ctx.arc(g[0], g[1], 4.5, 0, Math.PI * 2);
-        ctx.strokeStyle = "#E6EAF0"; ctx.lineWidth = 1.1; ctx.stroke();
-      }
-      const now = Date.now();
-      nodes.forEach((hst) => {
-        if (!visible(hst.lon, hst.lat)) return;
-        const p = projection([hst.lon, hst.lat])!;
-        const c = hst.active ? COLOR.ok : COLOR.down;
-        const blink = !hst.active && !REDUCED ? 0.45 + 0.35 * Math.sin(now / 420) : 1;
-        ctx.globalAlpha = blink;
-        ctx.beginPath(); ctx.arc(p[0], p[1], 2.4, 0, Math.PI * 2);
-        ctx.fillStyle = c; ctx.fill();
-        ctx.globalAlpha = 1;
-      });
-    };
-
-    resize();
-    window.addEventListener("resize", resize);
-    d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json")
-      .then((topo: any) => {
-        land = feature(topo, topo.objects.countries);
-        draw(0);
-      })
-      .catch(() => draw(0));
-    let timer: any = null;
-    if (!REDUCED) {
-      timer = d3.timer(draw);
-      spawn();
-      const spawner = setInterval(spawn, 900);
-      (timer as any).spawner = spawner;
-      const origStop = timer.stop.bind(timer);
-      timer.stop = () => { clearInterval(spawner); origStop(); };
-    } else {
-      draw(0);
+    nodesRef.current = nodes;
+    if (!centeredRef.current && nodes.length) {
+      const [lon, lat] = nodes[nodes.length - 1].coordinates;
+      rotationRef.current = [-lon, -lat];
+      centeredRef.current = true;
     }
-    return () => {
-      window.removeEventListener("resize", resize);
-      if (timer) timer.stop();
-    };
-  }, [hosts]);
+    redrawRef.current();
+  }, [nodes]);
 
-  return <canvas ref={ref} className="h-full w-full" aria-label="Host network globe" />;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    rotatingRef.current = !reduced;
+    setRotating(!reduced);
+    const projection = d3.geoOrthographic().clipAngle(90);
+    const path = d3.geoPath(projection, ctx);
+    const graticule = d3.geoGraticule10();
+    let width = 0, height = 0;
+    function draw() {
+      if (!ctx) return;
+      ctx.clearRect(0, 0, width, height);
+      projection.rotate([...rotationRef.current, 0]);
+      ctx.beginPath(); path({ type: "Sphere" });
+      ctx.fillStyle = "#0D151C"; ctx.fill();
+      ctx.strokeStyle = "#26343E"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); path(graticule);
+      ctx.strokeStyle = "#24303A"; ctx.lineWidth = 0.5; ctx.stroke();
+      if (landRef.current) {
+        ctx.beginPath(); path(landRef.current);
+        ctx.fillStyle = "#19252D"; ctx.fill();
+        ctx.strokeStyle = "#32414C"; ctx.lineWidth = 0.5; ctx.stroke();
+      }
+      for (const node of nodesRef.current) {
+        const center: [number, number] = [-rotationRef.current[0], -rotationRef.current[1]];
+        if (d3.geoDistance(node.coordinates, center) >= Math.PI / 2 - 0.03) continue;
+        const point = projection(node.coordinates);
+        if (!point) continue;
+        const [x, y] = point;
+        ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2);
+        ctx.fillStyle = node.active ? "rgba(88,198,150,0.13)" : "rgba(220,82,74,0.13)"; ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = node.active ? "#67CFA2" : "#E57870"; ctx.fill();
+        ctx.strokeStyle = "#0D151C"; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.font = "11px system-ui, sans-serif";
+        ctx.fillStyle = "#C7D6D0"; ctx.fillText(node.label, x + 11, y + 4);
+      }
+    }
+    redrawRef.current = draw;
+    function resize() {
+      if (!canvas || !ctx) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = canvas.clientWidth; height = canvas.clientHeight;
+      canvas.width = width * dpr; canvas.height = height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      projection.scale(Math.min(width, height) * 0.44).translate([width / 2, height * 0.49]);
+      draw();
+    }
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas); resize();
+    const controller = new AbortController();
+    d3.json<Topology<{ countries: GeometryCollection }>>("https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json", { signal: controller.signal }).then((topo) => {
+      if (!topo || controller.signal.aborted) return;
+      const land = feature(topo, topo.objects.countries) as unknown as GeoJSON.FeatureCollection;
+      landRef.current = land;
+      const centers: Record<string, [number, number]> = {};
+      for (const country of land.features) if (country.properties?.name) centers[country.properties.name] = d3.geoCentroid(country);
+      setCountries(centers); draw();
+    }).catch(() => {});
+    let previous = 0;
+    const timer = d3.timer((elapsed) => {
+      const delta = Math.min(100, elapsed - previous); previous = elapsed;
+      if (!rotatingRef.current) return;
+      rotationRef.current[0] += delta * 0.005;
+      draw();
+    });
+    return () => { controller.abort(); timer.stop(); observer.disconnect(); redrawRef.current = () => {}; };
+  }, []);
+
+  function focus(node: Node) {
+    rotationRef.current = [-node.coordinates[0], -node.coordinates[1]];
+    rotatingRef.current = false; setRotating(false); setSelected(node.region); redrawRef.current();
+  }
+  return (
+    <div className="relative h-full w-full">
+      <canvas ref={canvasRef} className="h-full w-full" aria-label={`Host network globe: ${nodes.length} of ${hosts.length} hosts mapped`} />
+      <button className="absolute right-4 top-3 inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#101A21]/90 px-2.5 py-1.5 text-[11px] text-[#A5B8BD] hover:bg-[#203039]" onClick={() => { rotatingRef.current = !rotating; setRotating(!rotating); setSelected(null); }}>
+        {rotating ? <Pause size={11} /> : <Play size={11} />}{rotating ? "Pause rotation" : "Rotate globe"}
+      </button>
+      <div className="absolute bottom-2 left-4 right-4 flex flex-wrap items-center gap-2">
+        {locations.map((node) => <button key={node.region} onClick={() => focus(node)} title={node.approximate ? "Approximate country location" : "Reported region center"} aria-pressed={selected === node.region} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] transition ${selected === node.region ? "border-[#48765F] bg-[#1D3B2E] text-[#ACE1BF]" : "border-white/10 bg-[#111C23]/90 text-[#BBCACB] hover:bg-[#203039]"}`}><MapPin size={11} />{node.label}{node.approximate ? " (approx.)" : ""}<span className="text-[#79928E]">{nodes.filter((n) => n.region === node.region).length}</span></button>)}
+        <span className="ml-auto text-[10px] text-[#74868C]">{nodes.length} mapped{hosts.length > nodes.length ? ` · ${hosts.length - nodes.length} without a mapped location` : ""}</span>
+      </div>
+    </div>
+  );
 }
