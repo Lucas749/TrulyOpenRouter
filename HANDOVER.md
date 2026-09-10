@@ -1,4 +1,4 @@
-# Handover — TrulyOpenRouter (as of the 5 HBAR onboarding rollout, 2026-09-10)
+# Handover — TrulyOpenRouter (as of the 5 HBAR onboarding rollout, 2026-09-11)
 
 ## What this is
 Decentralized OpenRouter on Hedera testnet: users chat with LLMs through a
@@ -36,7 +36,10 @@ gates run in the gateway per request.
 - Box (AWS us-west-2): EC2 `52.12.2.63`, gateway `:4121`, RDS Postgres. Same
   `GATEWAY_URL` target. One demo host (`0x00…01`, qwen2.5:0.5b, region
   `us-oregon` attached manually). Deploys: `docker-compose.prod.yml` + Caddy,
-  `DEPLOY.md`. SSH key `tor-deploy.pem`, `.env.prod` — both gitignored.
+  `DEPLOY.md`. Local SSH key and deployment environment: `/Users/lucas/Desktop/vps-sandbox-access/`
+  (`tor-deploy.pem`, `.env.prod`). Remote app: `/home/ubuntu/TrulyOpenRouter`.
+  Rollback image: `tor-gateway:before-5hbar`; environment backup:
+  `.env.prod.before-5hbar` on the box. Secrets and runtime files stay out of Git.
 - Repo: `https://github.com/Lucas749/TrulyOpenRouter`, small commits on `main`.
 
 ## What is built (this session worked newest-first)
@@ -81,8 +84,17 @@ other registration failures stop immediately without another faucet loop.
 opens Docker Desktop on macOS when needed, and waits up to 2 minutes with
 setup guidance. Missing Docker/Compose and startup failures have explicit
 recovery steps. Verified locally from a stopped engine to ready.
-**To verify next**: full green run to "ROUTABLE" (blocked only on real testnet
-funds + browser clicks, which can't be automated here).
+**Rollout verified (2026-09-11)**: production Vercel deployment
+`dpl_9bfTJhsS8r1PHCt7xDy7hLyF7UEx` is ready; the gateway image was rebuilt and
+recreated with the replacement registry. Hosted config plus the built CLI
+produce a 5 HBAR target. Read-only registration simulation accepts 4 HBAR,
+with gas estimated at 0.33 HBAR. Legacy host selection retains the original
+stake. Both fresh installer and update-from-`64ad80d` checks reach the new
+code; hosted chat returns HTTP 200 with a receipt. Checks: CLI 46, gateway 92,
+web 51, contracts 36, shell/terminal 13 pass (11 database-dependent skips).
+**To verify next**: a complete fresh-host interactive run through browser
+approval and a real registration transaction. No transaction was sent from
+the user's host wallet during this rollout.
 **Known sharp edges**:
 - Receipt IDs currently hash content and latency but omit payer/request identity.
   Identical completions at equal latency can collide; the wallet route fixture
