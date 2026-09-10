@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { BaseError } from "viem";
+import { FundingRequiredError } from "./registration.js";
 import { loadConfig } from "./config.js";
 import { login } from "./login.js";
 import { link } from "./link.js";
@@ -50,6 +52,8 @@ try {
     if (cmd) process.exitCode = 1;
   }
 } catch (e) {
-  console.error(`error: ${String((e as Error)?.message ?? e).slice(0, 300)}`);
+  const message = e instanceof FundingRequiredError ? e.message
+    : e instanceof BaseError ? e.shortMessage : String((e as Error)?.message ?? e).split("\n")[0];
+  console.error(`error: ${message}`);
   process.exitCode = 1;
 }

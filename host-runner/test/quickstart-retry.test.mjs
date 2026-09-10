@@ -29,7 +29,8 @@ fund_wait() {
   waits=$((waits + 1))
   [ "$waits" -gt 1 ]
 }
-run_logged() {
+live_run() {
+  shift 2
   attempt=$((attempt + 1)); echo "attempt: $attempt"
   if [ "$attempt" -gt 1 ]; then return 0; fi
   if [ "$TOR_TEST_MODE" = funds ]; then

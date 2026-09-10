@@ -1,4 +1,4 @@
-// Minimal ANSI UI kit: spinners, step lists, boxes. Zero deps, OpenCode/Claude-Code flavor.
+// Minimal ANSI UI kit: spinners, step lists, boxes. No dependencies.
 // All renderers are pure (return strings) except Spinner, so they stay unit-tested.
 
 const C = {
@@ -12,6 +12,12 @@ const C = {
   gray: "\x1b[90m",
 };
 
+function ansi(key: keyof typeof C): string {
+  if (process.env.NO_COLOR !== undefined) return "";
+  const enabled = process.env.FORCE_COLOR === "1" || process.stdout.isTTY || process.stderr.isTTY;
+  return enabled ? C[key] : "";
+}
+
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 export function frames(): string[] {
@@ -22,10 +28,10 @@ export type StepState = "pending" | "active" | "done" | "fail";
 
 export function stepIcon(s: StepState): string {
   switch (s) {
-    case "done": return `${C.green}●${C.reset}`;
-    case "active": return `${C.cyan}◐${C.reset}`;
-    case "fail": return `${C.red}●${C.reset}`;
-    default: return `${C.gray}○${C.reset}`;
+    case "done": return `${ansi("green")}●${ansi("reset")}`;
+    case "active": return `${ansi("cyan")}◐${ansi("reset")}`;
+    case "fail": return `${ansi("red")}●${ansi("reset")}`;
+    default: return `${ansi("gray")}○${ansi("reset")}`;
   }
 }
 
@@ -37,7 +43,7 @@ export interface Step {
 
 export function renderSteps(steps: Step[]): string {
   return steps
-    .map((s) => `  ${stepIcon(s.state)} ${s.label}${s.detail ? ` ${C.dim}${s.detail}${C.reset}` : ""}`)
+    .map((s) => `  ${stepIcon(s.state)} ${s.label}${s.detail ? ` ${ansi("dim")}${s.detail}${ansi("reset")}` : ""}`)
     .join("\n");
 }
 
@@ -46,32 +52,32 @@ export function box(title: string, lines: string[], width = 56): string {
   const top = `╭─ ${title} ${"─".repeat(Math.max(0, w - title.length - 4))}╮`;
   const bottom = `╰${"─".repeat(w)}╯`;
   const body = lines.map((l) => `│ ${l.padEnd(w - 2)}│`).join("\n");
-  return `${C.gray}${top}${C.reset}\n${body}\n${C.gray}${bottom}${C.reset}`;
+  return `${ansi("gray")}${top}${ansi("reset")}\n${body}\n${ansi("gray")}${bottom}${ansi("reset")}`;
 }
 
 const MARK = ["█████   ███   ████ ", "  █    █   █  █   █", "  █    █   █  ████ ", "  █    █   █  █ █  ", "  █     ███   █  █ "];
 
 export function mark(): string {
-  return MARK.map((l) => `${C.bold}${l}${C.reset}`).join("\n");
+  return MARK.map((l) => `${ansi("bold")}${l}${ansi("reset")}`).join("\n");
 }
 
 export function banner(): string {
   // TOR_QUIET=1 when orchestrated (quickstart owns the screen already) —
   // the link box, spinners and results still print, just no second banner.
   if (process.env.TOR_QUIET) return "";
-  return `${mark()}\n${C.bold}TrulyOpenRouter${C.reset} ${C.dim}· host CLI · like OpenRouter, except open${C.reset}`;
+  return `${mark()}\n${ansi("bold")}TrulyOpenRouter${ansi("reset")} ${ansi("dim")}· host CLI · like OpenRouter, except open${ansi("reset")}`;
 }
 
 export function ok(msg: string): string {
-  return `${C.green}✓${C.reset} ${msg}`;
+  return `${ansi("green")}✓${ansi("reset")} ${msg}`;
 }
 
 export function warn(msg: string): string {
-  return `${C.amber}!${C.reset} ${msg}`;
+  return `${ansi("amber")}!${ansi("reset")} ${msg}`;
 }
 
 export function err(msg: string): string {
-  return `${C.red}✕${C.reset} ${msg}`;
+  return `${ansi("red")}✕${ansi("reset")} ${msg}`;
 }
 
 /// @notice TTY spinner. No-op strings when piped (clean logs).
@@ -93,6 +99,7 @@ export class Spinner {
   }
 
   message(text: string): void {
+    if (!this.stream.isTTY && text !== this.text) this.stream.write(`${text}...\n`);
     this.text = text;
   }
 
@@ -106,7 +113,7 @@ export class Spinner {
   }
 
   private tick(): void {
-    this.stream.write(`\r${C.cyan}${FRAMES[this.i++ % FRAMES.length]}${C.reset} ${this.text}`);
+    this.stream.write(`\r${ansi("cyan")}${FRAMES[this.i++ % FRAMES.length]}${ansi("reset")} ${this.text}`);
   }
 }
 

@@ -15,6 +15,7 @@ QS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/tor-qs.XXXXXX")
 QS_LOG="$QS_TMP/step.log"
 QS_TUNLOG="$QS_TMP/tunnel.log"
 QS_RUN_STATUS="$QS_TMP/run-status.json"
+QS_FUNDLOG="$QS_TMP/funding.log"
 # tor-host prints its own TOR banner on every command — the app frame already
 # carries the brand, so nested runs stay quiet (boxes/spinners still print).
 export TOR_QUIET=1
@@ -67,10 +68,21 @@ title() {
   esac
 }
 
+# Strip complete terminal escapes before removing controls, and wrap log lines.
+log_tail() {
+  _lt_cols=${COLUMNS:-80}
+  if [ "$TUI" = 1 ]; then
+    _lt_size=$(stty size < /dev/tty 2>/dev/null || true)
+    _lt_cols=${_lt_size##* }
+  fi
+  node host-runner/format-log.mjs "$1" "$2" "${_lt_cols:-80}"
+}
+
 if [ "$TUI" = 1 ]; then
   # --- fullscreen app state -------------------------------------------------
   i=0; while [ "$i" -le 7 ]; do eval "ST_S_$i=todo; ST_M_$i=waiting"; i=$((i + 1)); done
   UI_BODY=""; UI_LOG=0; UI_FOOT=""; SPIN_N=0
+  UI_LOG_FILE="$QS_LOG"; UI_LOG_LINES=5
   export TOR_ALT=1 # nested pickers draw on our screen, not their own
   tui_enter() {
     printf '\033[?1049h\033[?25l' > /dev/tty 2>/dev/null || true
@@ -104,13 +116,8 @@ if [ "$TUI" = 1 ]; then
         _ri=$((_ri + 1))
       done
       printf '\r\n  %s────────────────────────────────────────%s\r\n' "$DIM" "$RST"
-      if [ "$UI_LOG" = 1 ] && [ -f "$QS_LOG" ]; then
-        # Collapse ollama's progress spam (one \r-redraw per chunk) into one
-        # clean status line per layer; manifest/digest/success lines pass through.
-        tr '\r' '\n' < "$QS_LOG" 2>/dev/null | tail -8 | sed -E -e 's/(pulling [0-9a-f]{4})[0-9a-f]*: *([0-9]+%?).*/\1… \2/' | tail -5 | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /'
-      elif [ -n "$UI_BODY" ]; then
-        printf '%b' "$UI_BODY"
-      fi
+      if [ -n "$UI_BODY" ]; then printf '%b' "$UI_BODY"; fi
+      if [ "$UI_LOG" = 1 ]; then log_tail "$UI_LOG_FILE" "$UI_LOG_LINES"; fi
       if [ -n "$UI_FOOT" ]; then printf '\r\n  %s%s%s\r\n' "$DIM" "$UI_FOOT" "$RST"; fi
     } > /dev/tty 2>/dev/null || true
   }
@@ -118,14 +125,12 @@ if [ "$TUI" = 1 ]; then
   # render_tick IDX — redraw ONLY the active row + tail zone (no screen clear,
   # no flicker). Layout: header 8 rows, steps at 9..16, divider 18, tail 20...
   render_tick() {
-    [ "$UI_LOG" = 1 ] || { render; return; }
+    [ "$UI_LOG" = 1 ] && [ -z "$UI_BODY" ] || { render; return; }
     {
       _tr_row=$((9 + $1))
       printf '\033[%s;1H\033[K  %s%s%s %s/%s %s  %s%s%s\r\n' "$_tr_row" "$YLW" "$(spin_f)" "$RST" "$1" "7" "$(title "$1")" "$DIM" "$(eval "echo \$ST_M_$1")" "$RST"
       printf '\033[20;1H\033[J'
-      if [ -f "$QS_LOG" ]; then
-        tr '\r' '\n' < "$QS_LOG" 2>/dev/null | tail -8 | sed -E -e 's/(pulling [0-9a-f]{4})[0-9a-f]*: *([0-9]+%?).*/\1… \2/' | tail -5 | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /'
-      fi
+      log_tail "$UI_LOG_FILE" "$UI_LOG_LINES"
       if [ -n "$UI_FOOT" ]; then printf '\r\n  %s%s%s\r\n' "$DIM" "$UI_FOOT" "$RST"; fi
     } > /dev/tty 2>/dev/null || true
     SPIN_N=$((SPIN_N + 1))
@@ -138,9 +143,10 @@ if [ "$TUI" = 1 ]; then
   hint() { UI_BODY="${UI_BODY}  ${DIM}$1${RST}\n"; render; }
   cmd() { UI_BODY="${UI_BODY}  ${CYN}$1${RST}\n"; render; }
   die() {
+    UI_LOG=0
     st_set "$CUR" fail "$1"
     if [ -f "$QS_LOG" ]; then
-      UI_BODY="  ${DIM}last output:${RST}\n$(tail -12 "$QS_LOG" 2>/dev/null | tr -d '\000-\010\013\014\016-\037\177' | sed 's/^/  /')\n"
+      UI_BODY="  ${DIM}last output:${RST}\n$(log_tail "$QS_LOG" 10)\n"
     else
       UI_BODY=""
     fi
@@ -165,6 +171,7 @@ if [ "$TUI" = 1 ]; then
   live_run() {
     _lr_n=$1; _lr_msg=$2; shift 2
     st_set "$_lr_n" run "$_lr_msg"; UI_BODY=""; UI_LOG=1
+    UI_LOG_FILE="$QS_LOG"; UI_LOG_LINES=5
     : > "$QS_LOG" || return 1
     # < /dev/null: background steps must never steal keystrokes meant for prompts.
     "$@" > "$QS_LOG" 2>&1 < /dev/null & _lr_pid=$!
@@ -214,7 +221,7 @@ else
   fail() { printf "  ✗ %s\n" "$1"; }
   hint() { printf "  %s\n" "$1"; }
   cmd() { printf "  %s\n" "$1"; }
-  die() { fail "$1"; if [ -f "$QS_LOG" ]; then echo "--- last output:"; tail -12 "$QS_LOG" 2>/dev/null || true; fi; exit 1; }
+  die() { fail "$1"; if [ -f "$QS_LOG" ]; then echo "--- last output:"; log_tail "$QS_LOG" 10; fi; exit 1; }
   run_logged() { "$@" < /dev/tty; }
   pause() { printf "\n  %s [Enter] " "$1"; IFS= read -r _ < /dev/tty 2>/dev/null || true; }
   ask_tty() {
@@ -229,7 +236,13 @@ else
     fi
   }
   have() { command -v "$1" >/dev/null 2>&1; }
-  live_run() { _n=$1; _m=$2; shift 2; "$@" > /dev/null 2>&1; }
+  live_run() {
+    _n=$1; _m=$2; shift 2
+    printf '  %s\n' "$_m"
+    "$@" > "$QS_LOG" 2>&1 < /dev/null && _lr_rc=0 || _lr_rc=$?
+    log_tail "$QS_LOG" 10
+    return "$_lr_rc"
+  }
   tui_yn() { return 1; }
   CUR=0
 fi
@@ -617,8 +630,7 @@ else
 fi
 # fund_wait ADDR — poll testnet balance until ≥$FUND_NEED HBAR (stake + ~1 gas:
 # exactly-10 keys fail the register tx itself, gas has nowhere to come from).
-# Exact integer math in shell (strip 18 wei digits — float64 can't hold HBAR
-# scale). 0 = funded.
+# Compare exact integer wei balances; decimal HBAR is for display only. 0 = funded.
 # RPC failures report as unknown (never as zero — a blind check must not claim
 # "not funded"). Enter rechecks immediately instead of waiting out the 15s tick.
 fund_wait() {
@@ -633,12 +645,11 @@ fund_wait() {
       _fw_ok=0
     fi
     if [ "$_fw_ok" = 1 ]; then
-      _fw_int=${_fw_wei%??????????????????}
-      [ -z "$_fw_int" ] && _fw_int=0
+      _fw_balance=$(node -e 'console.log((Number(process.argv[1]) / 1e18).toFixed(3).replace(/\.?0+$/, ""))' "$_fw_wei")
       # One line per balance (tail shows a single updating status, not a stack).
-      if [ "$_fw_int" != "$_fw_last" ] || [ "$_fw_i" = 0 ]; then
-        echo "balance: ${_fw_int} HBAR / need ≥$FUND_NEED ($STAKE_HBAR stake + gas — Enter = recheck now)"
-        _fw_last="$_fw_int"
+      if [ "$_fw_balance" != "$_fw_last" ] || [ "$_fw_i" = 0 ]; then
+        echo "Balance: ${_fw_balance} HBAR · Target: $FUND_NEED HBAR"
+        _fw_last="$_fw_balance"
       fi
       if node -e 'process.exit(BigInt(process.argv[1]) >= BigInt(process.argv[2]) ? 0 : 1)' "$_fw_wei" "$FUND_WEI"; then return 0; fi
     else
@@ -656,7 +667,7 @@ fund_wait() {
   return 1
 }
 host_addr() {
-  node -e 'const p=require("path"); console.log(require(p.join(process.env.TOR_HOME || p.join(require("os").homedir(),".tor"),"config.json")).hostAddress || "")'  2>/dev/null || echo ""
+  node -e 'const p=require("path"); console.log(require(p.join(process.env.TOR_HOME || p.join(require("os").homedir(),".tor"),"config.json")).hostAddress || "")' 2>/dev/null || echo ""
 }
 registered=""
 while [ -z "$registered" ]; do
@@ -666,13 +677,13 @@ while [ -z "$registered" ]; do
   set -- run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" --status-file="$QS_RUN_STATUS"
   if [ -n "$STAKE_HBAR" ]; then set -- "$@" --stake-hbar="$STAKE_HBAR"; fi
   rm -f "$QS_RUN_STATUS"
-  if run_logged tor_host "$@"; then
+  if live_run 7 "checking registration + stake…" tor_host "$@"; then
     registered=1
   else
     # Only a funding shortfall may enter the faucet wait. Other failures stop
     # with their actual error instead of spending three attempts on funding.
     RUN_KIND=$(node -e 'try { console.log(require(process.argv[1]).kind) } catch { console.log("error") }' "$QS_RUN_STATUS")
-    [ "$RUN_KIND" = "needs_funds" ] || die "Registration stopped — see the error below"
+    [ "$RUN_KIND" = "needs_funds" ] || die "Registration stopped — check the error details"
     funding_field() { node -e 'console.log(require(process.argv[1])[process.argv[2]])' "$QS_RUN_STATUS" "$1"; }
     HOST_ADDR=$(funding_field address)
     STAKE_HBAR=$(funding_field stakeHbar)
@@ -682,7 +693,7 @@ while [ -z "$registered" ]; do
     if [ -n "$HOST_ADDR" ]; then
       printf '%s' "$HOST_ADDR" | pbcopy 2>/dev/null || printf '%s' "$HOST_ADDR" | xclip -selection clipboard 2>/dev/null || true
       if [ "$TUI" = 1 ]; then
-        UI_BODY="  fund THIS address (≥$FUND_NEED HBAR = $STAKE_HBAR stake + gas) — your host key, not your login wallet:\n  ${B}$HOST_ADDR${RST}\n  (copied to clipboard — paste at faucet.hedera.com)\n"; UI_FOOT="watching it live below — Enter rechecks, funding auto-continues"; render
+        UI_BODY="  ${B}Fund your host wallet${RST}\n  $HOST_ADDR\n  Target: $FUND_NEED HBAR ($STAKE_HBAR stake + 1 gas reserve)\n  Faucet: faucet.hedera.com · address copied\n\n"; UI_FOOT="watching it live below — Enter rechecks, funding auto-continues"; render
       else
         ok "fund THIS address (≥$FUND_NEED HBAR = $STAKE_HBAR stake + gas) — host key, not login wallet: $HOST_ADDR"
         hint "copied to clipboard — paste at faucet.hedera.com"
@@ -692,10 +703,11 @@ while [ -z "$registered" ]; do
       # times out from under you. Funding waits do not consume retry attempts.
       while :; do
       if [ "$TUI" = 1 ]; then
-        UI_LOG=1
-        # Append: truncating here would wipe the failed run's output above,
-        # leaving the die card blind (exactly what happened in the wild).
-        fund_wait "$HOST_ADDR" >> "$QS_LOG" 2>&1 & _fw_pid=$!
+        UI_LOG=1; UI_LOG_FILE="$QS_FUNDLOG"; UI_LOG_LINES=1
+        # Keep funding progress separate so old registration errors do not
+        # overwrite the wallet address or reappear below a funded balance.
+        : > "$QS_FUNDLOG"
+        fund_wait "$HOST_ADDR" >> "$QS_FUNDLOG" 2>&1 & _fw_pid=$!
           while kill -0 "$_fw_pid" 2>/dev/null; do render_tick 7; sleep 2; done
           wait "$_fw_pid" && _fw_rc=0 || _fw_rc=$?
           UI_LOG=0
@@ -728,7 +740,7 @@ done
 
 ok "registered"
 # Belt-and-braces claim (run already claims when logged in; free when not).
-run_logged tor_host link --gateway="$PROD_GW" 2>/dev/null && ok "claimed for your account" || hint "claim later: tor-host link (needs login + registered host)"
+live_run 7 "linking your host…" tor_host link --gateway="$PROD_GW" && ok "claimed for your account" || hint "claim later: tor-host link (needs login + registered host)"
 HOST_ADDR=$(host_addr)
 if [ -n "$HOST_ADDR" ]; then
   SEEN=$(curl -sf "$PROD_GW/api/hosts/$HOST_ADDR" 2>/dev/null || echo "")

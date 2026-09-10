@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { banner, box, frames, mark, renderSteps, stepIcon } from "../src/ui.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { banner, box, frames, mark, ok, renderSteps, stepIcon } from "../src/ui.js";
 
 describe("ui kit", () => {
+  beforeEach(() => { vi.stubEnv("FORCE_COLOR", "1"); vi.stubEnv("NO_COLOR", undefined); });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("keeps captured logs free of ANSI color sequences", () => {
+    vi.stubEnv("NO_COLOR", "1");
+    expect(ok("registered")).toBe("✓ registered");
+    expect(box("Host", ["ready"])).not.toContain("\x1b");
+  });
   it("renders steps with state icons", () => {
     const out = renderSteps([
       { label: "docker", state: "done" },
