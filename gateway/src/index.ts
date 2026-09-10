@@ -21,6 +21,7 @@ import { settleCall, type DebitFn } from "./settle.js";
 import { FileTapStore, PgTapStore, tapInstruction, type TapKind, type TapStatus, type TapStore, verifyTapTransfer } from "./taps.js";
 import { cachedGeo } from "./geo.js";
 import { createTapExecutor } from "./tap-exec.js";
+import { hostEarnings } from "./host-earnings.js";
 import { applyHostSettings, authorizeHostSettings, HostSettingsError, MemoryHostRuntime, PgHostRuntime, type HostRuntimeStore } from "./host-runtime.js";
 
 /// @notice Thrown when an org rule blocks a call. Caught by the chat handler
@@ -741,20 +742,21 @@ export function createApp(opts: GatewayOptions = {}) {
     const mine7d = mine.filter((r) => now - r.ts < 7 * 86_400_000);
     const earnings7d = mine7d.reduce((a, r) => a + (Number((r as any).amountCredits ?? 0) || 0), 0);
     let earningsWei: string | null = null;
+    let earningsCredits: string | null = null;
+    let earnings7dTinybar: string | null = null;
     if (opts.vaultAddress && opts.rpcUrl) {
       try {
         const client = createPublicClient({ transport: http(opts.rpcUrl) });
-        earningsWei = String(
-          await client.readContract({
-            address: opts.vaultAddress,
-            abi: parseAbi(["function hostEarnings(address) view returns (uint256)"]),
-            functionName: "hostEarnings",
-            args: [found.address as Address],
-          }),
-        );
-      } catch {
-        earningsWei = null;
-      }
+        const earnings = await hostEarnings(client, opts.vaultAddress, found.address);
+        earningsWei = earnings.tinybar; // compatibility field; Hedera contract values are tinybar
+        earningsCredits = earnings.credits;
+        const settled = mine7d.filter(r => r.debitTx);
+        const hostCredits = settled.reduce((total, r) => {
+          const gross = BigInt(r.amountCredits ?? "0");
+          return total + gross - gross * 1000n / 10000n;
+        }, 0n);
+        earnings7dTinybar = String(hostCredits * earnings.rate);
+      } catch { /* Unknown balances remain null. */ }
     }
     res.json({
       address: found.address,
@@ -779,6 +781,8 @@ export function createApp(opts: GatewayOptions = {}) {
       latencyMs: (await opts.health?.latencyMs(found.address)) ?? null,
       verification: (await opts.verifier?.verification(found.address, found.modelId)) ?? null,
       earningsWei,
+      earningsCredits,
+      earnings7dTinybar,
       calls7d: mine7d.length,
       earnings7d,
       receipts: mine.slice(0, 20),
