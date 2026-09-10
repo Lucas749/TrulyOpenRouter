@@ -19,5 +19,9 @@
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
     "vitest": "^2.0.0"
+  },
+  "optionalDependencies": {
+    "@ledgerhq/hw-app-eth": "^7.8.17",
+    "@ledgerhq/hw-transport-node-hid": "^6.33.5"
   }
 }
