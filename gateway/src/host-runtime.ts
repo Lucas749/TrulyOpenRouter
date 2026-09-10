@@ -57,6 +57,6 @@ export async function authorizeHostSettings(value: unknown, signature: unknown, 
 
 export function applyHostSettings(host: HostInfo, record?: RuntimeRecord): HostInfo {
   if (!record || record.registry.toLowerCase() !== host.registry?.toLowerCase() || record.registeredModelId !== host.modelId) return host;
-  return { ...host, registeredModelId: host.modelId, registeredEndpoint: host.endpoint, paused: record.paused,
+  return { ...host, registeredModelId: host.modelId, registeredEndpoint: host.endpoint, registeredActive: host.active, paused: record.paused,
     endpoint: record.endpoint, modelId: record.modelId, modelDigest: record.modelDigest, active: host.active && !record.paused };
 }

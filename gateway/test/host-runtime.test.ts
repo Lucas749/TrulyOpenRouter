@@ -5,6 +5,7 @@ import { MemoryHostRuntime, authorizeHostSettings } from "../src/host-runtime.js
 import { hostSettingsMessage, type HostSettings } from "../src/host-settings.js";
 import { MemoryVerifier } from "../src/verify.js";
 import type { HostInfo } from "../src/registry.js";
+import express from "express";
 
 const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
 const registry = `0x${"2".repeat(40)}` as const;
@@ -48,6 +49,27 @@ describe("host runtime settings", () => {
     const store = new MemoryHostRuntime(), s = settings();
     const record = await authorizeHostSettings(s, await signature(s));
     expect((await Promise.all([store.put(record), store.put(record)])).filter(Boolean)).toHaveLength(1);
+  });
+
+  it("routes the new model to its updated endpoint and stops routing to it after pause", async () => {
+    let requests = 0;
+    const upstream = express(); upstream.use(express.json());
+    upstream.post("/v1/chat/completions", (req, res) => { requests++; res.json({ choices: [{ message: { content: req.body.model } }] }); });
+    const service = upstream.listen(0);
+    const runtime = new MemoryHostRuntime();
+    const opts = { registry, runtime, knownModels: [base.modelId], fetchHosts: async (model: string) => model === base.modelId ? [base] : [] };
+    const server = createApp(opts).listen(0);
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const s = { ...settings(), endpoint: `http://127.0.0.1:${(service.address() as { port: number }).port}` };
+    const chat = () => fetch(`${url}/v1/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: s.modelId, messages: [{ role: "user", content: "test" }] }) });
+    try {
+      await runtime.put(await authorizeHostSettings(s, await signature(s)));
+      expect((await (await chat()).json()).choices[0].message.content).toBe(s.modelId);
+      const pause = { ...s, revision: 2, paused: true };
+      await runtime.put(await authorizeHostSettings(pause, await signature(pause)));
+      expect((await chat()).ok).toBe(false);
+      expect(requests).toBe(1);
+    } finally { await Promise.all([server, service].map(server => new Promise<void>(resolve => server.close(() => resolve())))); }
   });
 
   it("does not apply another model's verification result after a switch", async () => {

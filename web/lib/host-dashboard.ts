@@ -9,6 +9,8 @@ export interface HostDetail {
   endpoint: string;
   modelId: string;
   active: boolean;
+  paused?: boolean;
+  registeredActive?: boolean;
   stake: string | null;
   earningsWei: string | null;
   pricePerReq: string | null;
@@ -73,7 +75,7 @@ export async function loadHost(address: string, signal?: AbortSignal, fetchFn: t
     if (!d || typeof d.address !== "string" || d.address.toLowerCase() !== address.toLowerCase() || typeof d.modelId !== "string" || typeof d.active !== "boolean") throw new Error("invalid host");
     return { address, status: "ready", host: {
       address, registry: typeof d.registry === "string" && ADDRESS.test(d.registry) ? d.registry : null,
-      endpoint: typeof d.endpoint === "string" ? d.endpoint : "", modelId: d.modelId, active: d.active,
+      endpoint: typeof d.endpoint === "string" ? d.endpoint : "", modelId: d.modelId, active: d.active, paused: d.paused === true, registeredActive: typeof d.registeredActive === "boolean" ? d.registeredActive : d.active,
       stake: amount(d.stake), earningsWei: amount(d.earningsWei), pricePerReq: amount(d.pricePerReq), pricePer1kTokens: amount(d.pricePer1kTokens),
       calls24h: count(d.calls24h), fail24h: count(d.fail24h), lastHeartbeat: heartbeatMs(d.lastHeartbeat),
       region: typeof d.region === "string" ? d.region : null, geo: typeof d.geo === "string" ? d.geo : null,

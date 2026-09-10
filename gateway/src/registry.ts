@@ -13,6 +13,7 @@ export interface HostInfo {
   registeredModelId?: string;
   registeredEndpoint?: string;
   paused?: boolean;
+  registeredActive?: boolean;
   endpoint: string;
   modelId: string;
   modelDigest: `0x${string}`;
