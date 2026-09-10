@@ -630,7 +630,7 @@ if [ -z "$ENDPOINT" ]; then
   die "no public URL — without one the network can't route to you (re-run with cloudflared installed)"
 fi
 if [ "$TUI" = 1 ]; then
-  UI_BODY="  registering — host key, testnet stake, owner-claim…\n"; UI_FOOT="underfunded key? I wait for funds below, no re-typing"; render
+  UI_BODY="  registering — host key, testnet stake, owner-claim…\n"; UI_FOOT=""; render
 else
   hint "registering (generates host key, stakes testnet HBAR, claims for your account)…"
 fi
@@ -678,7 +678,7 @@ host_addr() {
 registered=""
 while [ -z "$registered" ]; do
   if [ "$TUI" = 1 ]; then
-    UI_BODY="  checking registration and stake requirements…\n"; UI_FOOT="underfunded key? I wait for funds below, no re-typing"; render
+    UI_BODY="  checking registration and stake requirements…\n"; UI_FOOT=""; render
   fi
   set -- run --gateway="$PROD_GW" --model "$MODEL_ID" --endpoint="$ENDPOINT" --status-file="$QS_RUN_STATUS"
   if [ -n "$STAKE_HBAR" ]; then set -- "$@" --stake-hbar="$STAKE_HBAR"; fi
