@@ -121,7 +121,8 @@ export async function dashboard(options: DashboardOptions = {}): Promise<void> {
         const choices = snapshot?.models.state === "ok" ? snapshot.models.data.map(model => model.name) : [];
         if (choices.length) {
           const index = choices.indexOf(state.dialog.input);
-          state.dialog.input = choices[(index + (key.name === "down" ? 1 : choices.length - 1) + choices.length) % choices.length];
+          const next = index < 0 ? (key.name === "down" ? 0 : choices.length - 1) : (index + (key.name === "down" ? 1 : choices.length - 1)) % choices.length;
+          state.dialog.input = choices[next];
           render();
         }
       }
