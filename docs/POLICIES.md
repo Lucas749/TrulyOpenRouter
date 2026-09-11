@@ -39,7 +39,8 @@ Unverified body addresses cannot authorize spending. Anonymous requests return
 A persistent per-payer reservation prevents concurrent reuse of credits and
 blocks retries after uncertain settlement. Only confirmed vault debits release
 completions. Operator-funded verification probes require admin authentication.
-See [payment flow and recovery](PAYMENTS.md).
+Do not expire pending billing reservations automatically. Confirm the receipt,
+USDC transfer, and vault debit before removing the exact payer/request entry.
 
 Authenticated requests then pass two policy gates in `gateway/src/index.ts`:
 

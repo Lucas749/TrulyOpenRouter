@@ -24,7 +24,7 @@ HCS topic `0.0.10379640`.
 
 The gateway spends separately funded test USDC from account `0.0.10375331`.
 HBAR subscriptions do not convert into USDC. Testnet tokens have no financial
-value. See [funding, authentication, and payment evidence](docs/PAYMENTS.md).
+value.
 
 ## Run it
 

@@ -53,7 +53,7 @@ gates run in the gateway per request.
   Postgres `billing_requests` serializes each payer and retains uncertain
   payments across restarts. Bounded text/output ceilings protect credit checks;
   only actual usage is debited. Unconfirmed debits withhold the completion.
-  See `docs/PAYMENTS.md` for operator recovery: do not expire pending rows on a
+  See `docs/POLICIES.md` for operator recovery: do not expire pending rows on a
   timer. Receipt IDs now include request identity and use the local receipt
   directly, removing the latest-row race. Operator-funded verification is
   admin-only; the public explorer displays results without a spending button.
@@ -77,14 +77,13 @@ gates run in the gateway per request.
   billing and funding tests run against a disposable Postgres instance, now
   removed. Web typecheck, chat lint, production build, logged-out login gate,
   and host-page browser checks pass. Server-side Privy owner lookup also passes.
-- **Token and prize verification**: `0.0.429274` is Circle's official testnet
+- **Token verification**: `0.0.429274` is Circle's official testnet
   USDC, with no financial value. The payer received 20 units from `0.0.11920`
   in transaction `0.0.11920-1788603611-312002297`; 19.980 remain after this test.
   Subscriptions fund HBAR vault credits; USDC is a separately funded operator
   pool with no automatic conversion. Current hosts receive both direct USDC
-  and HBAR vault earnings. Hedera's prize permits testnet and requires
-  Blocky402, a public repository, and a video of at most five minutes.
-  The repository is still private; no submission video was verified.
+  and HBAR vault earnings. Payment evidence and sponsor notes are preserved in
+  `.local/PAYMENTS.md` (ignored by Git). Sponsor preparation is deferred.
 - **Unpaid access checks (2026-09-11)**: the public Dubai guard returns 402
   with x402 USDC requirements. Raw local Ollama returns 200 because enforcement
   lives in the guard. The hosted gateway returns 402 for a wallet with no
