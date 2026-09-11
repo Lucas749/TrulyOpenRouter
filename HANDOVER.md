@@ -43,6 +43,21 @@ gates run in the gateway per request.
 - Repo: `https://github.com/Lucas749/TrulyOpenRouter`, small commits on `main`.
 
 ## What is built (this session worked newest-first)
+- **Unpaid access checks (2026-09-11)**: the public Dubai guard returns 402
+  with x402 USDC requirements. Raw local Ollama returns 200 because enforcement
+  lives in the guard. The hosted gateway returns 402 for a wallet with no
+  subscription credits, but a fully anonymous request returns 200 through its
+  free demo path. This is an open gap in subscriber enforcement: the gateway
+  still pays the selected host while no subscriber is charged. Live anonymous
+  receipt `026e935dda178e82c0953015e2e64e1e084315eada42e7f2df906896baa8c50f`
+  targets the Oregon demo host, has x402 transaction
+  `0.0.7162784@1789114158.380757721`, no vault debit, and HCS sequence 16.
+  No payment-policy change was made during these diagnostic requests.
+  The user's temporary console lookup failure recovered. Withdrawal dry-run
+  reads 0.002 HBAR available and a 0.05159721 HBAR maximum network fee;
+  no withdrawal was submitted. `tor-host withdraw --dry-run` previews,
+  `tor-host withdraw` reviews software-key submission, and `--ledger` adds
+  device approval before host-key submission.
 - **Host funding (2026-09-11)**: onboarding has a separate “Get HBAR from us”
   button for 5 testnet HBAR. The original 0.5 HBAR account-creation drip and
   external faucet remain. Login tokens are verified server-side; durable
