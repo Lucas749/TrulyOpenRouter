@@ -257,6 +257,18 @@ export class PgAgents {
     return rowToAgent(rows[0]);
   }
 
+  /// @notice Enroll, replace, or remove the Ledger approval address at an expected enrollment revision.
+  async setLedger(agentId: string, address: string | null, expectedRevision: number): Promise<Agent> {
+    if (address !== null && !/^0x[0-9a-f]{40}$/.test(address)) throw new AgentError(400, "invalid_request", "The Ledger address must be a lowercase 0x address.");
+    const { rows } = await this.pool.query(
+      `UPDATE agents SET ledger_address = $2, ledger_revision = ledger_revision + 1, updated_at = $3
+       WHERE id = $1 AND ledger_revision = $4 AND state <> 'revoked' RETURNING *`,
+      [agentId, address, Date.now(), expectedRevision],
+    );
+    if (!rows[0]) throw new AgentError(409, "revision_conflict", "The Ledger enrollment changed. Start again.");
+    return rowToAgent(rows[0]);
+  }
+
   /// @notice Replace the policy at an expected revision. The revision always advances, invalidating pending approvals.
   async updatePolicy(agentId: string, policy: AgentPolicy, expectedRevision: number): Promise<Agent> {
     const { rows } = await this.pool.query(

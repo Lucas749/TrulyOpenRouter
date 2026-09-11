@@ -34,6 +34,7 @@ import { AGENT_KEY_PREFIX, AgentError, normalizePolicy, PgAgents, type Agent, ty
 import { PgAccounting, periods, type CounterLimit, type Violation } from "./accounting.js";
 import { ApprovalError, approvalAuthority, approvalMessage, decideAgentApproval, PgApprovals, type AgentApproval, type ApprovalMethod } from "./approvals.js";
 import type { Identity, TeamMember } from "./teams.js";
+import { challengeField, issueChallenge, LedgerChallengeError, messageSigner, stableJson, verifyChallenge } from "./ledger.js";
 
 /// @notice Thrown when an org rule blocks a call. Caught by the chat handler
 /// into a plain-language 403 (module scope: the catch lives outside try).
@@ -1527,7 +1528,7 @@ export function createApp(opts: GatewayOptions = {}) {
   }
 
   function agentFailure(res: any, e: unknown) {
-    if (e instanceof AgentError || e instanceof ApprovalError) {
+    if (e instanceof AgentError || e instanceof ApprovalError || e instanceof LedgerChallengeError) {
       res.status(e.status).json({ error: { message: e.message, type: e.type } });
       return;
     }
@@ -1572,13 +1573,45 @@ export function createApp(opts: GatewayOptions = {}) {
     return { team, allowance, teamModels: rules?.allowedModels ?? null };
   }
 
-  const widens = (before: AgentPolicy, after: AgentPolicy) =>
-    (["dailyCredits", "monthlyCredits", "lifetimeCredits", "maxRequestCredits", "requestsPerMinute", "maxConcurrent", "credentialTtlDays"] as const).some(
+  const CREDIT_FIELDS = ["dailyCredits", "monthlyCredits", "lifetimeCredits", "maxRequestCredits"];
+  /// @notice Fields a policy change makes less restrictive.
+  const widenedFields = (before: AgentPolicy, after: AgentPolicy) => [
+    ...(["dailyCredits", "monthlyCredits", "lifetimeCredits", "maxRequestCredits", "requestsPerMinute", "maxConcurrent", "credentialTtlDays"] as const).filter(
       (k) => before[k] !== null && (after[k] === null || (after[k] as number) > (before[k] as number)),
-    ) ||
-    (before.models !== null && (after.models === null || after.models.some((m) => !before.models!.includes(m)))) ||
-    (before.verifiedOnly && !after.verifiedOnly) ||
-    (!before.exceptions.credits && after.exceptions.credits);
+    ),
+    ...(before.models !== null && (after.models === null || after.models.some((m) => !before.models!.includes(m))) ? ["models"] : []),
+    ...(before.verifiedOnly && !after.verifiedOnly ? ["verifiedOnly"] : []),
+    ...(!before.exceptions.credits && after.exceptions.credits ? ["exceptions"] : []),
+  ];
+
+  const policyChangeLines = (agent: Agent, policy: AgentPolicy) => [
+    "TrulyOpenRouter protected agent change",
+    `origin: ${origin}`,
+    "network: hedera-testnet",
+    `agent: ${agent.id} (${agent.name})`,
+    `approver: ${agent.ledgerAddress}`,
+    `policy revision: ${agent.policyRevision}`,
+    `current policy: ${stableJson(agent.policy)}`,
+    `proposed policy: ${stableJson(policy)}`,
+  ];
+
+  const enrollmentLines = (agent: Agent, action: string, approver: string) => [
+    "TrulyOpenRouter Ledger enrollment",
+    `origin: ${origin}`,
+    "network: hedera-testnet",
+    `action: ${action}`,
+    `agent: ${agent.id} (${agent.name})`,
+    `payer: ${agent.orgId ? `team ${agent.orgId}` : "personal budget"}`,
+    `approver: ${approver}`,
+    `current approver: ${agent.ledgerAddress ?? "none"}`,
+    `enrollment revision: ${agent.ledgerRevision}`,
+  ];
+
+  /// @notice A challenge counts only if every line describing the current state is still present.
+  const describesCurrent = (message: string, lines: string[]) => {
+    const present = new Set(message.split("\n"));
+    return lines.every((l) => present.has(l));
+  };
 
   async function agentUsage(agent: Agent) {
     const p = periods();
@@ -1706,10 +1739,90 @@ export function createApp(opts: GatewayOptions = {}) {
         const sponsor = await opts.teams!.memberFor(agent.orgId, { userId: agent.sponsorDid ?? "", wallets: [] });
         if (!sponsor) throw new AgentError(409, "sponsor_inactive", "The sponsoring member is no longer active.");
         await checkParent(agent.orgId, sponsor, policy);
-      } else if (agent.ledgerAddress && widens(agent.policy, policy)) {
-        throw new AgentError(403, "ledger_required", "Widening a Ledger-protected agent needs approval on its Ledger.");
+      }
+      const widened = widenedFields(agent.policy, policy);
+      // Protected agents: widening needs the enrolled Ledger. A team owner may still
+      // raise a team agent's credit limits within team rules without Ledger.
+      const ownerCreditIncrease = !!agent.orgId && ctx.access.member?.role === "owner" && widened.every((f) => CREDIT_FIELDS.includes(f));
+      if (agent.ledgerAddress && widened.length && !ownerCreditIncrease) {
+        const ledger = req.body?.ledger;
+        if (!ledger) throw new AgentError(403, "ledger_required", "Widening a Ledger-protected agent needs approval on its Ledger.");
+        const message = verifyChallenge(ledger.message, ledger.token);
+        if (!describesCurrent(message, policyChangeLines(agent, policy))) throw new LedgerChallengeError(409, "stale_challenge", "The agent or the proposed policy changed. Start again.");
+        if ((await messageSigner(message, ledger.signature)) !== agent.ledgerAddress) throw new LedgerChallengeError(401, "bad_signature", "The enrolled Ledger did not approve this change.");
       }
       const updated = await opts.agents!.updatePolicy(agent.id, policy, Number(req.body?.expectedRevision));
+      await opts.approvals?.cancelOpen({ agentId: agent.id });
+      res.json({ agent: agentView(updated) });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.post("/api/agents/:id/policy/challenge", async (req, res) => {
+    const ctx = await managedAgent(req, res);
+    if (!ctx) return;
+    try {
+      if (!ctx.agent.ledgerAddress) throw new AgentError(409, "not_protected", "This agent has no enrolled Ledger.");
+      res.json(issueChallenge(policyChangeLines(ctx.agent, normalizePolicy(req.body?.policy))));
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  // --- Ledger enrollment ------------------------------------------------------
+  // Personal agents: their owner enrolls. Team agents: an active team owner.
+  // Replacing or removing an approver also needs the currently enrolled Ledger,
+  // so a login alone can never disable protection.
+
+  async function ledgerAgent(req: any, res: any) {
+    const actor = await sessionActor(req, res);
+    if (!actor) return null;
+    const agent = await opts.agents!.get(req.params.id);
+    const allowed = agent && agent.state !== "revoked" && (agent.orgId
+      ? (await opts.teams?.memberFor(agent.orgId, actor.identity))?.role === "owner"
+      : stripDid(agent.ownerUserId) === stripDid(actor.identity.userId));
+    if (!agent || !allowed) {
+      res.status(404).json({ error: { message: "Agent not found.", type: "not_found" } });
+      return null;
+    }
+    return { actor, agent };
+  }
+
+  app.post("/api/agents/:id/ledger/challenge", async (req, res) => {
+    const ctx = await ledgerAgent(req, res);
+    if (!ctx) return;
+    try {
+      const raw = req.body?.address;
+      const address = raw === undefined || raw === null || raw === "" ? null : String(raw).toLowerCase();
+      if (address !== null && !/^0x[0-9a-f]{40}$/.test(address)) throw new AgentError(400, "invalid_request", "Enter the Ledger's Ethereum address.");
+      const action = !ctx.agent.ledgerAddress ? "enroll" : address ? "replace" : "remove";
+      if (action === "enroll" && !address) throw new AgentError(400, "invalid_request", "Connect the Ledger to enroll its address.");
+      if (action === "replace" && address === ctx.agent.ledgerAddress) throw new AgentError(409, "already_enrolled", "This Ledger is already enrolled.");
+      res.json({ action, currentApprover: ctx.agent.ledgerAddress, ...issueChallenge(enrollmentLines(ctx.agent, action, address ?? "none")) });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.post("/api/agents/:id/ledger", async (req, res) => {
+    const ctx = await ledgerAgent(req, res);
+    if (!ctx) return;
+    try {
+      const { agent } = ctx;
+      const message = verifyChallenge(req.body?.message, req.body?.token);
+      const action = challengeField(message, "action");
+      const approver = challengeField(message, "approver") ?? "";
+      if (!action || !["enroll", "replace", "remove"].includes(action) || !describesCurrent(message, enrollmentLines(agent, action, approver))) {
+        throw new LedgerChallengeError(409, "stale_challenge", "The agent or its Ledger enrollment changed. Start again.");
+      }
+      if (action !== "remove" && (await messageSigner(message, req.body?.signature)) !== approver) {
+        throw new LedgerChallengeError(401, "bad_signature", "The Ledger being enrolled did not sign this enrollment.");
+      }
+      if (action !== "enroll" && (await messageSigner(message, action === "remove" ? req.body?.signature : req.body?.currentSignature)) !== agent.ledgerAddress) {
+        throw new LedgerChallengeError(401, "bad_signature", "The currently enrolled Ledger must approve this change.");
+      }
+      const updated = await opts.agents!.setLedger(agent.id, action === "remove" ? null : approver, agent.ledgerRevision);
       await opts.approvals?.cancelOpen({ agentId: agent.id });
       res.json({ agent: agentView(updated) });
     } catch (e) {
