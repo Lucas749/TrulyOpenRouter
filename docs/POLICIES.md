@@ -11,7 +11,9 @@ about regions, models, or daily caps lives onchain.
 | Member allowance (credits) | /team → Members → Edit cap | Gateway `SpendCapStore` + vault `SpendCap` mirror | Pre-flight `429` per request; `debit` reverts `SpendCapExceeded` past the cap | Yes, where the deployed vault supports `setSpendCap` (else `chainSynced:"skipped"`) |
 | Org daily ceiling | /team → Firm rules → Daily ceiling | Gateway `orgrules.ts` | Per request; over → `429` | No |
 | Allowed models / regions / verified-only / rate / pinned hosts | /team → Firm rules | Gateway org-rules gate (`gateway/src/index.ts` ~365) | Per request; violation → `403 org_policy` with a plain-language reason | No |
-| Per-tx USD cap on the team wallet | Team creation (`capUsd`) | **Privy**, not us | At signing time: Privy refuses to sign a tx over the cap | No — Privy-side |
+| Team wallet transactions | Team creation → Privy policy + key quorum | **Privy**, not us | At signing: only allowed purchases, refunds, and capped payouts to approved recipients, with the financial approver and the broker key | No — Privy-side |
+| Agent limits (credits per day, month, lifetime, request; models; rate; concurrency; key expiry) | /agents | Gateway durable counters in Postgres | Before any host is paid; over an approvable limit → `403 approval_required` | No |
+| Host payment terms (x402) | Gateway env bounds | Gateway payer | Before signing each host payment | No |
 | Per-tx display cap | /team → Firm rules | Nobody (display only) | — | No |
 | Subscriptions, relay payment, withdraw, stake | Contracts | **Hedera contracts** (Registry `0x5f83…` + legacy `0xa454…`, Vault `0xd75c…`) | Consensus | **Yes** |
 | "This signature authorizes that action" | Every signed button | Chain (tx auth) + our server (`viem` recover) | See below | Half |
@@ -70,27 +72,33 @@ primary enforcer; the chain is the backstop that cannot be skipped by a buggy
 caller. Proven: 7 forge tests + a real anvil loop (subscribe → cap → debit ok
 → over-cap reverts → exact remainder works).
 
-## 3. What Privy enforces (and why the per-tx cap is special)
+## 3. What Privy enforces: the team treasury
 
-When a team is created with a USD cap, we create a **Privy spending policy**
-(`web/app/api/team/orgs/route.ts`): an `eth_sendTransaction` ALLOW rule with
-`value lte <cap in wei>`, converted from USD at the indicative rate in
-`web/lib/fx.ts`, attached to the team's wallet **at creation**. From then on:
+Each team gets a Privy organization wallet owned by a key quorum that needs two
+signatures: the team's financial approver (their Privy login) and the gateway's
+broker key (`PRIVY_BROKER_AUTH_KEY`). The broker key alone cannot move funds;
+the live check confirms Privy refuses it. The policy attached at creation
+(`treasuryPolicyRules` in `gateway/src/treasury.ts`) denies by default and
+allows only `eth_signTransaction` for:
 
-- Privy holds the wallet key and **refuses to sign** any transaction whose
-  value exceeds the cap. The enforcement point is Privy's signing service —
-  our app never sees the key and cannot override it.
-- Policy *changes* need quorum authorization signatures (roadmap; creation is
-  app-authed, changes are not yet wired).
+- `subscribe(planId)` on the vault at each configured plan's exact price;
+- `refund()` on the vault;
+- HBAR payouts to approved recipients up to `TEAM_PAYOUT_CAP_HBAR`;
+- test USDC `transfer` to approved recipients up to `TEAM_PAYOUT_CAP_USDC`.
 
-Consequences:
+An owner or manager proposes an intent with fully prepared terms (nonce, gas,
+and gas price). The financial approver authorizes it with their session, the
+broker co-signs, and the gateway checks the signed bytes against the reviewed
+terms, stores them, and only then broadcasts to Hedera. Reconciliation checks
+the same transaction hash, and an intent is confirmed only after its receipt.
+A refund waits while any request billed to the team is unresolved. A wrong
+destination, chain, function, amount, or recipient fails at Privy with
+`policy_violation` (`gateway/scripts/treasury-policy-live.mts`).
 
-- The **Per-transaction display cap** in Firm rules is a *label only*
-  (`per_tx_cap_usd` is never read by the gateway — see `web/lib/members.ts`).
-  The real enforcement is the Privy policy from wallet creation. We keep the
-  display row so the team sees the number where they set other rules.
-- Privy policies cap **native-token sends** (HBAR here), not LLM inference
-  cost. Inference spend is capped by layers 1–2 above, in credits.
+Privy policies bound wallet transactions, not inference. Inference spend is
+bounded in credits by the gateway layers above. The **Per-transaction display
+cap** in Firm rules remains a label only (`per_tx_cap_usd` is never read by the
+gateway).
 
 ## 4. How "who may click what" is enforced (no chain involved)
 
@@ -101,6 +109,8 @@ The server recovers the signer with `viem` and checks role rank
 (owner 2 / manager 1 / member 0) in `web/lib/members.ts`. The signature binds
 the exact parameters (org, did, wallet, role, cap…), so a signed "set cap 100"
 cannot be replayed as "set cap 9999" or on another org. Expiry is 5 minutes.
+Approving an increase request and raising an allowance need an owner; managers
+may invite members, lower allowances, and deny requests.
 
 Trust note on email invites: the claim signature proves *wallet ownership*;
 the email is self-asserted and matched against an owner-approved invite. The
@@ -160,50 +170,32 @@ contract would make violations *impossible* instead of *detectable*, at a price
 we'd feel on every call. Deliberate split, documented here so it stays
 deliberate.
 
-## 7. Who pays? (team money vs individual money)
+## 7. Who pays?
 
-Today: **every member pays individually.** The browser sends a verified access
-token and selects its wallet with `userHandle`; the gateway checks server-side
-wallet ownership and settles by debiting that wallet's own
-vault credits — the subscription *they* funded (e.g. 10 HBAR → 10k credits).
-Zero personal balance → `402 payment_required`.
+Each request names one payer, and the gateway verifies it before routing:
 
-Team allowances are **ceilings, not a pool**: they gate keyed (API) calls per
-key prefix, and keyed calls settle against a derived budget account — not
-against any shared org balance. A wallet-handle chat call is, per the code
-comment, granted nothing by membership: caps "enforce exclusively via keys".
+- **Personal credits.** A verified Privy session with a linked wallet spends
+  that wallet's own vault credits. Zero balance → `402 payment_required`.
+- **Team credits.** `tor_team: <orgId>` spends the team wallet's vault credits.
+  The gateway resolves the member from the verified session, requires an
+  active team wallet, and reserves against the member's monthly allowance (the
+  member's own value, or the team default) in Postgres. Outsiders and removed
+  members cannot select the team.
+- **Agents.** A `tor_sk_agt_` key spends either a team's credits within its
+  sponsoring member's allowance, or its own personal budget account.
 
-The org's Privy team wallet (created at team setup, with the per-tx policy)
-exists but is **not wired as a payer** — nothing in the inference path debits
-it. So there is currently no such thing as company money being spent; there
-are only individual balances with team ceilings on top.
-
-To make it company money, the missing piece is payer derivation with org
-context: the request must say "member X acting for org Y", the gateway must
-check Y's pool balance (funded once by the company) and X's allowance against
-it, and settle debits Y's pool. Design decision sitting behind that: shared
-pool (members draw freely up to caps) vs stipends (company tops up individual
-balances). Either way the allowance machinery already exists — only the
-funding source changes.
-
-**Status: the contract half exists.** `SubscriptionVault` now has
-`poolSpendCaps[pool][member]` + `debitFrom(pool, member, …)`: the org wallet
-subscribes once (company funds it), each member draws within their own cap,
-and members with NO entry are denied by default — an unknown or removed
-member cannot touch pool funds, period. The pool's own balance and the daily
-quota bound the org as a whole. Proven in forge (6 tests: draw-within-cap,
-deny-by-default, cap-0 removal, period reset, pool-balance bound, gateway-only).
-Not yet wired: gateway payer resolution with org context (request → (member,
-pool) → `debitFrom`), pool funding UX (subscribe from the org wallet), and the
-web mirror keyed by (pool, member). Until those land, live traffic still
-settles per-member (this section's first paragraph).
+The team buys credits through a treasury intent (section 3). Settlement debits
+the payer's vault credits per receipt, so nobody spends what was never
+deposited. `SubscriptionVault` also carries `poolSpendCaps` and `debitFrom` as
+an onchain per-member backstop for pooled funds; the gateway's durable counters
+are the enforcer for team credits today.
 
 ## Mental model
 
 ```
 chain      = money + signatures (trustless, slow to change)
 gateway    = team policy per request (fast, operator-controlled)
-Privy      = per-tx signing limits (key-custody boundary)
+Privy      = team wallet quorum + transaction policy (key-custody boundary)
 our server = identity + roles via signed messages (no keys held)
 ```
 
@@ -258,3 +250,86 @@ the host payment. The gateway then settles the user's subscription credits
 through the HBAR vault. Receipts store the direct payment as `x402Transaction`
 and the vault settlement as `debitTx`. Direct USDC reaches the host wallet;
 the existing CLI withdrawal action releases the separate HBAR vault earnings.
+
+## Agents, strict limits, and approvals
+
+Agents authenticate with `tor_sk_agt_` keys. The gateway stores only a salted
+hash, and rotating or adding keys never resets usage. Each admitted request
+reserves its maximum credit cost on every counter that applies (the agent's UTC
+day, month, and lifetime, plus the sponsoring member's month for team agents)
+in one Postgres transaction, before any host is paid. Settlement moves the
+actual cost from reserved to spent. A payment with an unknown outcome keeps its
+reservation until reconciled; age never releases it.
+
+A request over an approvable credit limit receives `403 approval_required` with
+an approval ID, the exact constraint, remaining credits, the additional credits
+requested, a review URL, and a polling interval. One open approval exists per
+agent, request, and policy revision. Approvers:
+
+- **Team spending:** an active owner of the same team signs the server-built
+  message with a linked wallet. No Ledger is needed, including for agents that
+  have one enrolled.
+- **Ledger route:** the enrolled device signs the exact message through Ledger's
+  Device Management Kit over WebHID.
+
+An approval creates a single grant, claimed by exactly one retry of the
+original request with the same idempotency key. Policy, membership, or
+enrollment changes cancel open approvals. Widening a Ledger-protected agent
+needs its Ledger, except that a team owner may raise a team agent's credit
+limits within team rules. Approvals never move funds or change Privy policies.
+
+## Personal agent budgets
+
+A personal agent spends from its own budget account, derived from
+`BUDGET_MASTER`. The owner deposits HBAR from their wallet, and deposits stay
+HBAR until the owner buys a plan: the broker signs `subscribe` with the budget
+key only when the balance covers the price plus a fee reserve. Returning funds
+refunds unused credits, then sends the HBAR to one of the owner's linked
+wallets and nowhere else. A Ledger-protected agent's return also needs its
+Ledger to sign the destination and enrollment. Each leg's signed bytes are
+stored before broadcast, so a retry resumes instead of repeating, and a return
+waits while any request billed to the budget is unresolved.
+
+## Host payment bounds (x402)
+
+A host's 402 response does not authorize arbitrary payment. Before signing, the
+gateway payer (`gateway/src/payer.ts`) requires:
+
+- the exact scheme on `hedera:testnet` in test USDC (`0.0.429274`);
+- an amount no higher than `X402_MAX_PAYMENT_UNITS` (default 10000, $0.01);
+- a facilitator fee payer other than the gateway's payment account;
+- a payee account whose EVM alias is the routed host's registered address;
+- a payment account holding at least the amount;
+- room under the shared daily ceilings `X402_DAILY_CAP_UNITS` and
+  `X402_DAILY_PAYMENTS`.
+
+A refusal before signing releases the request and returns a service error,
+never a claim that the user's balance is empty. A host that rejects a sent
+payment leaves the request for reconciliation.
+
+## Broker secrets on the Key Ring
+
+With `SECRETS_BACKEND=ring`, the gateway decrypts `gateway/secrets/*.enc`
+through `wallet-cli ring` at boot. `BUDGET_MASTER`, `X402_PAYER_KEY`, and
+`PRIVY_BROKER_AUTH_KEY` never fall back to environment values: a missing file or
+failed decryption removes the environment value and leaves agent budgets, host
+payments, or the team treasury disabled. `gateway/scripts/ring-runtime-check.mts`
+demonstrates this on a ring member without printing secrets. The deployed
+gateway still reads environment secrets until its server is enrolled as a ring
+member.
+
+## Team hosts and collections
+
+A team owner creates a one-time link code. The host operator runs
+`tor-host team link <code>`, and the registered host key signs terms naming the
+team, network, registry, host, destination team wallet, nonce, and expiry. The
+gateway accepts the link only for an actively staked registration, and a host
+belongs to one team at a time.
+
+`tor-host collect` withdraws HBAR vault earnings to the host, then sends them to
+the team wallet, keeping 0.5 HBAR on the host for fees. `tor-host collect --usdc`
+sends test USDC after checking the team wallet can hold it. The gateway records
+each leg only after verifying its receipt: a withdrawal stays **collection
+pending** until a transfer from that host reaches the team wallet, and never
+counts as received. Host keys stay on host machines; Privy controls the funds
+only after collection.
