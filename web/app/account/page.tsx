@@ -410,6 +410,10 @@ export default function AccountPage() {
               {tab === "keys" && (
                 <div className="flex flex-col gap-6">
                   <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">API keys</h1>
+                  <p className="m-0 text-sm text-[#6E6E73]">
+                    Agents get their own keys with daily and monthly limits, team or personal funding, and human approval for exceptions.{" "}
+                    <Link href="/agents" className="text-black underline">Open Agents</Link>
+                  </p>
                   <ApiKeysPanel />
                 </div>
               )}
