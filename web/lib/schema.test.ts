@@ -39,6 +39,25 @@ integration("web schema", () => {
     await pool.query(`INSERT INTO team_orgs (id, default_allowance_credits, period_days, creator_wallet) VALUES ('fresh', null, 30, null)`);
   });
 
+  it("moves web team rules off the gateway's org_rules name, keeping rows and leaving the gateway's table alone", async () => {
+    const legacy = await scratch();
+    await legacy.query(`CREATE TABLE org_rules (org_id text PRIMARY KEY, daily_cap_credits double precision, allowed_models jsonb, per_tx_cap_usd double precision, updated_at bigint NOT NULL)`);
+    await legacy.query(`INSERT INTO org_rules (org_id, daily_cap_credits, updated_at) VALUES ('team-a', 250, 1)`);
+    await legacy.query(schemaSql);
+    await legacy.query(schemaSql);
+    expect((await legacy.query(`SELECT daily_cap_credits FROM team_org_rules WHERE org_id = 'team-a'`)).rows[0].daily_cap_credits).toBe(250);
+    expect((await legacy.query(`SELECT to_regclass('org_rules') AS t`)).rows[0].t).toBeNull();
+    // The gateway can now create its own org_rules, primary key index included.
+    await legacy.query(`CREATE TABLE org_rules (org_id text PRIMARY KEY, daily_cap bigint, handles jsonb)`);
+
+    const shared = await scratch();
+    await shared.query(`CREATE TABLE org_rules (org_id text PRIMARY KEY, daily_cap bigint, handles jsonb)`);
+    await shared.query(`INSERT INTO org_rules (org_id, daily_cap) VALUES ('gateway-team', 9)`);
+    await shared.query(schemaSql);
+    expect((await shared.query(`SELECT to_regclass('org_rules')::text AS a, to_regclass('team_org_rules')::text AS b`)).rows[0]).toEqual({ a: "org_rules", b: "team_org_rules" });
+    expect((await shared.query(`SELECT daily_cap FROM org_rules WHERE org_id = 'gateway-team'`)).rows[0].daily_cap).toBe("9");
+  });
+
   it("renames a legacy perioddays column once and keeps existing rows", async () => {
     const pool = await scratch();
     await pool.query(`CREATE TABLE team_orgs (id text PRIMARY KEY, default_allowance_credits double precision, periodDays int NOT NULL DEFAULT 30)`);

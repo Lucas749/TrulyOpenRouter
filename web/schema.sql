@@ -65,7 +65,19 @@ CREATE TABLE IF NOT EXISTS quorum_keys (
 -- unlimited/all) + per_tx_cap_usd (display mirror of the Privy policy).
 -- Changed ONLY via signed rule-change intents below (owner proposes+decides,
 -- managers may propose). Gateway gets a synced copy for pre-flight enforcement.
-CREATE TABLE IF NOT EXISTS org_rules (
+-- Named team_org_rules because the gateway owns org_rules in a shared database.
+-- Databases created with the old name move once, index included, keeping their rows.
+DO $$
+BEGIN
+  IF to_regclass('team_org_rules') IS NULL
+     AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('org_rules') AND attname = 'daily_cap_credits' AND NOT attisdropped) THEN
+    ALTER TABLE org_rules RENAME TO team_org_rules;
+    ALTER INDEX IF EXISTS org_rules_pkey RENAME TO team_org_rules_pkey;
+  END IF;
+EXCEPTION WHEN duplicate_table OR undefined_table THEN
+  NULL; -- a concurrent boot moved it first
+END $$;
+CREATE TABLE IF NOT EXISTS team_org_rules (
   org_id text PRIMARY KEY,
   daily_cap_credits double precision,
   allowed_models jsonb,
@@ -76,10 +88,10 @@ CREATE TABLE IF NOT EXISTS org_rules (
   per_tx_cap_usd double precision,
   updated_at bigint NOT NULL
 );
-ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS allowed_regions jsonb;
-ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS require_verified boolean;
-ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS rate_limit_per_min int;
-ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS pinned_hosts jsonb;
+ALTER TABLE team_org_rules ADD COLUMN IF NOT EXISTS allowed_regions jsonb;
+ALTER TABLE team_org_rules ADD COLUMN IF NOT EXISTS require_verified boolean;
+ALTER TABLE team_org_rules ADD COLUMN IF NOT EXISTS rate_limit_per_min int;
+ALTER TABLE team_org_rules ADD COLUMN IF NOT EXISTS pinned_hosts jsonb;
 
 -- Rule-change intents: propose (owner/manager-signed) -> decide (owner-signed)
 -- -> applied + synced to gateway. Same audit-trail shape as increase requests.

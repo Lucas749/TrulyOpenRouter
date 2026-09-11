@@ -619,6 +619,22 @@ export function validateRulePayload(kind: string, payload: Record<string, unknow
   }
 }
 
+const jsonColumn = (v: unknown) => (v == null ? undefined : typeof v === "string" ? JSON.parse(v) : v);
+
+function rowToOrgRules(r: Record<string, unknown>): OrgRules {
+  return {
+    orgId: String(r.org_id),
+    dailyCapCredits: r.daily_cap_credits != null ? Number(r.daily_cap_credits) : undefined,
+    allowedModels: jsonColumn(r.allowed_models) as string[] | undefined,
+    allowedRegions: jsonColumn(r.allowed_regions) as string[] | undefined,
+    requireVerified: (r.require_verified as boolean | null) ?? undefined,
+    rateLimitPerMin: r.rate_limit_per_min != null ? Number(r.rate_limit_per_min) : undefined,
+    pinnedHosts: jsonColumn(r.pinned_hosts) as string[] | undefined,
+    perTxCapUsd: r.per_tx_cap_usd != null ? Number(r.per_tx_cap_usd) : undefined,
+    updatedAt: Number(r.updated_at),
+  };
+}
+
 interface RulesFile {
   rules: Record<string, OrgRules>;
   changes: Record<string, RuleChange>;
@@ -636,20 +652,8 @@ async function readRules(): Promise<RulesFile> {
   await ensureSchema(join(process.cwd(), "schema.sql"));
   const q = db();
   const rules: Record<string, OrgRules> = {};
-  const { rows: ro } = await q.query(`SELECT * FROM org_rules`);
-  for (const r of ro) {
-    rules[r.org_id] = {
-      orgId: r.org_id,
-      dailyCapCredits: r.daily_cap_credits != null ? Number(r.daily_cap_credits) : undefined,
-      allowedModels: r.allowed_models == null ? undefined : (typeof r.allowed_models === "string" ? JSON.parse(r.allowed_models) : r.allowed_models),
-      allowedRegions: r.allowed_regions == null ? undefined : (typeof r.allowed_regions === "string" ? JSON.parse(r.allowed_regions) : r.allowed_regions),
-      requireVerified: r.require_verified ?? undefined,
-      rateLimitPerMin: r.rate_limit_per_min != null ? Number(r.rate_limit_per_min) : undefined,
-      pinnedHosts: r.pinned_hosts == null ? undefined : (typeof r.pinned_hosts === "string" ? JSON.parse(r.pinned_hosts) : r.pinned_hosts),
-      perTxCapUsd: r.per_tx_cap_usd != null ? Number(r.per_tx_cap_usd) : undefined,
-      updatedAt: Number(r.updated_at),
-    };
-  }
+  const { rows: ro } = await q.query(`SELECT * FROM team_org_rules`);
+  for (const r of ro) rules[r.org_id] = rowToOrgRules(r);
   const changes: Record<string, RuleChange> = {};
   const { rows: rc } = await q.query(`SELECT * FROM rule_changes`);
   for (const r of rc) {
@@ -684,36 +688,53 @@ async function writeRules(s: RulesFile): Promise<void> {
     } catch {}
     return;
   }
+  throw new Error("Postgres rule writes go through commitRuleChangePg");
+}
+
+/// @notice Postgres: store one rule change and, when it takes effect, update only that team's
+/// rules under a row lock, in one transaction. A decision on a change that is no longer pending
+/// fails, so simultaneous decisions and other teams' writes cannot overwrite each other.
+async function commitRuleChangePg(change: RuleChange, applies: boolean, decision: boolean): Promise<OrgRules | null> {
   await ensureSchema(join(process.cwd(), "schema.sql"));
-  const q = db();
-  for (const [id, o] of Object.entries(s.rules)) {
-    await q.query(
-      `INSERT INTO org_rules (org_id, daily_cap_credits, allowed_models, allowed_regions, require_verified, rate_limit_per_min, pinned_hosts, per_tx_cap_usd, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       ON CONFLICT (org_id) DO UPDATE SET daily_cap_credits = EXCLUDED.daily_cap_credits,
-         allowed_models = EXCLUDED.allowed_models, allowed_regions = EXCLUDED.allowed_regions,
-         require_verified = EXCLUDED.require_verified, rate_limit_per_min = EXCLUDED.rate_limit_per_min,
-         pinned_hosts = EXCLUDED.pinned_hosts, per_tx_cap_usd = EXCLUDED.per_tx_cap_usd,
-         updated_at = EXCLUDED.updated_at`,
-      [id, o.dailyCapCredits ?? null, o.allowedModels === undefined ? null : JSON.stringify(o.allowedModels),
-        o.allowedRegions === undefined ? null : JSON.stringify(o.allowedRegions), o.requireVerified ?? null,
-        o.rateLimitPerMin ?? null, o.pinnedHosts === undefined ? null : JSON.stringify(o.pinnedHosts),
-        o.perTxCapUsd ?? null, o.updatedAt],
-    );
-  }
-  for (const [id, r] of Object.entries(s.changes)) {
-    await q.query(
-      `INSERT INTO rule_changes (id, org_id, kind, payload, status, created_at, created_by_did, decided_at,
-         decided_by_did, decision, decision_signature, decision_signer, decision_message, decision_expires)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, decided_at = EXCLUDED.decided_at,
-         decided_by_did = EXCLUDED.decided_by_did, decision = EXCLUDED.decision,
-         decision_signature = EXCLUDED.decision_signature, decision_signer = EXCLUDED.decision_signer,
-         decision_message = EXCLUDED.decision_message, decision_expires = EXCLUDED.decision_expires`,
-      [id, r.orgId, r.kind, JSON.stringify(r.payload), r.status, r.createdAt, r.createdByDid, r.decidedAt ?? null,
-        r.decidedByDid ?? null, r.decision ?? null, r.decisionSignature ?? null, r.decisionSigner ?? null,
-        r.decisionMessage ?? null, r.decisionExpires ?? null],
-    );
+  const client = await db().connect();
+  try {
+    await client.query("BEGIN");
+    const decided = [change.status, change.decidedAt ?? null, change.decidedByDid ?? null, change.decision ?? null, change.decisionSignature ?? null,
+      change.decisionSigner ?? null, change.decisionMessage ?? null, change.decisionExpires ?? null];
+    const stored = decision
+      ? await client.query(
+          `UPDATE rule_changes SET status = $3, decided_at = $4, decided_by_did = $5, decision = $6, decision_signature = $7,
+             decision_signer = $8, decision_message = $9, decision_expires = $10
+           WHERE id = $1 AND org_id = $2 AND status = 'pending' RETURNING id`,
+          [change.id, change.orgId, ...decided],
+        )
+      : await client.query(
+          `INSERT INTO rule_changes (id, org_id, kind, payload, created_at, created_by_did, status, decided_at,
+             decided_by_did, decision, decision_signature, decision_signer, decision_message, decision_expires)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+          [change.id, change.orgId, change.kind, JSON.stringify(change.payload), change.createdAt, change.createdByDid, ...decided],
+        );
+    if (!stored.rows.length) throw new Error("rule change is no longer pending");
+    let rules: OrgRules | null = null;
+    if (applies) {
+      await client.query(`INSERT INTO team_org_rules (org_id, updated_at) VALUES ($1, 0) ON CONFLICT (org_id) DO NOTHING`, [change.orgId]);
+      const { rows } = await client.query(`SELECT * FROM team_org_rules WHERE org_id = $1 FOR UPDATE`, [change.orgId]);
+      rules = applyRule(rowToOrgRules(rows[0]), change.kind, change.payload);
+      const list = (v: string[] | null | undefined) => (v === undefined ? null : JSON.stringify(v));
+      await client.query(
+        `UPDATE team_org_rules SET daily_cap_credits = $2, allowed_models = $3, allowed_regions = $4, require_verified = $5,
+           rate_limit_per_min = $6, pinned_hosts = $7, per_tx_cap_usd = $8, updated_at = $9 WHERE org_id = $1`,
+        [change.orgId, rules.dailyCapCredits ?? null, list(rules.allowedModels), list(rules.allowedRegions), rules.requireVerified ?? null,
+          rules.rateLimitPerMin ?? null, list(rules.pinnedHosts), rules.perTxCapUsd ?? null, rules.updatedAt],
+      );
+    }
+    await client.query("COMMIT");
+    return rules;
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
   }
 }
 
@@ -746,9 +767,13 @@ function applyRule(o: OrgRules, kind: RuleKind, payload: Record<string, unknown>
 export async function proposeRuleChange(orgId: string, kind: string, payload: Record<string, unknown>, createdByDid: string): Promise<RuleChange> {
   validateRulePayload(kind, payload);
   if (!createdByDid) throw new Error("createdByDid required");
-  const s = await readRules();
   const id = `rule_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const r: RuleChange = { id, orgId, kind: kind as RuleKind, payload, status: "pending", createdAt: Date.now(), createdByDid };
+  if (dbEnabled()) {
+    await commitRuleChangePg(r, false, false);
+    return r;
+  }
+  const s = await readRules();
   s.changes[id] = r;
   await writeRules(s);
   return r;
@@ -773,16 +798,18 @@ export async function setRuleDirect(
   const exp = Number((message.match(/^expires: (\d+)$/m) ?? [])[1]);
   if (!Number.isFinite(exp) || now > exp) throw new Error("approval expired, sign again");
   if (message !== ruleSetMessage(orgId, kind, payload, exp)) throw new Error("signature does not match this rule set");
-  const s = await readRules();
-  const cur = s.rules[orgId] ?? { orgId, updatedAt: 0 };
-  s.rules[orgId] = applyRule(cur, kind as RuleKind, payload);
   // Recorded in history as an approved self-decision (audit-complete).
   const id = `rule_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  s.changes[id] = {
+  const change: RuleChange = {
     id, orgId, kind: kind as RuleKind, payload, status: "approved", createdAt: now, createdByDid: decidedByDid,
     decidedAt: now, decidedByDid, decision: "approve", decisionSignature: signature,
     decisionSigner: ownerWallet, decisionMessage: message, decisionExpires: exp,
   };
+  if (dbEnabled()) return (await commitRuleChangePg(change, true, false))!;
+  const s = await readRules();
+  const cur = s.rules[orgId] ?? { orgId, updatedAt: 0 };
+  s.rules[orgId] = applyRule(cur, kind as RuleKind, payload);
+  s.changes[id] = change;
   await writeRules(s);
   return s.rules[orgId];
 }
@@ -819,6 +846,10 @@ export async function decideRuleChange(
   r.decisionSigner = ownerWallet;
   r.decisionMessage = message;
   r.decisionExpires = exp;
+  if (dbEnabled()) {
+    await commitRuleChangePg(r, r.status === "approved", true);
+    return r;
+  }
   if (r.status === "approved") {
     const cur = s.rules[r.orgId] ?? { orgId: r.orgId, updatedAt: 0 };
     s.rules[r.orgId] = applyRule(cur, r.kind, r.payload);
