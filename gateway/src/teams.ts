@@ -27,6 +27,7 @@ export interface Team {
   quorumId: string | null;
   policyId: string | null;
   approverUserId: string | null;
+  payoutRecipients: string[]; // lowercased, mirrored in the Privy wallet policy
   state: "pending" | "active" | "disabled";
   defaultAllowanceCredits: number | null;
   membershipRevision: number;
@@ -92,6 +93,7 @@ function rowToTeam(r: any): Team {
     quorumId: r.quorum_id ?? null,
     policyId: r.policy_id ?? null,
     approverUserId: r.approver_user_id ?? null,
+    payoutRecipients: typeof r.payout_recipients === "string" ? JSON.parse(r.payout_recipients) : (r.payout_recipients ?? []),
     state: r.state,
     defaultAllowanceCredits: num(r.default_allowance_credits),
     membershipRevision: Number(r.membership_revision),
@@ -136,6 +138,21 @@ export class PgTeams {
       [orgId, identity.userId, wallets],
     );
     return rows[0] ? rowToMember(rows[0]) : null;
+  }
+
+  /// @notice Record a verified Privy organization wallet for a team and activate it.
+  async setTeamWallet(orgId: string, w: { name: string; walletId: string; walletAddress: string; quorumId: string; policyId: string; approverUserId: string; payoutRecipients: string[] }): Promise<Team> {
+    const now = Date.now();
+    const { rows } = await this.pool.query(
+      `INSERT INTO team_finance (org_id, name, wallet_id, wallet_address, quorum_id, policy_id, approver_user_id, payout_recipients, state, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $9)
+       ON CONFLICT (org_id) DO UPDATE SET name = EXCLUDED.name, wallet_id = EXCLUDED.wallet_id, wallet_address = EXCLUDED.wallet_address,
+         quorum_id = EXCLUDED.quorum_id, policy_id = EXCLUDED.policy_id, approver_user_id = EXCLUDED.approver_user_id,
+         payout_recipients = EXCLUDED.payout_recipients, state = 'active', updated_at = EXCLUDED.updated_at
+       RETURNING *`,
+      [orgId, w.name, w.walletId, w.walletAddress.toLowerCase(), w.quorumId, w.policyId, w.approverUserId, JSON.stringify(w.payoutRecipients.map((r) => r.toLowerCase())), now],
+    );
+    return rowToTeam(rows[0]);
   }
 
   async teamsFor(identity: Identity): Promise<Team[]> {

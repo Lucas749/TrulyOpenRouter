@@ -1,7 +1,7 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { boundedCompletion, MemoryBillingRequests, PgBillingRequests, type BillingRequests } from "./billing.js";
-import { privySubscriber, subscriberWallet, SubscriberError, type VerifySubscriber } from "./subscriber.js";
+import { privySession, privySubscriber, subscriberWallet, SubscriberError, type VerifySession, type VerifySubscriber } from "./subscriber.js";
 import { createPublicClient, createWalletClient, http, parseAbi, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
@@ -29,6 +29,7 @@ import { createTapExecutor } from "./tap-exec.js";
 import { hostEarnings } from "./host-earnings.js";
 import { applyHostSettings, authorizeHostSettings, HostSettingsError, MemoryHostRuntime, PgHostRuntime, type HostRuntimeStore } from "./host-runtime.js";
 import { normalizeSnapshot, PgTeams, TeamError } from "./teams.js";
+import { approveTreasuryIntent, proposeTreasuryIntent, provisionTeamWallet, reconcileTreasuryIntent, rejectTreasuryIntent, TEST_USDC_ADDRESS, TreasuryError, type TreasuryDeps } from "./treasury.js";
 
 /// @notice Thrown when an org rule blocks a call. Caught by the chat handler
 /// into a plain-language 403 (module scope: the catch lives outside try).
@@ -65,6 +66,8 @@ export interface GatewayOptions {
   spendCaps?: CapStore; // member allowances; absent = no cap enforcement
   orgRules?: OrgRuleStore; // firm rules mirror; absent = no org enforcement
   teams?: PgTeams; // team finance mirror (Postgres); absent = team endpoints 501
+  verifySession?: VerifySession; // Privy subject + linked wallets for team routes
+  treasury?: TreasuryDeps; // Privy organization wallets; absent = treasury endpoints 501
   taps?: TapStore; // PENDING_TAP queue; absent = tap endpoints 501
   tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
   adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
@@ -1176,6 +1179,159 @@ export function createApp(opts: GatewayOptions = {}) {
     }
   });
 
+  // Team-scoped routes: a verified Privy session with an active membership in the team.
+  async function teamActor(req: any, res: any, orgId: string) {
+    if (!opts.teams || !opts.verifySession) {
+      res.status(501).json({ error: { message: "team finance not configured", type: "unavailable" } });
+      return null;
+    }
+    const jwt = String(req.headers.authorization ?? "").match(/^Bearer (\S+)$/i)?.[1];
+    if (!jwt || jwt.startsWith("tor_sk_")) {
+      res.status(401).json({ error: { message: "Sign in to continue.", type: "authentication_required" } });
+      return null;
+    }
+    try {
+      const identity = await opts.verifySession(jwt);
+      const member = await opts.teams.memberFor(orgId, identity);
+      if (!member) {
+        res.status(404).json({ error: { message: "team not found", type: "not_found" } });
+        return null;
+      }
+      return { identity, member, jwt };
+    } catch (e) {
+      if (e instanceof SubscriberError) res.status(e.status).json({ error: { message: e.message, type: e.type } });
+      else res.status(503).json({ error: { message: "Login verification is unavailable. Try again later.", type: "unavailable" } });
+      return null;
+    }
+  }
+
+  function treasuryFailure(res: any, e: unknown) {
+    if (e instanceof TreasuryError) {
+      res.status(e.status).json({ error: { message: e.message, type: e.type } });
+      return;
+    }
+    console.error(`treasury: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+    res.status(502).json({ error: { message: "The treasury request could not be completed. Try again.", type: "upstream_error" } });
+  }
+
+  function requireTreasury(res: any): TreasuryDeps | null {
+    if (opts.treasury) return opts.treasury;
+    res.status(501).json({ error: { message: "team treasury not configured", type: "unavailable" } });
+    return null;
+  }
+
+  // Provision the Privy organization wallet for a new team. The web server verified
+  // the creator's login; that user becomes the team's first financial approver.
+  app.post("/api/admin/teams", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const treasury = requireTreasury(res);
+    if (!treasury) return;
+    try {
+      const recipients = Array.isArray(req.body?.recipients) ? req.body.recipients.map(String) : [];
+      res.json({ team: await provisionTeamWallet(treasury, { name: String(req.body?.name ?? ""), approverUserId: String(req.body?.approverUserId ?? ""), recipients }) });
+    } catch (e) {
+      treasuryFailure(res, e);
+    }
+  });
+
+  app.get("/api/team/orgs/:orgId/treasury", async (req, res) => {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return;
+    try {
+      const team = await opts.teams!.team(req.params.orgId);
+      const treasury = opts.treasury;
+      const balances: Record<string, string | null> = { hbarWei: null, credits: null, testUsdcUnits: null };
+      const plans: Array<{ planId: string; priceTinybar: string; credits: string }> = [];
+      if (treasury && team?.walletAddress) {
+        const wallet = team.walletAddress as Address;
+        [balances.hbarWei, balances.credits, balances.testUsdcUnits] = await Promise.all([
+          treasury.chain.balanceWei(wallet).then(String).catch(() => null),
+          treasury.chain.credits(wallet).then(String).catch(() => null),
+          treasury.chain.tokenBalance(TEST_USDC_ADDRESS, wallet).then(String).catch(() => null),
+        ]);
+        for (const planId of treasury.planIds) {
+          const plan = await treasury.chain.plan(planId).catch(() => null);
+          if (plan) plans.push({ planId: String(planId), priceTinybar: String(plan.priceTinybar), credits: String(plan.credits) });
+        }
+      }
+      const strip = (id: string | null | undefined) => String(id ?? "").replace(/^did:privy:/, "");
+      res.json({
+        network: "hedera-testnet",
+        team: team && {
+          orgId: team.orgId, name: team.name, state: team.state, walletAddress: team.walletAddress, quorumId: team.quorumId, policyId: team.policyId,
+          approverUserId: team.approverUserId, payoutRecipients: team.payoutRecipients, membershipRevision: team.membershipRevision,
+        },
+        balances,
+        plans,
+        intents: treasury ? await treasury.store.list(req.params.orgId, 20) : [],
+        me: { did: actor.member.did, role: actor.member.role, financialApprover: !!team?.approverUserId && strip(actor.identity.userId) === strip(team.approverUserId) },
+      });
+    } catch (e) {
+      treasuryFailure(res, e);
+    }
+  });
+
+  app.post("/api/team/orgs/:orgId/intents", async (req, res) => {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return;
+    const treasury = requireTreasury(res);
+    if (!treasury) return;
+    try {
+      res.json({ intent: await proposeTreasuryIntent(treasury, req.params.orgId, actor.member, String(req.body?.kind ?? ""), req.body ?? {}) });
+    } catch (e) {
+      treasuryFailure(res, e);
+    }
+  });
+
+  app.get("/api/team/orgs/:orgId/intents/:id", async (req, res) => {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return;
+    const treasury = requireTreasury(res);
+    if (!treasury) return;
+    const intent = await treasury.store.get(req.params.id);
+    if (!intent || intent.orgId !== req.params.orgId) {
+      res.status(404).json({ error: { message: "Treasury transaction not found.", type: "not_found" } });
+      return;
+    }
+    res.json({ intent });
+  });
+
+  app.post("/api/team/orgs/:orgId/intents/:id/approve", async (req, res) => {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return;
+    const treasury = requireTreasury(res);
+    if (!treasury) return;
+    try {
+      res.json({ intent: await approveTreasuryIntent(treasury, req.params.orgId, req.params.id, actor) });
+    } catch (e) {
+      treasuryFailure(res, e);
+    }
+  });
+
+  app.post("/api/team/orgs/:orgId/intents/:id/reject", async (req, res) => {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return;
+    const treasury = requireTreasury(res);
+    if (!treasury) return;
+    try {
+      res.json({ intent: await rejectTreasuryIntent(treasury, req.params.orgId, req.params.id, actor.member) });
+    } catch (e) {
+      treasuryFailure(res, e);
+    }
+  });
+
+  app.post("/api/team/orgs/:orgId/intents/:id/reconcile", async (req, res) => {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return;
+    const treasury = requireTreasury(res);
+    if (!treasury) return;
+    try {
+      res.json({ intent: await reconcileTreasuryIntent(treasury, req.params.orgId, req.params.id, actor.member) });
+    } catch (e) {
+      treasuryFailure(res, e);
+    }
+  });
+
   // PENDING_TAP queue (L4, Hedera-only). Trust chain: web (wallet-signed
   // owner) -> admin token here -> Ledger-signed HBAR self-transfer (exact dust,
   // verified on the mirror node) -> Hedera execution with the ring-held host
@@ -1309,6 +1465,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     taps: pg ? new PgTapStore() : new FileTapStore(),
     orgRules: pg ? new PgOrgRules() : new MemoryOrgRules(),
     teams: pg ? new PgTeams() : undefined,
+    verifySession: privySession(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET),
   };
   if (pg && process.env.FAUCET_ACCOUNT_ID && process.env.FAUCET_PRIVATE_KEY) {
     const { HederaFaucetSender } = await import("./faucet-hedera.js");
@@ -1338,6 +1495,24 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     };
     opts.settle = createVaultDebit(vaultCfg);
     opts.spendCapWriter = createVaultSpendCapWriter(vaultCfg);
+  }
+  // Team treasury: Privy organization wallets owned by approver + broker quorums.
+  if (opts.teams && process.env.PRIVY_APP_ID && process.env.PRIVY_APP_SECRET && process.env.PRIVY_BROKER_AUTH_KEY && process.env.VAULT_ADDRESS && rpcUrl) {
+    const { brokerKey, hederaTreasuryChain, PgTreasuryStore, privyAccess } = await import("./treasury.js");
+    const vault = process.env.VAULT_ADDRESS as Address;
+    opts.treasury = {
+      privy: privyAccess(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET),
+      broker: brokerKey(process.env.PRIVY_BROKER_AUTH_KEY),
+      chain: hederaTreasuryChain(rpcUrl, vault),
+      vault,
+      planIds: (process.env.TEAM_PLAN_IDS ?? "0").split(",").map((id) => BigInt(id.trim())),
+      hbarPayoutCapWei: BigInt(Math.round(Number(process.env.TEAM_PAYOUT_CAP_HBAR ?? 25) * 1e8)) * 10_000_000_000n,
+      usdcPayoutCapUnits: BigInt(Math.round(Number(process.env.TEAM_PAYOUT_CAP_USDC ?? 5) * 1e6)),
+      teams: opts.teams,
+      store: new PgTreasuryStore(),
+      paymentPending: async (payer) => (await db().query(`SELECT 1 FROM billing_requests WHERE payer = $1`, [payer.toLowerCase()])).rows.length > 0,
+    };
+    console.log("team treasury: Privy organization wallets with approver and broker quorum");
   }
   startVerifyLoop(opts); // VERIFY_INTERVAL_MS=0/unset = off; VERIFY_AUTO_CHALLENGE=1 + OPERATOR_KEY files challenges
   createApp(opts).listen(PORT, () => console.log(`tor-gateway on :${PORT}`));

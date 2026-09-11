@@ -171,3 +171,32 @@ CREATE TABLE IF NOT EXISTS team_finance_members (
   PRIMARY KEY (org_id, did)
 );
 CREATE INDEX IF NOT EXISTS team_finance_members_wallet_idx ON team_finance_members (wallet);
+
+-- Team treasury transactions through Privy intents. Terms are prepared before
+-- approval; signed bytes are stored before broadcast so failures reconcile by
+-- the same transaction identity instead of signing a replacement.
+CREATE TABLE IF NOT EXISTS treasury_intents (
+  id text PRIMARY KEY,
+  org_id text NOT NULL REFERENCES team_finance (org_id) ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind IN ('buy_credits', 'refund', 'payout_hbar', 'payout_usdc')),
+  privy_intent_id text UNIQUE,
+  wallet_address text NOT NULL,
+  transaction jsonb NOT NULL,
+  terms jsonb NOT NULL,
+  action_hash text NOT NULL,
+  state text NOT NULL CHECK (state IN ('proposed', 'awaiting_approvals', 'authorized', 'signed', 'submitted', 'confirmed',
+    'denied', 'expired', 'reverted', 'cancelled', 'uncertain', 'failed')),
+  proposed_by text NOT NULL,
+  approvals jsonb NOT NULL DEFAULT '[]',
+  signed_transaction text,
+  transaction_hash text,
+  result jsonb NOT NULL DEFAULT '{}',
+  error text,
+  created_at bigint NOT NULL,
+  updated_at bigint NOT NULL
+);
+CREATE INDEX IF NOT EXISTS treasury_intents_org_idx ON treasury_intents (org_id, created_at DESC);
+-- At most one unfinished treasury transaction per team keeps nonces unambiguous.
+CREATE UNIQUE INDEX IF NOT EXISTS treasury_intents_open_idx ON treasury_intents (org_id)
+  WHERE state IN ('proposed', 'awaiting_approvals', 'authorized', 'signed', 'submitted', 'uncertain');
+ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS payout_recipients jsonb NOT NULL DEFAULT '[]';
