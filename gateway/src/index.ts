@@ -30,7 +30,7 @@ import { hostEarnings } from "./host-earnings.js";
 import { hederaCollectionChain, hostLinkMessage, PgTeamHosts, recordCollection, TeamHostError, type TeamHostDeps } from "./team-hosts.js";
 import { applyHostSettings, authorizeHostSettings, HostSettingsError, MemoryHostRuntime, PgHostRuntime, type HostRuntimeStore } from "./host-runtime.js";
 import { normalizeSnapshot, PgTeams, TeamError } from "./teams.js";
-import { approveTreasuryIntent, proposeTreasuryIntent, provisionTeamWallet, reconcileTreasuryIntent, rejectTreasuryIntent, TEST_USDC_ADDRESS, TreasuryError, type TreasuryDeps } from "./treasury.js";
+import { approveTreasuryIntent, proposeTreasuryIntent, provisionTeamWallet, reconcileTreasuryIntent, rejectTreasuryIntent, teamLimitsView, TEST_USDC_ADDRESS, TreasuryError, type TreasuryDeps } from "./treasury.js";
 import { AGENT_KEY_PREFIX, AgentError, normalizePolicy, PgAgents, type Agent, type AgentPolicy } from "./agents.js";
 import { PgAccounting, periods, type CounterLimit, type Violation } from "./accounting.js";
 import { ApprovalError, approvalAuthority, approvalMessage, decideAgentApproval, PgApprovals, type AgentApproval, type ApprovalMethod } from "./approvals.js";
@@ -1430,7 +1430,8 @@ export function createApp(opts: GatewayOptions = {}) {
       const team = await opts.teams!.team(req.params.orgId);
       const treasury = opts.treasury;
       const balances: Record<string, string | null> = { hbarWei: null, credits: null, testUsdcUnits: null };
-      const plans: Array<{ planId: string; priceTinybar: string; credits: string }> = [];
+      const plans: Array<{ planId: string; priceTinybar: string; credits: string; allowed: boolean }> = [];
+      const limits = treasury && team ? teamLimitsView(treasury, team) : null;
       if (treasury && team?.walletAddress) {
         const wallet = team.walletAddress as Address;
         [balances.hbarWei, balances.credits, balances.testUsdcUnits] = await Promise.all([
@@ -1440,7 +1441,7 @@ export function createApp(opts: GatewayOptions = {}) {
         ]);
         for (const planId of treasury.planIds) {
           const plan = await treasury.chain.plan(planId).catch(() => null);
-          if (plan) plans.push({ planId: String(planId), priceTinybar: String(plan.priceTinybar), credits: String(plan.credits) });
+          if (plan) plans.push({ planId: String(planId), priceTinybar: String(plan.priceTinybar), credits: String(plan.credits), allowed: !!limits?.planIds.includes(String(planId)) });
         }
       }
       const strip = (id: string | null | undefined) => String(id ?? "").replace(/^did:privy:/, "");
@@ -1452,6 +1453,7 @@ export function createApp(opts: GatewayOptions = {}) {
         },
         balances,
         plans,
+        limits,
         intents: treasury ? await treasury.store.list(req.params.orgId, 20) : [],
         me: { did: actor.member.did, role: actor.member.role, financialApprover: !!team?.approverUserId && strip(actor.identity.userId) === strip(team.approverUserId) },
       });

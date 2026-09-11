@@ -59,14 +59,37 @@ const pem = (b64: string) => `-----BEGIN PUBLIC KEY-----\n${b64.match(/.{1,64}/g
 function fakePrivy(opts: { threshold?: number } = {}) {
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const intents = new Map<string, any>();
-  const control = { userAccepts: true, policyFails: false, tamperSigned: false };
+  const policies = new Map<string, any[]>();
+  const control = { userAccepts: true, policyFails: false, tamperSigned: false, storedRulesDiffer: false };
+  const quorum = () => [{ threshold: 2, members: [{ type: "user", user_id: "approver", signed_at: null }, { type: "key", public_key: pem(BROKER.publicKey), signed_at: null }] }];
   const privy: PrivyAccess = {
     appId: "app-test",
     async request(method, path, body) {
       calls.push({ method, path, body });
       if (method === "POST" && path === "/key_quorums") return { id: "quorum-1" };
       if (method === "POST" && path === "/organizations") return { id: "org-1" };
-      if (method === "POST" && path === "/policies") return { id: "policy-1", rules: (body as any).rules };
+      if (method === "POST" && path === "/policies") {
+        policies.set("policy-1", structuredClone((body as any).rules));
+        return { id: "policy-1", rules: (body as any).rules };
+      }
+      const policy = path.match(/^\/policies\/([^/]+)$/);
+      if (method === "GET" && policy) {
+        // Privy returns stored rules with ids it assigns.
+        return { id: policy[1], rules: (policies.get(policy[1]) ?? []).map((r, i) => ({ id: `rule-${i}`, ...r, conditions: r.conditions.map((c: any, j: number) => ({ id: `cond-${i}-${j}`, ...c })) })) };
+      }
+      const policyIntent = path.match(/^\/intents\/policies\/([^/]+)$/);
+      if (method === "PATCH" && policyIntent) {
+        const id = `intent-${intents.size + 1}`;
+        intents.set(id, {
+          intent_id: id,
+          intent_type: "POLICY",
+          status: "pending",
+          resource_id: policyIntent[1],
+          request_details: { method: "PATCH", url: `https://api.privy.io/v1/policies/${policyIntent[1]}`, body: structuredClone(body) },
+          authorization_details: quorum(),
+        });
+        return structuredClone(intents.get(id));
+      }
       if (method === "POST" && path === "/wallets") return { id: "wallet-1", address: TEAM_WALLET };
       if (method === "GET" && path === "/wallets/wallet-1") return { id: "wallet-1", owner_id: "quorum-1", policy_ids: ["policy-1"], additional_signers: [] };
       if (method === "GET" && path === "/key_quorums/quorum-1") {
@@ -80,7 +103,7 @@ function fakePrivy(opts: { threshold?: number } = {}) {
           status: "pending",
           resource_id: rpc[1],
           request_details: { method: "POST", url: `https://api.privy.io/v1/wallets/${rpc[1]}/rpc`, body: structuredClone(body) },
-          authorization_details: [{ threshold: 2, members: [{ type: "user", user_id: "approver", signed_at: null }, { type: "key", public_key: pem(BROKER.publicKey), signed_at: null }] }],
+          authorization_details: quorum(),
         });
         return structuredClone(intents.get(id));
       }
@@ -99,7 +122,7 @@ function fakePrivy(opts: { threshold?: number } = {}) {
         if (signature.startsWith("user:")) {
           if (control.userAccepts) user.signed_at = timestamp;
         } else {
-          const bytes = formatRequestForAuthorizationSignature({ version: 1, method: "POST", url: intent.request_details.url, body: intent.request_details.body, headers: { "privy-app-id": "app-test" }, timestamp, intent_id: authorize[1] } as any);
+          const bytes = formatRequestForAuthorizationSignature({ version: 1, method: intent.request_details.method, url: intent.request_details.url, body: intent.request_details.body, headers: { "privy-app-id": "app-test" }, timestamp, intent_id: authorize[1] } as any);
           const ok = verifySignature("sha256", Buffer.from(bytes), { key: Buffer.from(BROKER.publicKey, "base64"), format: "der", type: "spki" }, Buffer.from(signature, "base64"));
           if (!ok) throw new PrivyRequestError(400, "No valid authorization key found for signature");
           key.signed_at = timestamp;
@@ -108,6 +131,12 @@ function fakePrivy(opts: { threshold?: number } = {}) {
           if (control.policyFails) {
             intent.status = "failed";
             intent.action_result = { status_code: 400, response_body: { error: "policy_violation" } };
+          } else if (intent.request_details.method === "PATCH") {
+            const rules = structuredClone(intent.request_details.body.rules);
+            if (control.storedRulesDiffer) rules.pop();
+            policies.set(intent.resource_id, rules);
+            intent.status = "executed";
+            intent.action_result = { status_code: 200, executed_at: timestamp };
           } else {
             const tx = intent.request_details.body.params.transaction;
             const signed = await SIGNER.signTransaction({
@@ -127,7 +156,7 @@ function fakePrivy(opts: { threshold?: number } = {}) {
       return [`user:${payload.timestamp}`];
     }),
   };
-  return { privy, calls, intents, control };
+  return { privy, calls, intents, control, policies };
 }
 
 function fakeChain() {
@@ -166,7 +195,11 @@ function deps(over: Partial<TreasuryDeps> = {}) {
   const p = fakePrivy();
   const c = fakeChain();
   const store = new MemoryStore();
-  const teams = { team: vi.fn(async (id: string) => (id === "org-1" ? TEAM : null)), setTeamWallet: vi.fn(async (_id: string, w: any) => ({ ...TEAM, ...w })) };
+  const teams = {
+    team: vi.fn(async (id: string): Promise<Team | null> => (id === "org-1" ? TEAM : null)),
+    setTeamWallet: vi.fn(async (_id: string, w: any) => ({ ...TEAM, ...w })),
+    setTreasuryLimits: vi.fn(async (_id: string, l: any) => ({ ...TEAM, payoutRecipients: l.payoutRecipients, limits: { planIds: l.planIds, hbarPayoutCapWei: l.hbarPayoutCapWei, usdcPayoutCapUnits: l.usdcPayoutCapUnits } })),
+  };
   const d: TreasuryDeps = {
     privy: p.privy, broker: BROKER, chain: c.chain, vault: VAULT, planIds: [0n], hbarPayoutCapWei: 25n * 10n ** 18n, usdcPayoutCapUnits: 5_000_000n,
     teams, store, paymentPending: async () => false, sleep: async () => {}, ...over,
@@ -320,6 +353,74 @@ describe("team treasury transactions", () => {
   });
 });
 
+describe("team wallet limits", () => {
+  const OTHER = `0x${"ab".repeat(20)}`;
+  const change = { planIds: [0], hbarPayoutCap: "40", usdcPayoutCap: "12.5", recipients: [RECIPIENT, OTHER] };
+
+  it("lets owners propose limits that change Privy only after the financial approver authorizes the exact rules", async () => {
+    const { d, p, teams } = deps();
+    await expect(proposeTreasuryIntent(d, "org-1", MANAGER, "update_policy", change)).rejects.toMatchObject({ status: 403 });
+    const intent = await proposeTreasuryIntent(d, "org-1", OWNER, "update_policy", change);
+    expect(intent).toMatchObject({ kind: "update_policy", state: "awaiting_approvals", terms: { action: "Change wallet limits", plans: "0", hbarPayoutCap: "40", usdcPayoutCap: "12.5" } });
+    const expected = treasuryPolicyRules({ vault: VAULT, plans: [{ planId: 0n, priceTinybar: 1_000_000_000n }], recipients: [RECIPIENT, OTHER], hbarPayoutCapWei: 40n * 10n ** 18n, usdcPayoutCapUnits: 12_500_000n });
+    expect(p.calls.find((c) => c.method === "PATCH")).toMatchObject({ path: "/intents/policies/policy-1", body: { rules: expected } });
+
+    await expect(approveTreasuryIntent(d, "org-1", intent.id, { member: MANAGER, identity: { userId: "did:privy:manager", wallets: [] }, jwt: "manager-jwt" })).rejects.toMatchObject({ status: 403 });
+    const done = await approveTreasuryIntent(d, "org-1", intent.id, approver);
+    expect(done).toMatchObject({ state: "confirmed", result: { policyUpdated: "true" } });
+    expect(done.approvals.map((a) => a.method)).toEqual(["privy_user", "broker_key"]);
+    expect(p.policies.get("policy-1")).toEqual(expected);
+    expect(teams.setTreasuryLimits).toHaveBeenCalledWith("org-1", { planIds: ["0"], hbarPayoutCapWei: String(40n * 10n ** 18n), usdcPayoutCapUnits: "12500000", payoutRecipients: [RECIPIENT, OTHER] });
+  });
+
+  it("enforces the team's own limits before preparing transactions", async () => {
+    const { d, teams } = deps({ planIds: [0n, 1n] });
+    teams.team.mockImplementation(async () => ({ ...TEAM, limits: { planIds: ["0"], hbarPayoutCapWei: String(2n * 10n ** 18n), usdcPayoutCapUnits: "1000000" } }));
+    await expect(proposeTreasuryIntent(d, "org-1", OWNER, "payout_hbar", { recipient: RECIPIENT, amount: "3" })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("2 HBAR") });
+    await expect(proposeTreasuryIntent(d, "org-1", OWNER, "payout_usdc", { recipient: RECIPIENT, amount: "1.5" })).rejects.toMatchObject({ status: 400 });
+    await expect(proposeTreasuryIntent(d, "org-1", OWNER, "buy_credits", { planId: 1 })).rejects.toMatchObject({ status: 400 });
+    expect((await proposeTreasuryIntent(d, "org-1", OWNER, "payout_hbar", { recipient: RECIPIENT, amount: "2" })).state).toBe("awaiting_approvals");
+  });
+
+  it("refuses limit changes outside the offered plans or without valid caps and recipients", async () => {
+    const { d, p } = deps();
+    for (const bad of [
+      { ...change, planIds: [] },
+      { ...change, planIds: [7] },
+      { ...change, hbarPayoutCap: "0" },
+      { ...change, usdcPayoutCap: "1.1234567" },
+      { ...change, recipients: [] },
+      { ...change, recipients: ["not-an-address"] },
+    ]) {
+      await expect(proposeTreasuryIntent(d, "org-1", OWNER, "update_policy", bad)).rejects.toMatchObject({ status: 400 });
+    }
+    expect(p.calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("cancels changed terms, and records limits only once Privy stores exactly the reviewed rules", async () => {
+    const tampered = deps();
+    const a = await proposeTreasuryIntent(tampered.d, "org-1", OWNER, "update_policy", change);
+    tampered.p.intents.get(a.privyIntentId!).request_details.body.rules[0].conditions[2].value = "1";
+    await expect(approveTreasuryIntent(tampered.d, "org-1", a.id, approver)).rejects.toMatchObject({ status: 409, type: "terms_changed" });
+    expect(tampered.p.calls.filter((c) => c.path.endsWith("/authorize"))).toHaveLength(0);
+
+    const differs = deps();
+    differs.p.control.storedRulesDiffer = true;
+    const b = await proposeTreasuryIntent(differs.d, "org-1", OWNER, "update_policy", change);
+    expect((await approveTreasuryIntent(differs.d, "org-1", b.id, approver)).state).toBe("uncertain");
+    expect(differs.teams.setTreasuryLimits).not.toHaveBeenCalled();
+    differs.p.policies.set("policy-1", structuredClone(b.policyChange!.rules));
+    expect((await reconcileTreasuryIntent(differs.d, "org-1", b.id, OWNER)).state).toBe("confirmed");
+    expect(differs.teams.setTreasuryLimits).toHaveBeenCalledTimes(1);
+
+    const refused = deps();
+    refused.p.control.policyFails = true;
+    const c = await proposeTreasuryIntent(refused.d, "org-1", OWNER, "update_policy", change);
+    await expect(approveTreasuryIntent(refused.d, "org-1", c.id, approver)).rejects.toMatchObject({ status: 422, type: "policy_update_refused" });
+    expect(refused.teams.setTreasuryLimits).not.toHaveBeenCalled();
+  });
+});
+
 describe("team treasury routes", () => {
   it("serve only verified members of the team and derive the approver from the session", async () => {
     const { d } = deps();
@@ -347,7 +448,7 @@ describe("team treasury routes", () => {
       expect((await call("/api/team/orgs/org-1/treasury", "tor_sk_agentkey")).status).toBe(401);
       expect((await call("/api/team/orgs/org-1/treasury", "outsider-jwt")).status).toBe(404);
       const view: any = await (await call("/api/team/orgs/org-1/treasury", "manager-jwt")).json();
-      expect(view).toMatchObject({ team: { walletAddress: TEAM_WALLET, approverUserId: "did:privy:approver" }, balances: { credits: "0", hbarWei: "50000000000000000000" }, plans: [{ planId: "0", credits: "10000" }], me: { role: "manager", financialApprover: false } });
+      expect(view).toMatchObject({ team: { walletAddress: TEAM_WALLET, approverUserId: "did:privy:approver" }, balances: { credits: "0", hbarWei: "50000000000000000000" }, plans: [{ planId: "0", credits: "10000", allowed: true }], limits: { planIds: ["0"], hbarPayoutCap: "25", usdcPayoutCap: "5", recipients: [RECIPIENT] }, me: { role: "manager", financialApprover: false } });
       const proposed: any = await (await call("/api/team/orgs/org-1/intents", "manager-jwt", { kind: "buy_credits", planId: 0 })).json();
       expect(proposed.intent.state).toBe("awaiting_approvals");
       const byManager = await call(`/api/team/orgs/org-1/intents/${proposed.intent.id}/approve`, "manager-jwt", {});
@@ -369,7 +470,7 @@ integration("durable treasury intents", () => {
   const store = new PgTreasuryStore(pool);
   const intent = (id: string, state: TreasuryIntent["state"]): TreasuryIntent => ({
     id, orgId: "test-treasury", kind: "buy_credits", privyIntentId: null, walletAddress: TEAM_WALLET,
-    transaction: { chain_id: 296, to: VAULT, value: "0x1", data: "0x", nonce: 1, gas_limit: "0x1", gas_price: "0x1", type: 0 },
+    transaction: { chain_id: 296, to: VAULT, value: "0x1", data: "0x", nonce: 1, gas_limit: "0x1", gas_price: "0x1", type: 0 }, policyChange: null,
     terms: { action: "Buy compute credits" }, actionHash: "hash", state, proposedBy: "did:privy:approver", approvals: [],
     signedTransaction: null, transactionHash: null, result: {}, error: null, createdAt: Date.now(), updatedAt: Date.now(),
   });
@@ -394,5 +495,10 @@ integration("durable treasury intents", () => {
     await store.insert(intent("trx-3", "proposed"));
     expect((await store.list("test-treasury")).map((i) => i.id)).toEqual(expect.arrayContaining(["trx-1", "trx-3"]));
     expect((await store.get("trx-1"))?.result).toEqual({ creditsAdded: "10000" });
+
+    await store.transition("trx-3", ["proposed"], { state: "cancelled" });
+    const policyChange = { policyId: "policy-1", rules: [{ name: "refund-credits" }], limits: { planIds: ["0"], hbarPayoutCapWei: "1", usdcPayoutCapUnits: "1", payoutRecipients: [RECIPIENT] } };
+    await store.insert({ ...intent("trx-4", "awaiting_approvals"), kind: "update_policy", transaction: {} as any, policyChange });
+    expect((await store.get("trx-4"))?.policyChange).toEqual(policyChange);
   });
 });

@@ -178,7 +178,7 @@ CREATE INDEX IF NOT EXISTS team_finance_members_wallet_idx ON team_finance_membe
 CREATE TABLE IF NOT EXISTS treasury_intents (
   id text PRIMARY KEY,
   org_id text NOT NULL REFERENCES team_finance (org_id) ON DELETE CASCADE,
-  kind text NOT NULL CHECK (kind IN ('buy_credits', 'refund', 'payout_hbar', 'payout_usdc')),
+  kind text NOT NULL CHECK (kind IN ('buy_credits', 'refund', 'payout_hbar', 'payout_usdc', 'update_policy')),
   privy_intent_id text UNIQUE,
   wallet_address text NOT NULL,
   transaction jsonb NOT NULL,
@@ -200,6 +200,19 @@ CREATE INDEX IF NOT EXISTS treasury_intents_org_idx ON treasury_intents (org_id,
 CREATE UNIQUE INDEX IF NOT EXISTS treasury_intents_open_idx ON treasury_intents (org_id)
   WHERE state IN ('proposed', 'awaiting_approvals', 'authorized', 'signed', 'submitted', 'uncertain');
 ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS payout_recipients jsonb NOT NULL DEFAULT '[]';
+-- Wallet limits each team sets for itself, mirrored in its Privy policy (null = network defaults).
+ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS plan_ids jsonb;
+ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS payout_cap_hbar_wei text;
+ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS payout_cap_usdc_units text;
+ALTER TABLE treasury_intents ADD COLUMN IF NOT EXISTS policy_change jsonb;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'treasury_intents_kind_check' AND pg_get_constraintdef(oid) NOT LIKE '%update_policy%') THEN
+    ALTER TABLE treasury_intents DROP CONSTRAINT IF EXISTS treasury_intents_kind_check;
+    ALTER TABLE treasury_intents ADD CONSTRAINT treasury_intents_kind_check
+      CHECK (kind IN ('buy_credits', 'refund', 'payout_hbar', 'payout_usdc', 'update_policy'));
+  END IF;
+END $$;
 
 -- Durable usage accounting for strict caps. A request reserves its maximum cost
 -- on every accounting subject before any host is paid; settlement moves the

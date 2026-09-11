@@ -19,6 +19,13 @@ export interface TeamMember {
   allowanceCredits: number | null; // null = team default
 }
 
+/// @notice Wallet limits a team sets for itself, mirrored in its Privy policy.
+export interface TeamLimits {
+  planIds: string[];
+  hbarPayoutCapWei: string;
+  usdcPayoutCapUnits: string;
+}
+
 export interface Team {
   orgId: string;
   name: string;
@@ -31,6 +38,7 @@ export interface Team {
   state: "pending" | "active" | "disabled";
   defaultAllowanceCredits: number | null;
   membershipRevision: number;
+  limits?: TeamLimits | null; // null = created before per-team limits; the network defaults apply
 }
 
 export interface TeamSnapshot {
@@ -97,6 +105,13 @@ function rowToTeam(r: any): Team {
     state: r.state,
     defaultAllowanceCredits: num(r.default_allowance_credits),
     membershipRevision: Number(r.membership_revision),
+    limits: r.plan_ids && r.payout_cap_hbar_wei && r.payout_cap_usdc_units
+      ? {
+          planIds: (typeof r.plan_ids === "string" ? JSON.parse(r.plan_ids) : r.plan_ids).map(String),
+          hbarPayoutCapWei: String(r.payout_cap_hbar_wei),
+          usdcPayoutCapUnits: String(r.payout_cap_usdc_units),
+        }
+      : null,
   };
 }
 
@@ -141,17 +156,31 @@ export class PgTeams {
   }
 
   /// @notice Record a verified Privy organization wallet for a team and activate it.
-  async setTeamWallet(orgId: string, w: { name: string; walletId: string; walletAddress: string; quorumId: string; policyId: string; approverUserId: string; payoutRecipients: string[] }): Promise<Team> {
+  async setTeamWallet(orgId: string, w: { name: string; walletId: string; walletAddress: string; quorumId: string; policyId: string; approverUserId: string; payoutRecipients: string[]; limits?: TeamLimits }): Promise<Team> {
     const now = Date.now();
     const { rows } = await this.pool.query(
-      `INSERT INTO team_finance (org_id, name, wallet_id, wallet_address, quorum_id, policy_id, approver_user_id, payout_recipients, state, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $9)
+      `INSERT INTO team_finance (org_id, name, wallet_id, wallet_address, quorum_id, policy_id, approver_user_id, payout_recipients,
+         plan_ids, payout_cap_hbar_wei, payout_cap_usdc_units, state, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $10, $11, $12, 'active', $9, $9)
        ON CONFLICT (org_id) DO UPDATE SET name = EXCLUDED.name, wallet_id = EXCLUDED.wallet_id, wallet_address = EXCLUDED.wallet_address,
          quorum_id = EXCLUDED.quorum_id, policy_id = EXCLUDED.policy_id, approver_user_id = EXCLUDED.approver_user_id,
-         payout_recipients = EXCLUDED.payout_recipients, state = 'active', updated_at = EXCLUDED.updated_at
+         payout_recipients = EXCLUDED.payout_recipients, plan_ids = EXCLUDED.plan_ids, payout_cap_hbar_wei = EXCLUDED.payout_cap_hbar_wei,
+         payout_cap_usdc_units = EXCLUDED.payout_cap_usdc_units, state = 'active', updated_at = EXCLUDED.updated_at
        RETURNING *`,
-      [orgId, w.name, w.walletId, w.walletAddress.toLowerCase(), w.quorumId, w.policyId, w.approverUserId, JSON.stringify(w.payoutRecipients.map((r) => r.toLowerCase())), now],
+      [orgId, w.name, w.walletId, w.walletAddress.toLowerCase(), w.quorumId, w.policyId, w.approverUserId, JSON.stringify(w.payoutRecipients.map((r) => r.toLowerCase())), now,
+        w.limits ? JSON.stringify(w.limits.planIds) : null, w.limits?.hbarPayoutCapWei ?? null, w.limits?.usdcPayoutCapUnits ?? null],
     );
+    return rowToTeam(rows[0]);
+  }
+
+  /// @notice Record limits that Privy now enforces on the team wallet policy.
+  async setTreasuryLimits(orgId: string, l: TeamLimits & { payoutRecipients: string[] }): Promise<Team> {
+    const { rows } = await this.pool.query(
+      `UPDATE team_finance SET plan_ids = $2, payout_cap_hbar_wei = $3, payout_cap_usdc_units = $4, payout_recipients = $5, updated_at = $6
+       WHERE org_id = $1 RETURNING *`,
+      [orgId, JSON.stringify(l.planIds), l.hbarPayoutCapWei, l.usdcPayoutCapUnits, JSON.stringify(l.payoutRecipients.map((r) => r.toLowerCase())), Date.now()],
+    );
+    if (!rows[0]) throw new TeamError(404, "team not found");
     return rowToTeam(rows[0]);
   }
 

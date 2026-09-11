@@ -1,6 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID } from "node:crypto";
 import { formatRequestForAuthorizationSignature, generateAuthorizationSignature, generateAuthorizationSignatures, PrivyClient } from "@privy-io/node";
-import { createPublicClient, encodeFunctionData, formatEther, getAddress, http, keccak256, parseAbi, parseTransaction, toHex, type Address, type Hex } from "viem";
+import { createPublicClient, encodeFunctionData, formatEther, formatUnits, getAddress, http, keccak256, parseAbi, parseTransaction, toHex, type Address, type Hex } from "viem";
 import type { Pool } from "pg";
 import { db } from "./db.js";
 import type { Identity, PgTeams, Team, TeamMember } from "./teams.js";
@@ -185,7 +185,7 @@ export function treasuryPolicyRules(p: TreasuryPolicyInput) {
 
 // --- Persistence -------------------------------------------------------------
 
-export type IntentKind = "buy_credits" | "refund" | "payout_hbar" | "payout_usdc";
+export type IntentKind = "buy_credits" | "refund" | "payout_hbar" | "payout_usdc" | "update_policy";
 export type IntentState =
   | "proposed" | "awaiting_approvals" | "authorized" | "signed" | "submitted" | "confirmed"
   | "denied" | "expired" | "reverted" | "cancelled" | "uncertain" | "failed";
@@ -207,13 +207,21 @@ export interface IntentApproval {
   at: number;
 }
 
+/// @notice The exact policy rules an owner proposes and the limits they encode.
+export interface PolicyChange {
+  policyId: string;
+  rules: Array<Record<string, unknown>>;
+  limits: { planIds: string[]; hbarPayoutCapWei: string; usdcPayoutCapUnits: string; payoutRecipients: string[] };
+}
+
 export interface TreasuryIntent {
   id: string;
   orgId: string;
   kind: IntentKind;
   privyIntentId: string | null;
   walletAddress: string;
-  transaction: PreparedTransaction;
+  transaction: PreparedTransaction; // empty for policy changes
+  policyChange: PolicyChange | null;
   terms: Record<string, string>;
   actionHash: string;
   state: IntentState;
@@ -246,6 +254,7 @@ function rowToIntent(r: any): TreasuryIntent {
     privyIntentId: r.privy_intent_id ?? null,
     walletAddress: r.wallet_address,
     transaction: json(r.transaction),
+    policyChange: json(r.policy_change) ?? null,
     terms: json(r.terms),
     actionHash: r.action_hash,
     state: r.state,
@@ -277,10 +286,11 @@ export class PgTreasuryStore implements TreasuryStore {
     try {
       await this.pool.query(
         `INSERT INTO treasury_intents (id, org_id, kind, privy_intent_id, wallet_address, transaction, terms, action_hash, state, proposed_by,
-           approvals, signed_transaction, transaction_hash, result, error, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+           approvals, signed_transaction, transaction_hash, result, error, created_at, updated_at, policy_change)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
         [i.id, i.orgId, i.kind, i.privyIntentId, i.walletAddress, JSON.stringify(i.transaction), JSON.stringify(i.terms), i.actionHash, i.state,
-          i.proposedBy, JSON.stringify(i.approvals), i.signedTransaction, i.transactionHash, JSON.stringify(i.result), i.error, i.createdAt, i.updatedAt],
+          i.proposedBy, JSON.stringify(i.approvals), i.signedTransaction, i.transactionHash, JSON.stringify(i.result), i.error, i.createdAt, i.updatedAt,
+          i.policyChange ? JSON.stringify(i.policyChange) : null],
       );
     } catch (e: any) {
       if (e?.code === "23505") throw new TreasuryError(409, "treasury_busy", "Finish or cancel the team's open treasury transaction first.");
@@ -322,7 +332,7 @@ export interface TreasuryDeps {
   planIds: bigint[];
   hbarPayoutCapWei: bigint;
   usdcPayoutCapUnits: bigint;
-  teams: Pick<PgTeams, "team" | "setTeamWallet">;
+  teams: Pick<PgTeams, "team" | "setTeamWallet" | "setTreasuryLimits">;
   store: TreasuryStore;
   /// @notice True while this payer has an in-flight or unresolved inference payment.
   paymentPending(payer: string): Promise<boolean>;
@@ -381,6 +391,7 @@ export async function provisionTeamWallet(d: TreasuryDeps, input: { name: string
     policyId: policy.id,
     approverUserId: input.approverUserId,
     payoutRecipients: recipients,
+    limits: { planIds: plans.map((p) => String(p.planId)), hbarPayoutCapWei: String(d.hbarPayoutCapWei), usdcPayoutCapUnits: String(d.usdcPayoutCapUnits) },
   });
 }
 
@@ -410,6 +421,26 @@ async function activeTeam(d: TreasuryDeps, orgId: string): Promise<Team & { wall
   return team as Team & { walletId: string; walletAddress: string };
 }
 
+export interface TreasuryLimits {
+  planIds: bigint[];
+  hbarPayoutCapWei: bigint;
+  usdcPayoutCapUnits: bigint;
+}
+
+/// @notice The limits in this team's Privy policy. Teams created before per-team
+/// limits carry the network defaults they were provisioned with.
+export function teamLimits(d: Pick<TreasuryDeps, "planIds" | "hbarPayoutCapWei" | "usdcPayoutCapUnits">, team: Team): TreasuryLimits {
+  const l = team.limits;
+  return l
+    ? { planIds: l.planIds.map((p) => BigInt(p)), hbarPayoutCapWei: BigInt(l.hbarPayoutCapWei), usdcPayoutCapUnits: BigInt(l.usdcPayoutCapUnits) }
+    : { planIds: d.planIds, hbarPayoutCapWei: d.hbarPayoutCapWei, usdcPayoutCapUnits: d.usdcPayoutCapUnits };
+}
+
+export function teamLimitsView(d: Pick<TreasuryDeps, "planIds" | "hbarPayoutCapWei" | "usdcPayoutCapUnits">, team: Team) {
+  const l = teamLimits(d, team);
+  return { planIds: l.planIds.map(String), hbarPayoutCap: hbar(l.hbarPayoutCapWei), usdcPayoutCap: formatUnits(l.usdcPayoutCapUnits, 6), recipients: team.payoutRecipients };
+}
+
 function parseUnits(amount: unknown, decimals: number, label: string): bigint {
   const s = String(amount ?? "").trim();
   if (!new RegExp(`^\\d+(\\.\\d{1,${decimals}})?$`).test(s)) throw new TreasuryError(400, "invalid_request", `${label} must be a positive amount with at most ${decimals} decimals.`);
@@ -417,6 +448,76 @@ function parseUnits(amount: unknown, decimals: number, label: string): bigint {
   const units = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(frac.padEnd(decimals, "0") || "0");
   if (units <= 0n) throw new TreasuryError(400, "invalid_request", `${label} must be positive.`);
   return units;
+}
+
+/// @notice Owners propose new wallet limits. The Privy policy changes only after the
+/// financial approver and the broker key authorize the exact rules, as with a transaction.
+async function proposePolicyChange(d: TreasuryDeps, team: Team & { walletId: string; walletAddress: string }, actor: TeamMember, params: Record<string, unknown>): Promise<TreasuryIntent> {
+  if (actor.role !== "owner") throw new TreasuryError(403, "forbidden", "Only team owners can change the team wallet limits.");
+  if (!team.policyId) throw new TreasuryError(409, "wallet_inactive", "This team wallet has no policy to change.");
+  const requested = Array.isArray(params.planIds) ? params.planIds : [];
+  const planIds = [...new Set(requested.map((p) => (Number.isSafeInteger(Number(p)) && Number(p) >= 0 ? BigInt(Number(p)) : -1n)))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  if (!planIds.length || planIds.some((p) => !d.planIds.includes(p))) {
+    throw new TreasuryError(400, "invalid_request", "Allow at least one of the credit plans this network offers.");
+  }
+  const plans: Array<{ planId: bigint; priceTinybar: bigint }> = [];
+  for (const planId of planIds) {
+    const plan = await d.chain.plan(planId);
+    if (!plan) throw new TreasuryError(409, "plan_unavailable", `Credit plan ${planId} is not available.`);
+    plans.push({ planId, priceTinybar: plan.priceTinybar });
+  }
+  const hbarPayoutCapWei = parseUnits(params.hbarPayoutCap, 8, "The HBAR payout limit") * WEIBAR_PER_TINYBAR;
+  const usdcPayoutCapUnits = parseUnits(params.usdcPayoutCap, 6, "The test USDC payout limit");
+  const recipients = [...new Set((Array.isArray(params.recipients) ? params.recipients : []).map((r) => String(r).trim().toLowerCase()))];
+  if (!recipients.length || recipients.length > 20 || recipients.some((r) => !/^0x[0-9a-f]{40}$/.test(r))) {
+    throw new TreasuryError(400, "invalid_request", "List 1 to 20 payout recipient wallet addresses.");
+  }
+  const rules = treasuryPolicyRules({ vault: d.vault, plans, recipients, hbarPayoutCapWei, usdcPayoutCapUnits });
+  const policyChange: PolicyChange = {
+    policyId: team.policyId,
+    rules,
+    limits: { planIds: planIds.map(String), hbarPayoutCapWei: String(hbarPayoutCapWei), usdcPayoutCapUnits: String(usdcPayoutCapUnits), payoutRecipients: recipients },
+  };
+  const current = teamLimitsView(d, team);
+  const terms: Record<string, string> = {
+    action: "Change wallet limits",
+    plans: planIds.join(", "),
+    hbarPayoutCap: hbar(hbarPayoutCapWei),
+    usdcPayoutCap: formatUnits(usdcPayoutCapUnits, 6),
+    recipients: recipients.map((r) => getAddress(r)).join(", "),
+    previous: `plans ${current.planIds.join(", ")} · ${current.hbarPayoutCap} HBAR · ${current.usdcPayoutCap} test USDC · ${current.recipients.length} recipient(s)`,
+    wallet: getAddress(team.walletAddress),
+    network: `Hedera testnet (${HEDERA_TESTNET_CHAIN_ID})`,
+  };
+  const at = nowFor(d);
+  const intent: TreasuryIntent = {
+    id: `trx_${randomUUID()}`,
+    orgId: team.orgId,
+    kind: "update_policy",
+    privyIntentId: null,
+    walletAddress: team.walletAddress,
+    transaction: {} as PreparedTransaction, // a policy change carries no transaction
+    policyChange,
+    terms,
+    actionHash: createHash("sha256").update(stable({ orgId: team.orgId, kind: "update_policy", policyChange, terms })).digest("hex"),
+    state: "proposed",
+    proposedBy: actor.did,
+    approvals: [],
+    signedTransaction: null,
+    transactionHash: null,
+    result: {},
+    error: null,
+    createdAt: at,
+    updatedAt: at,
+  };
+  await d.store.insert(intent);
+  try {
+    const remote = await d.privy.request("PATCH", `/intents/policies/${team.policyId}`, { rules });
+    return (await d.store.transition(intent.id, ["proposed"], { privyIntentId: remote.intent_id, state: "awaiting_approvals" }))!;
+  } catch {
+    await d.store.transition(intent.id, ["proposed"], { state: "failed", error: "Privy could not create the approval request." });
+    throw new TreasuryError(502, "privy_unavailable", "Privy could not create the approval request. Try again.");
+  }
 }
 
 /// @notice Prepare and propose a treasury transaction. Nonce, fee bounds, chain,
@@ -432,6 +533,8 @@ export async function proposeTreasuryIntent(
   if (actor.orgId !== orgId || actor.status !== "active" || (actor.role !== "owner" && actor.role !== "manager")) {
     throw new TreasuryError(403, "forbidden", "Only team owners and managers can propose treasury transactions.");
   }
+  if (kind === "update_policy") return proposePolicyChange(d, team, actor, params);
+  const limits = teamLimits(d, team);
   const wallet = getAddress(team.walletAddress);
   const vault = getAddress(d.vault);
   const network = `Hedera testnet (${HEDERA_TESTNET_CHAIN_ID})`;
@@ -442,7 +545,7 @@ export async function proposeTreasuryIntent(
   let fallbackGas: bigint;
   if (kind === "buy_credits") {
     const planId = BigInt(Number.isSafeInteger(Number(params.planId ?? 0)) ? Number(params.planId ?? 0) : -1);
-    if (!d.planIds.includes(planId)) throw new TreasuryError(400, "invalid_request", "Choose an available vault plan.");
+    if (!limits.planIds.includes(planId)) throw new TreasuryError(400, "invalid_request", "Choose a credit plan this team's wallet limits allow.");
     const plan = await d.chain.plan(planId);
     if (!plan) throw new TreasuryError(409, "plan_unavailable", "That vault plan is not available.");
     to = vault;
@@ -466,13 +569,13 @@ export async function proposeTreasuryIntent(
     if (kind === "payout_hbar") {
       to = getAddress(recipient);
       value = parseUnits(params.amount, 8, "Amount") * WEIBAR_PER_TINYBAR;
-      if (value > d.hbarPayoutCapWei) throw new TreasuryError(400, "invalid_request", `Payouts are limited to ${hbar(d.hbarPayoutCapWei)} HBAR per transaction.`);
+      if (value > limits.hbarPayoutCapWei) throw new TreasuryError(400, "invalid_request", `This team limits payouts to ${hbar(limits.hbarPayoutCapWei)} HBAR per transaction.`);
       data = "0x";
       terms = { action: "Pay out HBAR", asset: "HBAR", amount: hbar(value), recipient: to, network };
       fallbackGas = 50_000n;
     } else {
       const amount = parseUnits(params.amount, 6, "Amount");
-      if (amount > d.usdcPayoutCapUnits) throw new TreasuryError(400, "invalid_request", "That payout exceeds the per-transaction test USDC limit.");
+      if (amount > limits.usdcPayoutCapUnits) throw new TreasuryError(400, "invalid_request", `This team limits payouts to ${formatUnits(limits.usdcPayoutCapUnits, 6)} test USDC per transaction.`);
       if ((await d.chain.tokenBalance(TEST_USDC_ADDRESS, wallet)) < amount) {
         throw new TreasuryError(402, "insufficient_funds", "The team wallet does not hold enough test USDC.");
       }
@@ -503,6 +606,7 @@ export async function proposeTreasuryIntent(
     privyIntentId: null,
     walletAddress: team.walletAddress,
     transaction,
+    policyChange: null,
     terms,
     actionHash: createHash("sha256").update(stable({ orgId, kind, transaction, terms })).digest("hex"),
     state: "proposed",
@@ -568,12 +672,10 @@ export async function approveTreasuryIntent(
     throw new TreasuryError(409, "invalid_state", `This transaction was ${remote.status} in Privy.`);
   }
   const details = remote.request_details ?? {};
-  if (
-    remote.status !== "pending" ||
-    remote.resource_id !== team.walletId ||
-    details.body?.method !== "eth_signTransaction" ||
-    stable(details.body?.params?.transaction) !== stable(intent.transaction)
-  ) {
+  const sameTerms = intent.kind === "update_policy"
+    ? remote.resource_id === team.policyId && details.method === "PATCH" && stable(details.body?.rules) === stable(intent.policyChange?.rules)
+    : remote.resource_id === team.walletId && details.body?.method === "eth_signTransaction" && stable(details.body?.params?.transaction) === stable(intent.transaction);
+  if (remote.status !== "pending" || !sameTerms) {
     await d.store.transition(intent.id, ["awaiting_approvals"], { state: "cancelled", error: "The Privy request no longer matches the reviewed terms." });
     throw new TreasuryError(409, "terms_changed", "The transaction terms changed. Propose it again and review the new terms.");
   }
@@ -611,6 +713,7 @@ export async function approveTreasuryIntent(
     approvals: [...withUser.approvals, { by: "broker", method: "broker_key", at: nowFor(d) }],
   });
   if (!authorized) throw new TreasuryError(409, "invalid_state", "This transaction changed while approving. Refresh and retry.");
+  if (intent.kind === "update_policy") return finishPolicyChange(d, authorized);
   // Privy executes the signing once the quorum is satisfied and the policy allows it.
   let raw: Hex | null = null;
   let failure: string | null = null;
@@ -628,6 +731,42 @@ export async function approveTreasuryIntent(
     throw new TreasuryError(failure ? 422 : 504, failure ? "signing_refused" : "signing_pending", failure ?? "Signing has not completed yet.");
   }
   return recordSignedTransaction(d, intent, raw);
+}
+
+/// @notice Policy rules compared without the ids Privy assigns.
+const ruleShape = (rules: unknown) =>
+  stable(
+    ((Array.isArray(rules) ? rules : []) as Array<Record<string, any>>)
+      .map(({ id: _id, ...rule }): Record<string, unknown> => ({ ...rule, conditions: ((rule.conditions ?? []) as Array<Record<string, unknown>>).map(({ id: _cid, ...c }) => c) }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name))),
+  );
+
+/// @notice Wait for Privy to apply an authorized policy change, confirm the policy
+/// now carries exactly the reviewed rules, then record the team's new limits.
+async function finishPolicyChange(d: TreasuryDeps, intent: TreasuryIntent): Promise<TreasuryIntent> {
+  const change = intent.policyChange!;
+  let status = "pending";
+  let detail = "";
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const latest = await d.privy.request("GET", `/intents/${intent.privyIntentId}`);
+    status = String(latest.status);
+    if (status === "failed") detail = JSON.stringify(latest.action_result ?? {}).slice(0, 200);
+    if (status !== "pending") break;
+    await sleepFor(d)(1000);
+  }
+  if (["failed", "rejected", "expired", "dismissed"].includes(status)) {
+    await d.store.transition(intent.id, ["authorized", "uncertain"], { state: "failed", error: `Privy did not apply the change (${status}${detail ? `: ${detail}` : ""}).` });
+    throw new TreasuryError(422, "policy_update_refused", `Privy did not apply the wallet limit change (${status}).`);
+  }
+  const policy = status === "executed" ? await d.privy.request("GET", `/policies/${change.policyId}`).catch(() => null) : null;
+  if (!policy || ruleShape(policy.rules) !== ruleShape(change.rules)) {
+    return (await d.store.transition(intent.id, ["authorized", "uncertain"], {
+      state: "uncertain",
+      error: policy ? "Privy reports policy rules that differ from the reviewed change. Reconcile to check again." : "The change is not applied yet. Reconcile to check again.",
+    }))!;
+  }
+  await d.teams.setTreasuryLimits(intent.orgId, change.limits);
+  return (await d.store.transition(intent.id, ["authorized", "uncertain"], { state: "confirmed", result: { policyUpdated: "true" }, error: null }))!;
 }
 
 async function recordSignedTransaction(d: TreasuryDeps, intent: TreasuryIntent, raw: Hex): Promise<TreasuryIntent> {
@@ -685,6 +824,7 @@ async function broadcastSigned(d: TreasuryDeps, intent: TreasuryIntent): Promise
 export async function reconcileTreasuryIntent(d: TreasuryDeps, orgId: string, intentId: string, actor: TeamMember): Promise<TreasuryIntent> {
   const intent = await loadIntent(d, orgId, intentId);
   if (actor.orgId !== orgId || actor.status !== "active" || actor.role === "member") throw new TreasuryError(403, "forbidden", "Only team owners and managers can reconcile treasury transactions.");
+  if (intent.kind === "update_policy") return ["authorized", "uncertain"].includes(intent.state) ? finishPolicyChange(d, intent) : intent;
   if (intent.signedTransaction && ["signed", "submitted", "uncertain"].includes(intent.state)) return broadcastSigned(d, intent);
   if (intent.state === "uncertain" && intent.privyIntentId) {
     const remote = await d.privy.request("GET", `/intents/${intent.privyIntentId}`);
