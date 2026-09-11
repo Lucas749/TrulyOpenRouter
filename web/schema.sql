@@ -6,9 +6,19 @@ INSERT INTO schema_version (v) VALUES (1) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS team_orgs (
   id text PRIMARY KEY,
   default_allowance_credits double precision,
-  periodDays int NOT NULL DEFAULT 30,
+  period_days int NOT NULL DEFAULT 30,
   creator_wallet text
 );
+-- Databases created while this column was declared unquoted as periodDays have it as perioddays.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('team_orgs') AND attname = 'perioddays' AND NOT attisdropped)
+     AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('team_orgs') AND attname = 'period_days' AND NOT attisdropped) THEN
+    ALTER TABLE team_orgs RENAME COLUMN perioddays TO period_days;
+  END IF;
+EXCEPTION WHEN undefined_column OR duplicate_column THEN
+  NULL; -- a concurrent boot renamed it first
+END $$;
 ALTER TABLE team_orgs ADD COLUMN IF NOT EXISTS creator_wallet text;
 
 -- Team members (allowance null = inherit org default).
