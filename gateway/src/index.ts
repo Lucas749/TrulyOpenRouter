@@ -35,6 +35,7 @@ import { PgAccounting, periods, type CounterLimit, type Violation } from "./acco
 import { ApprovalError, approvalAuthority, approvalMessage, decideAgentApproval, PgApprovals, type AgentApproval, type ApprovalMethod } from "./approvals.js";
 import type { Identity, TeamMember } from "./teams.js";
 import { challengeField, issueChallenge, LedgerChallengeError, messageSigner, stableJson, verifyChallenge } from "./ledger.js";
+import { buyAgentCredits, FundingError, fundingQuote, PgFundingStore, returnAgentFunds, type FundingDeps } from "./agent-funding.js";
 
 /// @notice Thrown when an org rule blocks a call. Caught by the chat handler
 /// into a plain-language 403 (module scope: the catch lives outside try).
@@ -89,6 +90,7 @@ export interface GatewayOptions {
   accounting?: PgAccounting; // durable counters for strict agent and member caps
   approvals?: PgApprovals; // human approvals for over-limit agent requests
   appOrigin?: string; // origin bound into approval messages and review links
+  funding?: FundingDeps; // personal agent budget purchases and returns; absent = funding endpoints 501
   taps?: TapStore; // PENDING_TAP queue; absent = tap endpoints 501
   tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
   adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
@@ -1528,7 +1530,7 @@ export function createApp(opts: GatewayOptions = {}) {
   }
 
   function agentFailure(res: any, e: unknown) {
-    if (e instanceof AgentError || e instanceof ApprovalError || e instanceof LedgerChallengeError) {
+    if (e instanceof AgentError || e instanceof ApprovalError || e instanceof LedgerChallengeError || e instanceof FundingError) {
       res.status(e.status).json({ error: { message: e.message, type: e.type } });
       return;
     }
@@ -1830,6 +1832,94 @@ export function createApp(opts: GatewayOptions = {}) {
     }
   });
 
+  // --- Personal agent budgets -------------------------------------------------
+  // The owner deposits HBAR from their own wallet; the broker buys credits with the
+  // budget key. Returns go only to one of the owner's linked wallets, and a
+  // Ledger-protected agent's return also needs its enrolled Ledger.
+
+  const returnLines = (agent: Agent, destination: string) => [
+    "TrulyOpenRouter agent funds return",
+    `origin: ${origin}`,
+    "network: hedera-testnet",
+    `agent: ${agent.id} (${agent.name})`,
+    `budget: ${agent.budgetLabel ? budgetAddressFor(agent.budgetLabel)?.toLowerCase() : "none"}`,
+    "action: refund unused credits and return all HBAR",
+    `destination: ${destination}`,
+    `approver: ${agent.ledgerAddress}`,
+    `enrollment revision: ${agent.ledgerRevision}`,
+  ];
+
+  function requireFunding(res: any): FundingDeps | null {
+    if (opts.funding) return opts.funding;
+    res.status(501).json({ error: { message: "agent funding is not configured", type: "unavailable" } });
+    return null;
+  }
+
+  const ownedDestination = (identity: Identity, raw: unknown) => {
+    const destination = String(raw ?? "").toLowerCase();
+    if (!identity.wallets.some((w) => w.toLowerCase() === destination)) throw new AgentError(400, "invalid_request", "Choose one of your linked wallets as the destination.");
+    return destination;
+  };
+
+  app.get("/api/agents/:id/funding", async (req, res) => {
+    const ctx = await managedAgent(req, res);
+    if (!ctx) return;
+    const funding = requireFunding(res);
+    if (!funding) return;
+    try {
+      const planId = BigInt(Number.isSafeInteger(Number(req.query.planId)) ? Number(req.query.planId) : 0);
+      res.json({ quote: await fundingQuote(funding, ctx.agent, planId), operations: await funding.store.recent(ctx.agent.id, 10) });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.post("/api/agents/:id/funding/buy", async (req, res) => {
+    const ctx = await managedAgent(req, res);
+    if (!ctx) return;
+    const funding = requireFunding(res);
+    if (!funding) return;
+    try {
+      const planId = BigInt(Number.isSafeInteger(Number(req.body?.planId ?? 0)) ? Number(req.body?.planId ?? 0) : 0);
+      res.json({ operation: await buyAgentCredits(funding, ctx.agent, planId) });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.post("/api/agents/:id/funding/return/challenge", async (req, res) => {
+    const ctx = await managedAgent(req, res);
+    if (!ctx) return;
+    try {
+      if (!ctx.agent.ledgerAddress) throw new AgentError(409, "not_protected", "This agent has no enrolled Ledger; return its funds directly.");
+      res.json(issueChallenge(returnLines(ctx.agent, ownedDestination(ctx.actor.identity, req.body?.destination))));
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.post("/api/agents/:id/funding/return", async (req, res) => {
+    const ctx = await managedAgent(req, res);
+    if (!ctx) return;
+    const funding = requireFunding(res);
+    if (!funding) return;
+    try {
+      const { agent } = ctx;
+      if (stripDid(agent.ownerUserId) !== stripDid(ctx.actor.identity.userId)) throw new AgentError(403, "forbidden", "Only the agent's owner can return its funds.");
+      const destination = ownedDestination(ctx.actor.identity, req.body?.destination);
+      if (agent.ledgerAddress) {
+        const ledger = req.body?.ledger;
+        if (!ledger) throw new AgentError(403, "ledger_required", "Returning funds from a Ledger-protected agent needs approval on its Ledger.");
+        const message = verifyChallenge(ledger.message, ledger.token);
+        if (!describesCurrent(message, returnLines(agent, destination))) throw new LedgerChallengeError(409, "stale_challenge", "The agent, destination, or Ledger enrollment changed. Start again.");
+        if ((await messageSigner(message, ledger.signature)) !== agent.ledgerAddress) throw new LedgerChallengeError(401, "bad_signature", "The enrolled Ledger did not approve this return.");
+      }
+      res.json({ operation: await returnAgentFunds(funding, agent, destination) });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
   async function agentFromKey(req: any, res: any): Promise<Agent | null> {
     if (!opts.agents) {
       res.status(501).json({ error: { message: "agents are not configured", type: "unavailable" } });
@@ -2118,6 +2208,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       paymentPending: async (payer) => (await db().query(`SELECT 1 FROM billing_requests WHERE payer = $1`, [payer.toLowerCase()])).rows.length > 0,
     };
     console.log("team treasury: Privy organization wallets with approver and broker quorum");
+  }
+  // Personal agent budgets: broker-signed purchases and returns with the budget key.
+  if (pg && process.env.VAULT_ADDRESS && rpcUrl && process.env.BUDGET_MASTER) {
+    const { hederaTreasuryChain } = await import("./treasury.js");
+    opts.funding = {
+      chain: opts.treasury?.chain ?? hederaTreasuryChain(rpcUrl, process.env.VAULT_ADDRESS as Address),
+      vault: process.env.VAULT_ADDRESS as Address,
+      budgetMaster: () => process.env.BUDGET_MASTER,
+      store: new PgFundingStore(),
+      paymentPending: async (payer) => (await db().query(`SELECT 1 FROM billing_requests WHERE payer = $1`, [payer.toLowerCase()])).rows.length > 0,
+    };
   }
   startVerifyLoop(opts); // VERIFY_INTERVAL_MS=0/unset = off; VERIFY_AUTO_CHALLENGE=1 + OPERATOR_KEY files challenges
   createApp(opts).listen(PORT, () => console.log(`tor-gateway on :${PORT}`));
