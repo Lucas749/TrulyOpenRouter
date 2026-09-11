@@ -54,16 +54,40 @@ function complete<T>(action: Action<T>, onInteraction?: (step: string) => void):
 
 const hex = (v: string) => v.replace(/^0x/, "").padStart(64, "0");
 
-/// @notice Connect to the first Ledger chosen in the browser's device prompt.
+type LedgerKit = [
+  typeof import("@ledgerhq/device-management-kit"),
+  typeof import("@ledgerhq/device-transport-kit-web-hid"),
+  typeof import("@ledgerhq/device-signer-kit-ethereum"),
+];
+let kit: Promise<LedgerKit> | null = null;
+
+/// @notice Load the Ledger kit before the click. Browsers open the device prompt only within a few
+/// seconds of a click, so a first download must not sit between the click and the prompt.
+export function preloadLedgerKit(): Promise<LedgerKit> {
+  kit ??= Promise.all([
+    import("@ledgerhq/device-management-kit"),
+    import("@ledgerhq/device-transport-kit-web-hid"),
+    import("@ledgerhq/device-signer-kit-ethereum"),
+  ]).catch((e) => {
+    kit = null;
+    throw e;
+  });
+  return kit;
+}
+
+/// @notice Ledger kit errors carry a tag and the underlying browser error rather than a message.
+function describe(e: unknown): string {
+  const err = e as { message?: string; _tag?: string; originalError?: { message?: string } } | undefined;
+  return err?.message || err?.originalError?.message || err?._tag || String(e);
+}
+
+/// @notice Connect to the first Ledger chosen in the browser's device prompt. Call it straight from a
+/// click and run every device step for that click on the returned session.
 export async function connectLedger(onInteraction?: (step: string) => void): Promise<LedgerSession> {
   if (!webHidSupported()) {
     throw new LedgerUnavailableError("This browser cannot reach a Ledger. Use desktop Chrome, Edge, or Brave; the request stays pending until then.");
   }
-  const [{ DeviceManagementKitBuilder }, { webHidTransportFactory, webHidIdentifier }, { SignerEthBuilder }] = await Promise.all([
-    import("@ledgerhq/device-management-kit"),
-    import("@ledgerhq/device-transport-kit-web-hid"),
-    import("@ledgerhq/device-signer-kit-ethereum"),
-  ]);
+  const [{ DeviceManagementKitBuilder }, { webHidTransportFactory, webHidIdentifier }, { SignerEthBuilder }] = await preloadLedgerKit();
   const dmk = new DeviceManagementKitBuilder().addTransport(webHidTransportFactory).build();
   const device = await new Promise<Parameters<typeof dmk.connect>[0]["device"]>((resolve, reject) => {
     const subscription = dmk.startDiscovering({ transport: webHidIdentifier }).subscribe({
@@ -72,11 +96,17 @@ export async function connectLedger(onInteraction?: (step: string) => void): Pro
         resolve(found);
       },
       error(e) {
-        reject(new LedgerUnavailableError(`No Ledger selected: ${String((e as Error)?.message ?? e)}`));
+        reject(new LedgerUnavailableError(`No Ledger selected: ${describe(e)}`));
       },
     });
   });
-  const sessionId = await dmk.connect({ device });
+  let sessionId: Awaited<ReturnType<typeof dmk.connect>>;
+  try {
+    sessionId = await dmk.connect({ device });
+  } catch (e) {
+    dmk.close();
+    throw new LedgerUnavailableError(`The Ledger could not be opened: ${describe(e)}. Quit Ledger Live, unlock the device, and try again.`);
+  }
   const signer = new SignerEthBuilder({ dmk, sessionId }).build();
   return {
     async verifiedAddress() {

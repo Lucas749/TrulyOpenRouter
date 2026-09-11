@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { apiError } from "../../lib/api-error";
-import { connectLedger } from "../../lib/ledger-device";
+import { connectLedger, preloadLedgerKit } from "../../lib/ledger-device";
 import LoginButton from "../components/login-button";
 import { useAuthFetch } from "../components/use-auth-fetch";
 import AgentFunding from "./funding";
@@ -183,6 +183,13 @@ export default function AgentsPage() {
     });
 
   const [deviceStep, setDeviceStep] = useState<string | null>(null);
+  // Replacing the approver needs both devices; the current device's prompt needs its own click.
+  const [replacement, setReplacement] = useState<{ agentId: string; message: string; token: string; signature: string } | null>(null);
+
+  // Load the Ledger kit when an agent opens, so a click reaches the browser's device prompt in time.
+  useEffect(() => {
+    if (detail) void preloadLedgerKit().catch(() => {});
+  }, [detail]);
 
   /// @notice Sign a gateway challenge on a connected Ledger, returning its verified address and signature.
   async function withLedger<T>(prompt: string, work: (ledger: Awaited<ReturnType<typeof connectLedger>>) => Promise<T>): Promise<T> {
@@ -197,26 +204,42 @@ export default function AgentsPage() {
   }
 
   // Enroll (no approver yet), replace (new device, then the current one), or remove (current device).
+  // One click opens one device session: the address check and the signature share it, because the
+  // browser shows its device prompt only right after a click.
   const changeLedger = (agent: AgentRow, action: "enroll" | "replace" | "remove") =>
     run(`ledger-${agent.id}`, async () => {
       const base = `${GW}/agents/${encodeURIComponent(agent.id)}/ledger`;
-      const newAddress = action === "remove" ? null : await withLedger("Connect the Ledger to enroll and confirm its address on the device", (l) => l.verifiedAddress());
-      const challengeRes = await authFetch(`${base}/challenge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: newAddress }) });
-      const challenge = await challengeRes.json();
-      if (!challengeRes.ok) throw new Error(apiError(challenge, challengeRes.status));
-      let signature: string | undefined;
-      let currentSignature: string | undefined;
-      if (action !== "remove") signature = await withLedger("Approve the enrollment message on the new Ledger", (l) => l.signMessage(challenge.message));
-      if (action !== "enroll") {
-        const current = await withLedger("Now connect the currently enrolled Ledger and approve the change", (l) => l.signMessage(challenge.message));
-        if (action === "remove") signature = current;
-        else currentSignature = current;
-      }
-      const r = await authFetch(base, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: challenge.message, token: challenge.token, signature, currentSignature }) });
-      const d = await r.json();
-      if (!r.ok) throw new Error(apiError(d, r.status));
-      await openDetail(agent.id);
+      const prompt =
+        action === "remove" ? "Approve removing this Ledger on the device" : "Confirm the address on the Ledger, then approve the enrollment message";
+      const signed = await withLedger(prompt, async (l) => {
+        const address = action === "remove" ? null : await l.verifiedAddress();
+        const challengeRes = await authFetch(`${base}/challenge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) });
+        const challenge = await challengeRes.json();
+        if (!challengeRes.ok) throw new Error(apiError(challenge, challengeRes.status));
+        return { message: challenge.message as string, token: challenge.token as string, signature: await l.signMessage(challenge.message) };
+      });
+      if (action === "replace") setReplacement({ agentId: agent.id, ...signed });
+      else await submitLedgerChange(agent.id, signed);
     }).finally(() => setDeviceStep(null));
+
+  const confirmReplacement = (agent: AgentRow) =>
+    run(`ledger-${agent.id}`, async () => {
+      if (replacement?.agentId !== agent.id) return;
+      const currentSignature = await withLedger("Connect the currently enrolled Ledger and approve the change", (l) => l.signMessage(replacement.message));
+      await submitLedgerChange(agent.id, { ...replacement, currentSignature });
+      setReplacement(null);
+    }).finally(() => setDeviceStep(null));
+
+  async function submitLedgerChange(agentId: string, change: { message: string; token: string; signature: string; currentSignature?: string }) {
+    const r = await authFetch(`${GW}/agents/${encodeURIComponent(agentId)}/ledger`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: change.message, token: change.token, signature: change.signature, currentSignature: change.currentSignature }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(apiError(d, r.status));
+    await openDetail(agentId);
+  }
 
   const teamName = (orgId: string | null) => (orgId ? teams.find((t) => t.id === orgId)?.display_name ?? orgId : "Personal budget");
   const limitLabel = (v: number | null) => (v === null ? "no limit" : `${v.toLocaleString("en-US")} credits`);
@@ -382,6 +405,9 @@ export default function AgentsPage() {
                       <>
                         <button onClick={() => changeLedger(detail.agent, "replace")} disabled={!!busy} className="rounded-full border border-black/10 px-3 py-1 text-[11px] disabled:opacity-40">Replace Ledger</button>
                         <button onClick={() => changeLedger(detail.agent, "remove")} disabled={!!busy} className="rounded-full border border-black/10 px-3 py-1 text-[11px] disabled:opacity-40">Remove Ledger</button>
+                        {replacement?.agentId === detail.agent.id && (
+                          <button onClick={() => confirmReplacement(detail.agent)} disabled={!!busy} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">Approve with the current Ledger</button>
+                        )}
                       </>
                     )}
                     {deviceStep && <span className="font-mono text-[11px] text-[#5D5D5D]">{deviceStep}</span>}

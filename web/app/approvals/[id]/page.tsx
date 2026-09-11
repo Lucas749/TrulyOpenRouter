@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { usePrivy, useSignMessage } from "@privy-io/react-auth";
 import { apiError } from "../../../lib/api-error";
-import { connectLedger } from "../../../lib/ledger-device";
+import { connectLedger, preloadLedgerKit } from "../../../lib/ledger-device";
 import LoginButton from "../../components/login-button";
 import { useAuthFetch } from "../../components/use-auth-fetch";
 
@@ -75,6 +75,11 @@ export default function ApprovalPage() {
       })
       .catch((e) => setErr(errorText(e)));
   }, [authenticated, authFetch, path]);
+
+  // Load the Ledger kit before the click, so the browser's device prompt opens in time.
+  useEffect(() => {
+    if (view?.canApprove.ledger) void preloadLedgerKit().catch(() => {});
+  }, [view?.canApprove.ledger]);
 
   const reload = useCallback(async () => {
     const r = await authFetch(path);
