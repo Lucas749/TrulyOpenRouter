@@ -283,6 +283,14 @@ agent, request, and policy revision. Approvers:
   have one enrolled.
 - **Ledger route:** the enrolled device signs the exact message through Ledger's
   Device Management Kit over WebHID.
+- **Terminal Ledger route:** Ledger's wallet CLI cannot sign a message, so the
+  agent helper (`TOR_APPROVE=ledger-cli`) runs `wallet-cli send`: a Sepolia
+  transaction from the enrolled address to itself whose calldata is `TORa`
+  plus keccak256 of the exact approval message, confirmed on the device. The
+  agent may relay the hash (`POST /v1/agent/approvals/:id/ledger-transaction`)
+  because the gateway reads the transaction back and approves only a mined,
+  successful transaction from and to the enrolled address carrying that code.
+  The hash is kept as evidence.
 
 An approval creates a single grant, claimed by exactly one retry of the
 original request with the same idempotency key. Policy, membership, or
