@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { generateKeyPairSync, verify as verifySignature } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Pool } from "pg";
-import { formatRequestForAuthorizationSignature } from "@privy-io/node";
+import { formatRequestForAuthorizationSignature, generateAuthorizationSignature } from "@privy-io/node";
 import { decodeFunctionData, getAddress, keccak256, parseAbi, type Hex } from "viem";
 import { createApp } from "../src/index.js";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -121,13 +121,17 @@ function fakePrivy(opts: { threshold?: number } = {}) {
         const intent = intents.get(authorize[1]);
         const { signature, timestamp } = body as { signature: string; timestamp: number };
         const [user, key] = intent.authorization_details[0].members;
-        if (signature.startsWith("user:")) {
+        // Like Privy: accept only a signature over the exact request, intent id and timestamp from a quorum member's key.
+        const bytes = Buffer.from(formatRequestForAuthorizationSignature({ version: 1, method: intent.request_details.method, url: intent.request_details.url, body: intent.request_details.body, headers: { "privy-app-id": "app-test" }, timestamp, intent_id: authorize[1] } as any));
+        const signedWith = (spki: string) => verifySignature("sha256", bytes, { key: Buffer.from(spki, "base64"), format: "der", type: "spki" }, Buffer.from(signature, "base64"));
+        if (signedWith(APPROVER_KEY.publicKey)) {
+          signers.push("user");
           if (control.userAccepts) user.signed_at = timestamp;
-        } else {
-          const bytes = formatRequestForAuthorizationSignature({ version: 1, method: intent.request_details.method, url: intent.request_details.url, body: intent.request_details.body, headers: { "privy-app-id": "app-test" }, timestamp, intent_id: authorize[1] } as any);
-          const ok = verifySignature("sha256", Buffer.from(bytes), { key: Buffer.from(BROKER.publicKey, "base64"), format: "der", type: "spki" }, Buffer.from(signature, "base64"));
-          if (!ok) throw new PrivyRequestError(400, "No valid authorization key found for signature");
+        } else if (signedWith(BROKER.publicKey)) {
+          signers.push("key");
           key.signed_at = timestamp;
+        } else {
+          throw new PrivyRequestError(400, JSON.stringify({ error: "No valid authorization key found for signature", code: "invalid_data" }));
         }
         if (user.signed_at && key.signed_at) {
           if (control.policyFails) {
@@ -153,12 +157,9 @@ function fakePrivy(opts: { threshold?: number } = {}) {
       }
       throw new Error(`unexpected Privy call ${method} ${path}`);
     },
-    userSignatures: vi.fn(async (jwt: string, payload: Record<string, unknown>) => {
-      if (jwt !== "approver-jwt") throw new Error("JWT exchange failed");
-      return [`user:${payload.timestamp}`];
-    }),
   };
-  return { privy, calls, intents, control, policies };
+  const signers: Array<"user" | "key"> = [];
+  return { privy, calls, intents, control, policies, signers };
 }
 
 function fakeChain() {
@@ -209,7 +210,21 @@ function deps(over: Partial<TreasuryDeps> = {}) {
   return { d, p, c, store, teams };
 }
 
-const approver = { member: OWNER, identity: { userId: "did:privy:approver", wallets: [] }, jwt: "approver-jwt" };
+// Stands in for the approver's Privy user signing key (held by Privy's wallet iframe in the browser).
+const APPROVER_KEY = brokerKey(generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({ format: "der", type: "pkcs8" }).toString("base64"));
+const approver = { member: OWNER, identity: { userId: "did:privy:approver", wallets: [] } };
+
+/// The approver's browser: ask for the exact bytes, sign them with the user key, send the signature back.
+async function approveAsApprover(d: TreasuryDeps, id: string, key: { privateKey: string } = APPROVER_KEY): Promise<TreasuryIntent> {
+  try {
+    return await approveTreasuryIntent(d, "org-1", id, approver);
+  } catch (e) {
+    if (!(e instanceof TreasuryError) || e.type !== "approval_signature_required") throw e;
+    const { payload, timestamp } = e.details!.authorization as { payload: string; timestamp: number };
+    const signature = generateAuthorizationSignature({ authorizationPrivateKey: key.privateKey, input: new Uint8Array(Buffer.from(payload, "base64")) });
+    return approveTreasuryIntent(d, "org-1", id, { ...approver, approval: { signature, timestamp } });
+  }
+}
 
 describe("team treasury policy", () => {
   it("allows only reviewed operations with exact plan terms and approved recipients", () => {
@@ -273,9 +288,20 @@ describe("team treasury transactions", () => {
   it("needs the financial approver's own Privy authorization before the broker signs, then confirms stored bytes", async () => {
     const { d, p, c, store } = deps();
     const intent = await proposeTreasuryIntent(d, "org-1", OWNER, "buy_credits", { planId: 0 });
-    await expect(approveTreasuryIntent(d, "org-1", intent.id, { member: MANAGER, identity: { userId: "did:privy:manager", wallets: [] }, jwt: "manager-jwt" })).rejects.toMatchObject({ status: 403 });
-    await expect(approveTreasuryIntent(d, "org-1", intent.id, { ...approver, jwt: "stolen" })).rejects.toMatchObject({ status: 401 });
-    expect(p.calls.filter((x) => x.path.endsWith("/authorize"))).toHaveLength(0);
+    await expect(approveTreasuryIntent(d, "org-1", intent.id, { member: MANAGER, identity: { userId: "did:privy:manager", wallets: [] } })).rejects.toMatchObject({ status: 403 });
+    // Without a signature the approver gets the exact bytes Privy verifies, bound to this intent and a timestamp.
+    const challenge = await approveTreasuryIntent(d, "org-1", intent.id, approver).catch((e) => e);
+    expect(challenge).toMatchObject({ status: 428, type: "approval_signature_required" });
+    const { payload, timestamp } = challenge.details.authorization;
+    expect(JSON.parse(Buffer.from(payload, "base64").toString("utf8"))).toMatchObject({
+      version: 1, method: "POST", url: "https://api.privy.io/v1/wallets/wallet-1/rpc", headers: { "privy-app-id": "app-test" }, timestamp, intent_id: intent.privyIntentId, body: { method: "eth_signTransaction" },
+    });
+    // Any other key is refused by Privy, a stale signature never reaches Privy, and the broker never signs.
+    const stranger = brokerKey(generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({ format: "der", type: "pkcs8" }).toString("base64"));
+    await expect(approveAsApprover(d, intent.id, stranger)).rejects.toMatchObject({ status: 403, type: "approval_rejected", message: expect.stringContaining("No valid authorization key found for signature") });
+    await expect(approveTreasuryIntent(d, "org-1", intent.id, { ...approver, approval: { signature: "c2ln", timestamp: timestamp - 11 * 60_000 } })).rejects.toMatchObject({ status: 400, type: "approval_signature_invalid" });
+    expect(p.signers).toEqual([]);
+    expect((await store.get(intent.id))?.state).toBe("awaiting_approvals");
 
     const originalSend = c.chain.sendRaw;
     c.chain.sendRaw = async (raw) => {
@@ -283,10 +309,10 @@ describe("team treasury transactions", () => {
       expect(stored?.signedTransaction).toBe(raw); // persisted before broadcast
       return originalSend(raw);
     };
-    const done = await approveTreasuryIntent(d, "org-1", intent.id, approver);
+    const done = await approveAsApprover(d, intent.id);
     const authorizations = p.calls.filter((x) => x.path.endsWith("/authorize"));
-    expect(authorizations).toHaveLength(2);
-    expect(authorizations[0].body.signature).toMatch(/^user:/);
+    expect(authorizations).toHaveLength(3); // the refused stranger signature, then approver and broker
+    expect(p.signers).toEqual(["user", "key"]);
     expect(done).toMatchObject({ state: "confirmed", result: { creditsAdded: "10000", creditsAfter: "10000" } });
     expect(done.approvals.map((a) => a.method)).toEqual(["privy_user", "broker_key"]);
     expect(done.transactionHash).toBe(keccak256(done.signedTransaction as Hex));
@@ -297,9 +323,8 @@ describe("team treasury transactions", () => {
     const { d, p } = deps();
     p.control.userAccepts = false;
     const intent = await proposeTreasuryIntent(d, "org-1", OWNER, "buy_credits", { planId: 0 });
-    await expect(approveTreasuryIntent(d, "org-1", intent.id, approver)).rejects.toMatchObject({ status: 403, type: "approval_rejected" });
-    const signatures = p.calls.filter((x) => x.path.endsWith("/authorize")).map((x) => x.body.signature);
-    expect(signatures.every((s: string) => s.startsWith("user:"))).toBe(true);
+    await expect(approveAsApprover(d, intent.id)).rejects.toMatchObject({ status: 403, type: "approval_rejected" });
+    expect(p.signers).toEqual(["user"]);
     expect(p.intents.get(intent.privyIntentId!).status).toBe("pending");
   });
 
@@ -307,7 +332,7 @@ describe("team treasury transactions", () => {
     const { d, p, store } = deps();
     const intent = await proposeTreasuryIntent(d, "org-1", OWNER, "buy_credits", { planId: 0 });
     p.intents.get(intent.privyIntentId!).request_details.body.params.transaction.to = RECIPIENT;
-    await expect(approveTreasuryIntent(d, "org-1", intent.id, approver)).rejects.toMatchObject({ status: 409, type: "terms_changed" });
+    await expect(approveAsApprover(d, intent.id)).rejects.toMatchObject({ status: 409, type: "terms_changed" });
     expect((await store.get(intent.id))?.state).toBe("cancelled");
     expect(p.calls.filter((x) => x.path.endsWith("/authorize"))).toHaveLength(0);
   });
@@ -316,14 +341,14 @@ describe("team treasury transactions", () => {
     const refused = deps();
     refused.p.control.policyFails = true;
     const a = await proposeTreasuryIntent(refused.d, "org-1", OWNER, "buy_credits", { planId: 0 });
-    await expect(approveTreasuryIntent(refused.d, "org-1", a.id, approver)).rejects.toMatchObject({ status: 422, type: "signing_refused" });
+    await expect(approveAsApprover(refused.d, a.id)).rejects.toMatchObject({ status: 422, type: "signing_refused" });
     expect((await refused.store.get(a.id))?.state).toBe("failed");
     expect(refused.c.sent).toHaveLength(0);
 
     const tampered = deps();
     tampered.p.control.tamperSigned = true;
     const b = await proposeTreasuryIntent(tampered.d, "org-1", OWNER, "buy_credits", { planId: 0 });
-    await expect(approveTreasuryIntent(tampered.d, "org-1", b.id, approver)).rejects.toMatchObject({ status: 502, type: "signature_mismatch" });
+    await expect(approveAsApprover(tampered.d, b.id)).rejects.toMatchObject({ status: 502, type: "signature_mismatch" });
     expect((await tampered.store.get(b.id))?.state).toBe("failed");
     expect(tampered.c.sent).toHaveLength(0);
   });
@@ -332,7 +357,7 @@ describe("team treasury transactions", () => {
     const { d, p, c } = deps();
     c.state.autoReceipt = false;
     const intent = await proposeTreasuryIntent(d, "org-1", OWNER, "buy_credits", { planId: 0 });
-    const pending = await approveTreasuryIntent(d, "org-1", intent.id, approver);
+    const pending = await approveAsApprover(d, intent.id);
     expect(pending.state).toBe("uncertain");
     const authorizeCalls = p.calls.filter((x) => x.path.endsWith("/authorize")).length;
     await expect(proposeTreasuryIntent(d, "org-1", OWNER, "buy_credits", { planId: 0 })).rejects.toMatchObject({ status: 409 });
@@ -367,8 +392,8 @@ describe("team wallet limits", () => {
     const expected = treasuryPolicyRules({ vault: VAULT, plans: [{ planId: 0n, priceTinybar: 1_000_000_000n }], recipients: [RECIPIENT, OTHER], hbarPayoutCapWei: 40n * 10n ** 18n, usdcPayoutCapUnits: 12_500_000n });
     expect(p.calls.find((c) => c.method === "PATCH")).toMatchObject({ path: "/intents/policies/policy-1", body: { rules: expected } });
 
-    await expect(approveTreasuryIntent(d, "org-1", intent.id, { member: MANAGER, identity: { userId: "did:privy:manager", wallets: [] }, jwt: "manager-jwt" })).rejects.toMatchObject({ status: 403 });
-    const done = await approveTreasuryIntent(d, "org-1", intent.id, approver);
+    await expect(approveTreasuryIntent(d, "org-1", intent.id, { member: MANAGER, identity: { userId: "did:privy:manager", wallets: [] } })).rejects.toMatchObject({ status: 403 });
+    const done = await approveAsApprover(d, intent.id);
     expect(done).toMatchObject({ state: "confirmed", result: { policyUpdated: "true" } });
     expect(done.approvals.map((a) => a.method)).toEqual(["privy_user", "broker_key"]);
     expect(p.policies.get("policy-1")).toEqual(expected);
@@ -406,13 +431,13 @@ describe("team wallet limits", () => {
     const tampered = deps();
     const a = await proposeTreasuryIntent(tampered.d, "org-1", OWNER, "update_policy", change);
     tampered.p.intents.get(a.privyIntentId!).request_details.body.rules[0].conditions[2].value = "1";
-    await expect(approveTreasuryIntent(tampered.d, "org-1", a.id, approver)).rejects.toMatchObject({ status: 409, type: "terms_changed" });
+    await expect(approveAsApprover(tampered.d, a.id)).rejects.toMatchObject({ status: 409, type: "terms_changed" });
     expect(tampered.p.calls.filter((c) => c.path.endsWith("/authorize"))).toHaveLength(0);
 
     const differs = deps();
     differs.p.control.storedRulesDiffer = true;
     const b = await proposeTreasuryIntent(differs.d, "org-1", OWNER, "update_policy", change);
-    expect((await approveTreasuryIntent(differs.d, "org-1", b.id, approver)).state).toBe("uncertain");
+    expect((await approveAsApprover(differs.d, b.id)).state).toBe("uncertain");
     expect(differs.teams.setTreasuryLimits).not.toHaveBeenCalled();
     differs.p.policies.set("policy-1", structuredClone(b.policyChange!.rules));
     expect((await reconcileTreasuryIntent(differs.d, "org-1", b.id, OWNER)).state).toBe("confirmed");
@@ -421,7 +446,7 @@ describe("team wallet limits", () => {
     const refused = deps();
     refused.p.control.policyFails = true;
     const c = await proposeTreasuryIntent(refused.d, "org-1", OWNER, "update_policy", change);
-    await expect(approveTreasuryIntent(refused.d, "org-1", c.id, approver)).rejects.toMatchObject({ status: 422, type: "policy_update_refused" });
+    await expect(approveAsApprover(refused.d, c.id)).rejects.toMatchObject({ status: 422, type: "policy_update_refused" });
     expect(refused.teams.setTreasuryLimits).not.toHaveBeenCalled();
   });
 
@@ -430,7 +455,7 @@ describe("team wallet limits", () => {
     const a = await proposeTreasuryIntent(retried.d, "org-1", OWNER, "update_policy", change);
     retried.p.intents.get(a.privyIntentId!).status = "executed"; // authorization landed, its response was lost
     retried.p.policies.set("policy-1", structuredClone(a.policyChange!.rules));
-    expect((await approveTreasuryIntent(retried.d, "org-1", a.id, approver)).state).toBe("confirmed");
+    expect((await approveAsApprover(retried.d, a.id)).state).toBe("confirmed");
     expect(retried.teams.setTreasuryLimits).toHaveBeenCalledTimes(1);
 
     const late = deps();
@@ -445,7 +470,7 @@ describe("team wallet limits", () => {
     const { d, teams, store } = deps();
     const intent = await proposeTreasuryIntent(d, "org-1", OWNER, "update_policy", change);
     teams.setTreasuryLimits.mockRejectedValueOnce(new Error("database unavailable"));
-    await expect(approveTreasuryIntent(d, "org-1", intent.id, approver)).rejects.toMatchObject({ status: 504, type: "policy_update_pending" });
+    await expect(approveAsApprover(d, intent.id)).rejects.toMatchObject({ status: 504, type: "policy_update_pending" });
     expect((await store.get(intent.id))?.state).toBe("uncertain");
     expect((await reconcileTreasuryIntent(d, "org-1", intent.id, OWNER)).state).toBe("confirmed");
     expect(teams.setTreasuryLimits).toHaveBeenCalledTimes(2);
@@ -484,7 +509,12 @@ describe("team treasury routes", () => {
       expect(proposed.intent.state).toBe("awaiting_approvals");
       const byManager = await call(`/api/team/orgs/org-1/intents/${proposed.intent.id}/approve`, "manager-jwt", {});
       expect(byManager.status).toBe(403);
-      const confirmed: any = await (await call(`/api/team/orgs/org-1/intents/${proposed.intent.id}/approve`, "approver-jwt", {})).json();
+      const approvePath = `/api/team/orgs/org-1/intents/${proposed.intent.id}/approve`;
+      const challenge = await call(approvePath, "approver-jwt", {});
+      expect(challenge.status).toBe(428);
+      const { authorization }: any = ((await challenge.json()) as any).error;
+      const signature = generateAuthorizationSignature({ authorizationPrivateKey: APPROVER_KEY.privateKey, input: new Uint8Array(Buffer.from(authorization.payload, "base64")) });
+      const confirmed: any = await (await call(approvePath, "approver-jwt", { signature, timestamp: authorization.timestamp })).json();
       expect(confirmed.intent.state).toBe("confirmed");
       expect((await call(`/api/team/orgs/org-1/intents/${proposed.intent.id}`, "outsider-jwt")).status).toBe(404);
     } finally {

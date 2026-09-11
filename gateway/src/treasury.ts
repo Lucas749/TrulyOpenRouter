@@ -1,5 +1,5 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID } from "node:crypto";
-import { formatRequestForAuthorizationSignature, generateAuthorizationSignature, generateAuthorizationSignatures, PrivyClient } from "@privy-io/node";
+import { formatRequestForAuthorizationSignature, generateAuthorizationSignature } from "@privy-io/node";
 import { createPublicClient, encodeFunctionData, formatEther, formatUnits, getAddress, http, keccak256, parseAbi, parseTransaction, toHex, type Address, type Hex } from "viem";
 import type { Pool } from "pg";
 import { db } from "./db.js";
@@ -30,7 +30,7 @@ const REFUND_JSON_ABI = [{ type: "function", name: "refund", stateMutability: "n
 const TRANSFER_JSON_ABI = [{ type: "function", name: "transfer", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ name: "", type: "bool" }] }];
 
 export class TreasuryError extends Error {
-  constructor(public status: number, public type: string, message: string) {
+  constructor(public status: number, public type: string, message: string, public details?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -59,12 +59,9 @@ export function brokerKey(privateKeyB64: string): BrokerKey {
 export interface PrivyAccess {
   appId: string;
   request<T = any>(method: string, path: string, body?: unknown): Promise<T>;
-  /// @notice Authorization signatures over a payload from the user behind this access token (Privy JWT exchange).
-  userSignatures(jwt: string, payload: Record<string, unknown>): Promise<string[]>;
 }
 
 export function privyAccess(appId: string, appSecret: string): PrivyAccess {
-  const client = new PrivyClient({ appId, appSecret });
   const authorization = "Basic " + Buffer.from(`${appId}:${appSecret}`).toString("base64");
   return {
     appId,
@@ -79,7 +76,6 @@ export function privyAccess(appId: string, appSecret: string): PrivyAccess {
       if (!res.ok) throw new PrivyRequestError(res.status, text.slice(0, 400));
       return text ? JSON.parse(text) : {};
     },
-    userSignatures: (jwt, payload) => generateAuthorizationSignatures(client, { authorizationContext: { user_jwts: [jwt] }, input: payload as any }),
   };
 }
 
@@ -660,13 +656,14 @@ async function loadIntent(d: TreasuryDeps, orgId: string, id: string): Promise<T
   return intent;
 }
 
-/// @notice The financial approver authorizes with their Privy session; the broker
-/// key signs second, only after Privy records the human signature on the same terms.
+/// @notice The financial approver signs Privy's exact request bytes in their own browser
+/// session (Privy user signer); the broker key signs second, only after Privy records the
+/// human signature on the same terms. Without `approval` it answers 428 with those bytes.
 export async function approveTreasuryIntent(
   d: TreasuryDeps,
   orgId: string,
   intentId: string,
-  actor: { member: TeamMember; identity: Identity; jwt: string },
+  actor: { member: TeamMember; identity: Identity; approval?: { signature: string; timestamp: number } },
 ): Promise<TreasuryIntent> {
   const intent = await loadIntent(d, orgId, intentId);
   const team = await activeTeam(d, orgId);
@@ -702,14 +699,26 @@ export async function approveTreasuryIntent(
     intent_id: intent.privyIntentId,
   });
   if (!signedBy(remote, "user", team.approverUserId!)) {
-    const timestamp = nowFor(d);
-    let signature: string | undefined;
-    try {
-      [signature] = await d.privy.userSignatures(actor.jwt, payload(timestamp));
-    } catch {
-      throw new TreasuryError(401, "approval_unverified", "Privy could not verify your session for this approval. Sign in again.");
+    const approval = actor.approval;
+    if (!approval) {
+      const timestamp = nowFor(d);
+      const bytes = formatRequestForAuthorizationSignature(payload(timestamp) as any);
+      throw new TreasuryError(428, "approval_signature_required", "Sign these terms with your Privy session to approve.", {
+        authorization: { payload: Buffer.from(bytes).toString("base64"), timestamp },
+      });
     }
-    const afterUser = await d.privy.request("POST", `/intents/${intent.privyIntentId}/authorize`, { signature, timestamp });
+    if (!approval.signature || !Number.isSafeInteger(approval.timestamp) || Math.abs(nowFor(d) - approval.timestamp) > 10 * 60_000) {
+      throw new TreasuryError(400, "approval_signature_invalid", "The approval signature is missing or expired. Approve again.");
+    }
+    let afterUser: any;
+    try {
+      afterUser = await d.privy.request("POST", `/intents/${intent.privyIntentId}/authorize`, { signature: approval.signature, timestamp: approval.timestamp });
+    } catch (e) {
+      if (!(e instanceof PrivyRequestError)) throw e;
+      console.error(`treasury: approver signature not accepted intent=${intent.id} privy_intent=${intent.privyIntentId} status=${e.status} body=${e.body.slice(0, 300)}`);
+      if (e.status >= 500) throw e;
+      throw new TreasuryError(403, "approval_rejected", `Privy did not accept your approval signature: ${e.body.slice(0, 160)}`);
+    }
     if (!signedBy(afterUser, "user", team.approverUserId!)) {
       throw new TreasuryError(403, "approval_rejected", "Privy did not record your approval signature.");
     }

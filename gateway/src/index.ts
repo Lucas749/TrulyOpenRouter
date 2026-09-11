@@ -1445,7 +1445,7 @@ export function createApp(opts: GatewayOptions = {}) {
 
   function treasuryFailure(res: any, e: unknown) {
     if (e instanceof TreasuryError) {
-      res.status(e.status).json({ error: { message: e.message, type: e.type } });
+      res.status(e.status).json({ error: { message: e.message, type: e.type, ...e.details } });
       return;
     }
     console.error(`treasury: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
@@ -1704,7 +1704,9 @@ export function createApp(opts: GatewayOptions = {}) {
     const treasury = requireTreasury(res);
     if (!treasury) return;
     try {
-      res.json({ intent: await approveTreasuryIntent(treasury, req.params.orgId, req.params.id, actor) });
+      const signature = req.body?.signature;
+      const approval = typeof signature === "string" ? { signature, timestamp: Number(req.body?.timestamp) } : undefined;
+      res.json({ intent: await approveTreasuryIntent(treasury, req.params.orgId, req.params.id, { member: actor.member, identity: actor.identity, approval }) });
     } catch (e) {
       treasuryFailure(res, e);
     }

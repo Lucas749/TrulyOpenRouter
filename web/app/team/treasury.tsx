@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useWallets } from "@privy-io/react-auth";
+import { useAuthorizationSignature, useWallets } from "@privy-io/react-auth";
 import { createWalletClient, custom, formatEther, parseEther } from "viem";
 import { apiError } from "../../lib/api-error";
 import { accountUrl, txUrl } from "../../lib/chain";
@@ -64,6 +64,7 @@ function stateTone(state: string): string {
 export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boolean }) {
   const authFetch = useAuthFetch();
   const { wallets } = useWallets();
+  const { generateAuthorizationSignature } = useAuthorizationSignature();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<TreasuryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -108,6 +109,31 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
     } catch (e) {
       setErr(String((e as Error)?.message ?? e).slice(0, 240));
       return false;
+    } finally {
+      setBusy(null);
+      await load();
+    }
+  }
+
+  // The approver signs Privy's exact request bytes in this browser session (Privy's user signer);
+  // the gateway submits that signature, then co-signs with the broker key.
+  async function approve(id: string) {
+    const send = (body: Record<string, unknown>) =>
+      authFetch(`${base}/intents/${id}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    setBusy(`approve-${id}`);
+    setErr(null);
+    try {
+      let r = await send({});
+      let d = await r.json().catch(() => ({}));
+      const challenge = d?.error?.authorization as { payload: string; timestamp: number } | undefined;
+      if (r.status === 428 && challenge) {
+        const { signature } = await generateAuthorizationSignature(Uint8Array.from(atob(challenge.payload), (c) => c.charCodeAt(0)));
+        r = await send({ signature, timestamp: challenge.timestamp });
+        d = await r.json().catch(() => ({}));
+      }
+      if (!r.ok) throw new Error(apiError(d, r.status));
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e).slice(0, 240));
     } finally {
       setBusy(null);
       await load();
@@ -347,7 +373,7 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
                       {i.error && <span className="font-mono text-[11px] text-[#B3261E]">{i.error}</span>}
                       <div className="flex flex-wrap items-center gap-2">
                         {i.state === "awaiting_approvals" && view.me.financialApprover && (
-                          <button onClick={() => post(`approve-${i.id}`, `/intents/${i.id}/approve`)} disabled={!!busy} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
+                          <button onClick={() => approve(i.id)} disabled={!!busy} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">
                             {busy === `approve-${i.id}` ? "approving and broadcasting…" : "Approve these terms"}
                           </button>
                         )}
