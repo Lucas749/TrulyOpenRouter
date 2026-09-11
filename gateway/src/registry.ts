@@ -1,5 +1,6 @@
 import { type Address, type PublicClient, createWalletClient, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import type { HostAvailability } from "./availability.js";
 
 export const REGISTRY_ABI = parseAbi([
   "function eligibleHosts(string modelId) view returns (address[])",
@@ -14,6 +15,7 @@ export interface HostInfo {
   registeredEndpoint?: string;
   paused?: boolean;
   registeredActive?: boolean;
+  availability?: HostAvailability;
   endpoint: string;
   modelId: string;
   modelDigest: `0x${string}`;

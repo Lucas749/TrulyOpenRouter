@@ -9,6 +9,7 @@ import { MemoryOrgRules, type OrgRuleStore, PgOrgRules } from "./orgrules.js";
 import { buildReceipt, MemoryReceiptLog, PgReceiptLog, type ReceiptLog, sha256hex } from "./receipts.js";
 import { db, dbEnabled, ensureSchema } from "./db.js";
 import { FaucetError, PgHostFaucet, type HostFaucet } from "./faucet.js";
+import { EndpointAvailability } from "./availability.js";
 import { type Health, MemoryHealth, PgHealth } from "./health.js";
 import { createVaultDebit, createVaultSpendCapWriter, readVaultCredits, type SpendCapWriter } from "./vault.js";
 import { type HostMeta, MemoryHostMeta, PgHostMeta, validRegion } from "./hostmeta.js";
@@ -34,6 +35,7 @@ class OrgPolicyDenied extends Error {
 }
 
 export interface GatewayOptions {
+  availability?: Pick<EndpointAvailability, "check">;
   faucet?: HostFaucet;
   payTo?: string; // Hedera service account; empty = dev mode (x402 gate off)
   registry?: Address;
@@ -194,7 +196,11 @@ export async function resolveHosts(opts: GatewayOptions, modelId: string): Promi
     const host = applyHostSettings(base, settings.get(base.address.toLowerCase()));
     if (host.modelId === modelId) hosts.set(host.address.toLowerCase(), host);
   }
-  return [...hosts.values()];
+  return Promise.all([...hosts.values()].map(async host => {
+    if (!opts.availability) return host;
+    const availability = await opts.availability.check(host.endpoint);
+    return { ...host, registeredActive: host.registeredActive ?? host.active, availability, active: host.active && availability.reachable };
+  }));
 }
 
 export function createApp(opts: GatewayOptions = {}) {
@@ -582,6 +588,7 @@ export function createApp(opts: GatewayOptions = {}) {
           pricePer1kTokens: String(h.pricePer1kTokens),
           stake: String(h.stake),
           active: h.active,
+          availability: h.availability ?? null,
           lastHeartbeat: h.lastHeartbeat,
           calls24h: success24h,
           calls7d,
@@ -775,6 +782,7 @@ export function createApp(opts: GatewayOptions = {}) {
       pricePer1kTokens: String(found.pricePer1kTokens),
       stake: String(found.stake),
       active: found.active,
+      availability: found.availability ?? null,
       lastHeartbeat: found.lastHeartbeat,
       challenged: found.challenged ?? null,
       region: (await opts.meta?.regionOf(found.address)) ?? null,
@@ -1238,6 +1246,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const pg = dbEnabled();
   const opts: GatewayOptions = {
+    availability: new EndpointAvailability(),
     runtime: pg ? new PgHostRuntime() : new MemoryHostRuntime(),
     keys: pg ? new PgKeyStore() : new MemoryKeyStore(),
     receipts: pg ? new PgReceiptLog() : new MemoryReceiptLog(),
