@@ -356,7 +356,7 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
                             Reject
                           </button>
                         )}
-                        {["signed", "submitted", "uncertain"].includes(i.state) && canPropose && (
+                        {(["signed", "submitted", "uncertain"].includes(i.state) || (i.kind === "update_policy" && i.state === "authorized")) && canPropose && (
                           <button onClick={() => post(`reconcile-${i.id}`, `/intents/${i.id}/reconcile`)} disabled={!!busy} className="rounded-full border border-black/15 px-3 py-1 text-[11px] disabled:opacity-40">
                             {busy === `reconcile-${i.id}` ? "checking…" : "Reconcile"}
                           </button>

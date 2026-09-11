@@ -111,8 +111,10 @@ function fakePrivy(opts: { threshold?: number } = {}) {
       if (method === "GET" && get) return structuredClone(intents.get(get[1]));
       const reject = path.match(/^\/intents\/([^/]+)\/reject$/);
       if (method === "POST" && reject) {
-        intents.get(reject[1]).status = "rejected";
-        return structuredClone(intents.get(reject[1]));
+        const intent = intents.get(reject[1]);
+        if (intent.status !== "pending") throw new PrivyRequestError(400, `Intent is ${intent.status}`);
+        intent.status = "rejected";
+        return structuredClone(intent);
       }
       const authorize = path.match(/^\/intents\/([^/]+)\/authorize$/);
       if (method === "POST" && authorize) {
@@ -421,6 +423,32 @@ describe("team wallet limits", () => {
     const c = await proposeTreasuryIntent(refused.d, "org-1", OWNER, "update_policy", change);
     await expect(approveTreasuryIntent(refused.d, "org-1", c.id, approver)).rejects.toMatchObject({ status: 422, type: "policy_update_refused" });
     expect(refused.teams.setTreasuryLimits).not.toHaveBeenCalled();
+  });
+
+  it("records a change Privy already applied when approval is retried or a reject arrives late", async () => {
+    const retried = deps();
+    const a = await proposeTreasuryIntent(retried.d, "org-1", OWNER, "update_policy", change);
+    retried.p.intents.get(a.privyIntentId!).status = "executed"; // authorization landed, its response was lost
+    retried.p.policies.set("policy-1", structuredClone(a.policyChange!.rules));
+    expect((await approveTreasuryIntent(retried.d, "org-1", a.id, approver)).state).toBe("confirmed");
+    expect(retried.teams.setTreasuryLimits).toHaveBeenCalledTimes(1);
+
+    const late = deps();
+    const b = await proposeTreasuryIntent(late.d, "org-1", OWNER, "update_policy", change);
+    late.p.intents.get(b.privyIntentId!).status = "executed";
+    late.p.policies.set("policy-1", structuredClone(b.policyChange!.rules));
+    expect((await rejectTreasuryIntent(late.d, "org-1", b.id, MANAGER)).state).toBe("confirmed");
+    expect(late.teams.setTreasuryLimits).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a change reconcilable when confirming it fails midway", async () => {
+    const { d, teams, store } = deps();
+    const intent = await proposeTreasuryIntent(d, "org-1", OWNER, "update_policy", change);
+    teams.setTreasuryLimits.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(approveTreasuryIntent(d, "org-1", intent.id, approver)).rejects.toMatchObject({ status: 504, type: "policy_update_pending" });
+    expect((await store.get(intent.id))?.state).toBe("uncertain");
+    expect((await reconcileTreasuryIntent(d, "org-1", intent.id, OWNER)).state).toBe("confirmed");
+    expect(teams.setTreasuryLimits).toHaveBeenCalledTimes(2);
   });
 });
 

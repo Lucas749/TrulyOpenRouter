@@ -683,6 +683,11 @@ export async function approveTreasuryIntent(
   const sameTerms = intent.kind === "update_policy"
     ? remote.resource_id === team.policyId && details.method === "PATCH" && stable(details.body?.rules) === stable(intent.policyChange?.rules)
     : remote.resource_id === team.walletId && details.body?.method === "eth_signTransaction" && stable(details.body?.params?.transaction) === stable(intent.transaction);
+  // A policy change is in force as soon as Privy executes it: record it rather than cancel it.
+  if (intent.kind === "update_policy" && sameTerms && (remote.status === "executed" || remote.status === "processing")) {
+    const applied = await d.store.transition(intent.id, ["awaiting_approvals"], { state: "uncertain", error: "Privy already applied this change. Confirming the stored policy." });
+    if (applied) return finishPolicyChange(d, applied);
+  }
   if (remote.status !== "pending" || !sameTerms) {
     await d.store.transition(intent.id, ["awaiting_approvals"], { state: "cancelled", error: "The Privy request no longer matches the reviewed terms." });
     throw new TreasuryError(409, "terms_changed", "The transaction terms changed. Propose it again and review the new terms.");
@@ -749,9 +754,21 @@ const ruleShape = (rules: unknown) =>
       .sort((a, b) => String(a.name).localeCompare(String(b.name))),
   );
 
+/// @notice Confirm a policy change, keeping it reconcilable if Privy or the database fails midway.
+async function finishPolicyChange(d: TreasuryDeps, intent: TreasuryIntent): Promise<TreasuryIntent> {
+  try {
+    return await confirmPolicyChange(d, intent);
+  } catch (e) {
+    if (e instanceof TreasuryError) throw e;
+    const message = "Could not confirm the change with Privy yet. Reconcile to check again.";
+    await d.store.transition(intent.id, ["authorized", "uncertain"], { state: "uncertain", error: message }).catch(() => null);
+    throw new TreasuryError(504, "policy_update_pending", message);
+  }
+}
+
 /// @notice Wait for Privy to apply an authorized policy change, confirm the policy
 /// now carries exactly the reviewed rules, then record the team's new limits.
-async function finishPolicyChange(d: TreasuryDeps, intent: TreasuryIntent): Promise<TreasuryIntent> {
+async function confirmPolicyChange(d: TreasuryDeps, intent: TreasuryIntent): Promise<TreasuryIntent> {
   const change = intent.policyChange!;
   let status = "pending";
   let detail = "";
@@ -846,8 +863,20 @@ export async function rejectTreasuryIntent(d: TreasuryDeps, orgId: string, inten
   const intent = await loadIntent(d, orgId, intentId);
   if (actor.orgId !== orgId || actor.status !== "active" || actor.role === "member") throw new TreasuryError(403, "forbidden", "Only team owners and managers can reject treasury transactions.");
   if (intent.state !== "awaiting_approvals") throw new TreasuryError(409, "invalid_state", `This transaction is ${intent.state.replace(/_/g, " ")}.`);
-  if (intent.privyIntentId) await d.privy.request("POST", `/intents/${intent.privyIntentId}/reject`, {}).catch(() => undefined);
-  return (await d.store.transition(intent.id, ["awaiting_approvals"], { state: "denied", error: null }))!;
+  if (intent.privyIntentId) {
+    const rejected = await d.privy.request("POST", `/intents/${intent.privyIntentId}/reject`, {}).then(() => true, () => false);
+    if (!rejected && intent.kind === "update_policy") {
+      // Privy cannot reject a change it already applied; record the change instead of a denial.
+      const remote = await d.privy.request("GET", `/intents/${intent.privyIntentId}`).catch(() => null);
+      if (remote?.status === "executed" || remote?.status === "processing") {
+        const applied = await d.store.transition(intent.id, ["awaiting_approvals"], { state: "uncertain", error: "Privy had already applied this change, so it could not be rejected." });
+        if (applied) return finishPolicyChange(d, applied);
+      } else if (remote?.status !== "rejected" && remote?.status !== "expired") {
+        throw new TreasuryError(502, "privy_unavailable", "Privy did not confirm the rejection. Try again.");
+      }
+    }
+  }
+  return (await d.store.transition(intent.id, ["awaiting_approvals"], { state: "denied", error: null })) ?? (await loadIntent(d, orgId, intentId));
 }
 
 export { OPEN_STATES };
