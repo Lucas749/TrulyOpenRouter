@@ -45,7 +45,16 @@ gates run in the gateway per request.
 ## What is built (this session worked newest-first)
 - **Team finance, agents, and Ledger approvals (2026-09-11)**: spec in
   `.local/TEAM-FINANCE-AND-AGENTS.md`; policy detail in `docs/POLICIES.md`.
-  On `main`, not yet deployed: Privy team treasury (approver + broker quorum,
+  Deployed 2026-09-11: gateway image rebuilt on the box from `dd4a5b3`, web on
+  Vercel `dpl_8Qap9tKyiWL73tuz5EEmHJ9Mn4of`. Rollback: web to
+  `trulyopenrouter-2l7ntqljr`, gateway image tag `tor-gateway:before-team-finance`,
+  env backup `.env.prod.before-team-finance-20260911134458` on the box; the new
+  `PRIVY_BROKER_AUTH_KEY` is also saved in the private deploy folder as
+  `.env.prod.after-team-finance`. Never rotate that key: team wallets need it.
+  Teams set their own wallet limits (plans, payout caps, recipients) through a
+  Privy policy intent; API keys belong to the issuing login, and 14 keys issued
+  before that remain usable but only operators can revoke them
+  (`DELETE /api/admin/keys/:prefix`). Includes: Privy team treasury (approver + broker quorum,
   deny-by-default policy, intents with signed-byte checks), team billing
   (`tor_team`), agents with durable counters and `403 approval_required`,
   owner and Ledger (DMK/WebHID) approvals, personal agent budgets, owner-only
@@ -57,9 +66,10 @@ gates run in the gateway per request.
   204, host CLI 160, web members API 9 pass, with the web build green. Not yet
   verified: a human Privy intent approval in the browser, a physical Ledger
   approval, a real vault withdrawal collected to a team, and ring decryption
-  on the deployed server. Deploy needs `PRIVY_BROKER_AUTH_KEY` (P-256 PKCS8,
-  base64) plus the `TEAM_*` and `X402_*` bounds in `.env.prod`, then the web
-  deployment.
+  on the deployed server. Live checks also pass for Privy intents
+  (`treasury-intents-live.mts`: broker-authorized signing and policy updates,
+  refusal above a new limit). The box's web container shares the gateway
+  database but is unused; production web uses Neon.
 - **Authenticated subscriptions and payment evidence (2026-09-11)**: the
   anonymous inference gap below is closed in production. Browser chat sends
   its Privy access token; the gateway verifies the subject and retrieves

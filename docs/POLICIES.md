@@ -11,7 +11,7 @@ about regions, models, or daily caps lives onchain.
 | Member allowance (credits) | /team → Members → Edit cap | Gateway `SpendCapStore` + vault `SpendCap` mirror | Pre-flight `429` per request; `debit` reverts `SpendCapExceeded` past the cap | Yes, where the deployed vault supports `setSpendCap` (else `chainSynced:"skipped"`) |
 | Org daily ceiling | /team → Firm rules → Daily ceiling | Gateway `orgrules.ts` | Per request; over → `429` | No |
 | Allowed models / regions / verified-only / rate / pinned hosts | /team → Firm rules | Gateway org-rules gate (`gateway/src/index.ts` ~365) | Per request; violation → `403 org_policy` with a plain-language reason | No |
-| Team wallet transactions | Team creation → Privy policy + key quorum | **Privy**, not us | At signing: only allowed purchases, refunds, and capped payouts to approved recipients, with the financial approver and the broker key | No — Privy-side |
+| Team wallet transactions | /team → Treasury → Wallet limits (owner proposes, financial approver authorizes) → Privy policy + key quorum | **Privy**, not us | At signing: only allowed purchases, refunds, and capped payouts to approved recipients, with the financial approver and the broker key | No — Privy-side |
 | Agent limits (credits per day, month, lifetime, request; models; rate; concurrency; key expiry) | /agents | Gateway durable counters in Postgres | Before any host is paid; over an approvable limit → `403 approval_required` | No |
 | Host payment terms (x402) | Gateway env bounds | Gateway payer | Before signing each host payment | No |
 | Per-tx display cap | /team → Firm rules | Nobody (display only) | — | No |
@@ -95,6 +95,14 @@ A refund waits while any request billed to the team is unresolved. A wrong
 destination, chain, function, amount, or recipient fails at Privy with
 `policy_violation` (`gateway/scripts/treasury-policy-live.mts`).
 
+Each team sets these limits itself. On the team page an owner proposes the
+allowed plans, the per-transaction HBAR and test USDC payout limits, and the
+approved recipients. The change runs as a Privy policy intent that the financial
+approver and the broker key authorize, and the gateway records the new limits
+only after Privy stores exactly the reviewed rules. Recipients can never be the
+vault, the test USDC token, or the team wallet itself. `TEAM_PLAN_IDS` lists the
+plans a team may choose from, and `TEAM_PAYOUT_CAP_*` only seed new teams.
+
 Privy policies bound wallet transactions, not inference. Inference spend is
 bounded in credits by the gateway layers above. The **Per-transaction display
 cap** in Firm rules remains a label only (`per_tx_cap_usd` is never read by the
@@ -110,7 +118,10 @@ The server recovers the signer with `viem` and checks role rank
 the exact parameters (org, did, wallet, role, cap…), so a signed "set cap 100"
 cannot be replayed as "set cap 9999" or on another org. Expiry is 5 minutes.
 Approving an increase request and raising an allowance need an owner; managers
-may invite members, lower allowances, and deny requests.
+may invite members, lower allowances, and deny requests. Rule changes bind the
+exact bytes the page signs, only an owner of the team a change belongs to can
+decide it, and each change is stored on its own so concurrent decisions cannot
+overwrite each other.
 
 Trust note on email invites: the claim signature proves *wallet ownership*;
 the email is self-asserted and matched against an owner-approved invite. The
@@ -333,3 +344,11 @@ each leg only after verifying its receipt: a withdrawal stays **collection
 pending** until a transfer from that host reaches the team wallet, and never
 counts as received. Host keys stay on host machines; Privy controls the funds
 only after collection.
+
+## API keys
+
+A key belongs to the Privy login that issued it. Only that login can revoke the
+key or read its budget account, and a team can bind a key to a member only when
+the member's own login issued it, because key prefixes are public in receipts.
+Issuing never reuses an existing prefix. Keys issued before logins were required
+keep working for chat; operators revoke them with `DELETE /api/admin/keys/:prefix`.
