@@ -19,7 +19,7 @@ vi.mock("@privy-io/server-auth", () => ({
   },
 }));
 
-import { approvalMessage, ensureOrg, memberActionMessage, setOrgCreator } from "../../../../../lib/members";
+import { approvalMessage, ensureOrg, getMember, memberActionMessage, setOrgCreator } from "../../../../../lib/members";
 import { GET as listMembers, POST as addMemberRoute } from "./members/route";
 import { PATCH as patchMember, DELETE as removeMemberRoute } from "./members/[did]/route";
 import { GET as listRequests, POST as createRequestRoute } from "./requests/route";
@@ -55,8 +55,12 @@ async function foundOwner() {
 }
 
 export const spendCapCalls: any[] = [];
+const teamSnapshots: any[] = [];
+let failTeamSync = false;
 
 beforeEach(async () => {
+  teamSnapshots.length = 0;
+  failTeamSync = false;
   process.env.TOR_MEMBERS_DIR = mkdtempSync(join(tmpdir(), "tor-route-"));
   const { resetMembersDb } = await import("../../../../../lib/db-test");
   await resetMembersDb(["org-test"]);
@@ -80,6 +84,11 @@ beforeEach(async () => {
         return { ok: true, status: 200, json: async () => ({ targets: [], txs: {} }) } as any;
       }
       if (u.includes("/api/usage/")) return { ok: true, json: async () => ({ spent: 30 }) } as any;
+      if (u.includes("/api/admin/teams/")) {
+        if (failTeamSync) return { ok: false, status: 503, text: async () => "team store unavailable" } as any;
+        teamSnapshots.push({ url: u, ...JSON.parse(String(init?.body ?? "{}")) });
+        return { ok: true, status: 200, json: async () => ({ revision: teamSnapshots.length, changed: true, removed: [] }) } as any;
+      }
       throw new Error(`unexpected fetch ${u} ${init?.method}`);
     }) as any,
   );
@@ -126,6 +135,34 @@ describe("members routes", () => {
     const add = await signedAdd("did:m1", MEMBER.address, "member", 100);
     expect((await addMemberRoute(req("stranger", "POST", add), org)).status).toBe(403);
     expect((await addMemberRoute(req(null, "POST", add), org)).status).toBe(401);
+  });
+
+  it("mirrors membership to the gateway and revokes access there before storing a removal", async () => {
+    await foundOwner();
+    const add = await signedAdd("did:m1", MEMBER.address, "member", 100);
+    const added = await addMemberRoute(req("owner", "POST", add), org);
+    expect(((await added.json()) as any).teamSynced).toBe(true);
+    expect(teamSnapshots.at(-1).url).toContain(`/api/admin/teams/${ORG}/snapshot`);
+    expect(teamSnapshots.at(-1).members).toEqual(expect.arrayContaining([
+      { did: "did:owner", wallet: OWNER.address, email: null, role: "owner", status: "active", allowanceCredits: null },
+      { did: "did:m1", wallet: MEMBER.address, email: null, role: "member", status: "active", allowanceCredits: 100 },
+    ]));
+    const member = { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) };
+    const remove = async () => {
+      const message = memberActionMessage("member-remove", { orgId: ORG, did: "did:m1" }, Date.now() + 300_000);
+      return removeMemberRoute(req("owner", "DELETE", { signature: await OWNER.signMessage({ message }), message, signerWallet: OWNER.address }), member);
+    };
+    // The gateway is unreachable: nothing is stored, the member stays active.
+    failTeamSync = true;
+    expect((await remove()).status).toBe(502);
+    expect((await getMember(ORG, "did:m1"))?.status).toBe("active");
+    failTeamSync = false;
+    const before = teamSnapshots.length;
+    expect((await remove()).status).toBe(200);
+    // First push is the preview (removed on the gateway), then the stored state.
+    expect(teamSnapshots[before].members.find((m: any) => m.did === "did:m1").status).toBe("removed");
+    expect(teamSnapshots.at(-1).members.find((m: any) => m.did === "did:m1").status).toBe("removed");
+    expect((await getMember(ORG, "did:m1"))?.status).toBe("removed");
   });
 
   it("only the verified creator can found an ownerless team", async () => {

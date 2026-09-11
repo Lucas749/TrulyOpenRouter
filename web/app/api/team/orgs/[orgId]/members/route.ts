@@ -15,6 +15,7 @@ import {
 } from "../../../../../../lib/members";
 import { clearCap, syncCap, syncSpendCap } from "../../../../../../lib/gateway-admin";
 import { requireSession, requireTeamViewer, sessionOwnsWallet, walletNotLinked } from "../../../../../../lib/session";
+import { syncTeamToGateway } from "../../../../../../lib/team-sync";
 
 async function gatewaySpend(prefix: string | undefined): Promise<number | null> {
   if (!prefix) return null;
@@ -99,7 +100,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       const meta = await getOrgMeta(orgId);
       const owner = meta?.members.find((m) => m.role === "owner" && m.status === "active" && m.walletAddress.toLowerCase() === signer.toLowerCase());
       if (!owner) return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
+      // A lower default can reduce every inheriting member: the gateway sees it first.
+      const preview = await syncTeamToGateway(orgId, (members) => ({ members, defaultAllowanceCredits: Number(body.setDefault) }));
+      if (preview.error) {
+        return NextResponse.json({ error: `gateway team sync failed, nothing persisted: ${preview.error}` }, { status: 502 });
+      }
       const updated = await setOrgDefault(orgId, Number(body.setDefault));
+      const team = await syncTeamToGateway(orgId);
       // Fan-out: members inheriting the default (no explicit allowance) get a
       // new effective cap — mirror each onchain, best-effort, counted.
       const metaAfter = await getOrgMeta(orgId);
@@ -114,7 +121,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
           chain[r] += 1;
         }),
       );
-      return NextResponse.json({ defaultAllowanceCredits: updated.defaultAllowanceCredits ?? null, chainSynced: chain });
+      return NextResponse.json({ defaultAllowanceCredits: updated.defaultAllowanceCredits ?? null, chainSynced: chain, teamSynced: team.synced });
     }
     // Email-only invite: no wallet yet. Owner/manager signs action "member-invite"
     // binding {orgId, email, role}; the invitee claims it on first login by
@@ -158,7 +165,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
           allowanceCredits: body.member.allowanceCredits,
         });
         // No wallet yet = nothing to cap onchain; the claim mirrors then.
-        return NextResponse.json({ member: inv, invited: true, chainSynced: "skipped" });
+        const team = await syncTeamToGateway(orgId);
+        return NextResponse.json({ member: inv, invited: true, chainSynced: "skipped", teamSynced: team.synced });
       } catch (e: any) {
         return NextResponse.json({ error: String(e?.message ?? e).slice(0, 160) }, { status: 409 });
       }
@@ -248,7 +256,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       capCredits,
       periodDays,
     });
-    return NextResponse.json({ member: m, bootstrappedOwner: bootstrapping, chainSynced: chainSync });
+    // New access reaches the gateway after it is stored (fail closed until synced).
+    const team = await syncTeamToGateway(orgId);
+    return NextResponse.json({ member: m, bootstrappedOwner: bootstrapping, chainSynced: chainSync, teamSynced: team.synced });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }

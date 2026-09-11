@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { approvalMessage, decideRequest, getMember, getOrgMeta, getRequest, memberByWallet, roleRank, spendCapFor } from "../../../../../../../lib/members";
 import { syncCap, syncSpendCap } from "../../../../../../../lib/gateway-admin";
 import { requireSession, sessionOwnsWallet, walletNotLinked } from "../../../../../../../lib/session";
+import { syncTeamToGateway } from "../../../../../../../lib/team-sync";
 
 // POST: owner/manager decides. Signed by the decider's wallet (linked to their
 // login) over the canonical decision message (useSignMessage); the signature +
@@ -41,12 +42,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     }
     if (decided.status === "approved") {
       const member = await getMember(orgId, decided.memberDid);
+      const team = await syncTeamToGateway(orgId);
       if (member?.keyPrefix) {
         try {
           await syncCap(member.keyPrefix, decided.amountCredits);
         } catch (e: any) {
           // Decision stands (signed + recorded); enforcement sync is retried from the UI.
-          return NextResponse.json({ request: decided, gatewaySynced: false, gatewayError: String(e?.message ?? e).slice(0, 120) }, { status: 207 });
+          return NextResponse.json({ request: decided, gatewaySynced: false, teamSynced: team.synced, gatewayError: String(e?.message ?? e).slice(0, 120) }, { status: 207 });
         }
       }
       // Onchain mirror of the newly approved cap. Best-effort, reported next
@@ -56,7 +58,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       const chainSync = member
         ? await syncSpendCap({ address: member.walletAddress || undefined, prefix: member.keyPrefix ?? undefined, capCredits, periodDays })
         : "skipped";
-      return NextResponse.json({ request: decided, gatewaySynced: true, chainSynced: chainSync });
+      return NextResponse.json({ request: decided, gatewaySynced: true, teamSynced: team.synced, chainSynced: chainSync });
     }
     return NextResponse.json({ request: decided, gatewaySynced: true });
   } catch (e: any) {

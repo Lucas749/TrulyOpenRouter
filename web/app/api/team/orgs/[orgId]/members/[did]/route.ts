@@ -3,6 +3,7 @@ import { getMember, getOrgMeta, memberByWallet, removeMember, roleRank, setMembe
 import type { Member, MemberRole } from "../../../../../../../lib/members";
 import { clearCap, syncCap, syncSpendCap } from "../../../../../../../lib/gateway-admin";
 import { requireSession, sessionOwnsWallet, walletNotLinked, type SessionUser } from "../../../../../../../lib/session";
+import { syncTeamToGateway, withMember } from "../../../../../../../lib/team-sync";
 
 /// @notice Rank-gated authorization: minRank 2 = owner-only (roles, removal),
 /// minRank 1 = owner + manager (allowances). The signing wallet must be linked
@@ -79,6 +80,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
       ? await requireOwner(orgId, session, body, bind, "member-set")
       : await requireMinRole(orgId, session, body, bind, "member-set", 1);
     if ("error" in authed) return authed.error;
+    // Demotions and lower allowances must stop on the gateway before they are stored.
+    const preview = await syncTeamToGateway(orgId, withMember(targetDid, {
+      ...(body.allowanceCredits !== undefined ? { allowanceCredits: body.allowanceCredits ?? undefined } : {}),
+      ...(body.role !== undefined ? { role: body.role as MemberRole } : {}),
+      ...(body.walletAddress !== undefined ? { walletAddress: body.walletAddress } : {}),
+    }));
+    if (preview.error) {
+      return NextResponse.json({ error: `gateway team sync failed, nothing persisted: ${preview.error}` }, { status: 502 });
+    }
     // Role changes apply locally (no gateway surface); allowance changes sync first.
     // null = inherit org default -> clear any gateway override so nothing stale enforces.
     const newCap: number | null | undefined = body.allowanceCredits;
@@ -95,6 +105,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
       try {
         await setMemberWallet(orgId, targetDid, body.walletAddress);
       } catch (e: any) {
+        await syncTeamToGateway(orgId); // restore the stored state on the gateway
         return NextResponse.json({ error: String(e?.message ?? e).slice(0, 160) }, { status: 409 });
       }
     }
@@ -102,9 +113,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
       try {
         await setMemberRole(orgId, targetDid, body.role as MemberRole);
       } catch (e: any) {
+        await syncTeamToGateway(orgId); // restore the stored state on the gateway
         return NextResponse.json({ error: String(e?.message ?? e).slice(0, 160) }, { status: 409 });
       }
     }
+    const team = await syncTeamToGateway(orgId);
     // Onchain mirror of the new effective allowance (covers allowance edits AND
     // wallet binds, which activate invited rows). Best-effort, reported.
     const updated = await getMember(orgId, targetDid);
@@ -116,7 +129,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
       capCredits,
       periodDays,
     });
-    return NextResponse.json({ member: updated, chainSynced: chainSync });
+    return NextResponse.json({ member: updated, chainSynced: chainSync, teamSynced: team.synced });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }
@@ -134,6 +147,11 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ orgId
     if (!target) return NextResponse.json({ error: "member not found" }, { status: 404 });
     const authed = await requireOwner(orgId, session, body, { orgId, did: targetDid }, "member-remove");
     if ("error" in authed) return authed.error;
+    // Team payer access and approval authority end on the gateway first.
+    const preview = await syncTeamToGateway(orgId, withMember(targetDid, { status: "removed" }));
+    if (preview.error) {
+      return NextResponse.json({ error: `gateway team sync failed, nothing persisted: ${preview.error}` }, { status: 502 });
+    }
     // Onchain deny (cap 0) BEFORE removal, so an ex-member's wallet can never
     // settle again even where the gateway pre-flight is bypassed. Best-effort:
     // removal itself must never be blocked by chain infra.
@@ -148,10 +166,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ orgId
       try {
         await clearCap(target.keyPrefix);
       } catch (e: any) {
+        await syncTeamToGateway(orgId); // nothing persisted: restore the stored state
         return NextResponse.json({ error: `gateway sync failed, nothing persisted: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 502 });
       }
     }
-    return NextResponse.json({ member: await removeMember(orgId, targetDid), chainSynced: chainSync });
+    const removed = await removeMember(orgId, targetDid);
+    const team = await syncTeamToGateway(orgId);
+    return NextResponse.json({ member: removed, chainSynced: chainSync, teamSynced: team.synced });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }

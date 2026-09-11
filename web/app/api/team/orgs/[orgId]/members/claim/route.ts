@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { claimInvite, getOrgMeta, spendCapFor } from "../../../../../../../lib/members";
 import { syncSpendCap } from "../../../../../../../lib/gateway-admin";
 import { requireSession, sessionOwnsWallet, walletNotLinked } from "../../../../../../../lib/session";
+import { syncTeamToGateway } from "../../../../../../../lib/team-sync";
 
 // POST: invitee claims an email invite. The verified login supplies the did and
 // email; the wallet signature over the canonical "invite-claim" message proves
@@ -37,7 +38,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
         capCredits,
         periodDays,
       });
-      return NextResponse.json({ member: m, chainSynced: chainSync });
+      const team = await syncTeamToGateway(orgId);
+      return NextResponse.json({ member: m, chainSynced: chainSync, teamSynced: team.synced });
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       const status = /expired|sign again/.test(msg) ? 401 : /no pending invite/.test(msg) ? 404 : /already active|does not match|must own|wrong action/.test(msg) ? 409 : 400;

@@ -76,6 +76,40 @@ export async function clearCap(prefix: string): Promise<void> {
   if (!res.ok) throw new Error(`gateway clear failed: ${(await res.text()).slice(0, 160)}`);
 }
 
+export interface TeamSnapshotInput {
+  orgId: string;
+  defaultAllowanceCredits?: number;
+  members: Array<{ did: string; walletAddress: string; email?: string; role: string; status: string; allowanceCredits?: number }>;
+}
+
+/// @notice Push one team's full membership to the gateway mirror, where team
+/// payers and approval authority resolve. Same trust shape as caps: the caller
+/// verified the signed change, this hop is token-authed. "skipped" = the gateway
+/// has no team store (dev), so it cannot bill team wallets either.
+export async function syncTeamSnapshot(team: TeamSnapshotInput): Promise<"synced" | "skipped"> {
+  const t = token();
+  if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured, refusing unwatched sync");
+  const credits = (n: number | undefined) => (n === undefined ? null : Math.floor(n));
+  const res = await fetch(`${base()}/api/admin/teams/${encodeURIComponent(team.orgId)}/snapshot`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+    body: JSON.stringify({
+      defaultAllowanceCredits: credits(team.defaultAllowanceCredits),
+      members: team.members.map((m) => ({
+        did: m.did,
+        wallet: m.walletAddress || null,
+        email: m.email ?? null,
+        role: m.role,
+        status: m.status,
+        allowanceCredits: credits(m.allowanceCredits),
+      })),
+    }),
+  });
+  if (res.status === 501) return "skipped";
+  if (!res.ok) throw new Error(`gateway team sync failed: ${(await res.text()).slice(0, 160)}`);
+  return "synced";
+}
+
 export interface OrgRuleSync {
   dailyCapCredits: number | null;
   allowedModels: string[] | null;

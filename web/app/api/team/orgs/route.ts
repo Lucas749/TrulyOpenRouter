@@ -102,7 +102,9 @@ export async function POST(req: Request) {
     } catch {
       // already a member (retry path) — membership is what matters, not this write
     }
-    return NextResponse.json({ org, quorumId: quorum.id, policy, wallet });
+    const { syncTeamToGateway } = await import("../../../../lib/team-sync");
+    const team = await syncTeamToGateway(org.id);
+    return NextResponse.json({ org, quorumId: quorum.id, policy, wallet, teamSynced: team.synced });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }

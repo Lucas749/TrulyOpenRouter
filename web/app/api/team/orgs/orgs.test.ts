@@ -84,8 +84,20 @@ describe("team org creation", () => {
 
   it("makes the verified login the founding owner and ignores a claimed creator", async () => {
     const claimed = "0x3333333333333333333333333333333333333333";
+    process.env.GATEWAY_ADMIN_TOKEN = "orgs-test-token";
+    const snapshots: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: any, init: any) => {
+      snapshots.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
+      return { ok: true, status: 200, json: async () => ({ revision: 1, changed: true, removed: [] }) } as any;
+    }));
     const r = await createOrg(post({ name: "Mine", creatorWallet: claimed }));
+    vi.unstubAllGlobals();
+    delete process.env.GATEWAY_ADMIN_TOKEN;
     expect(r.status).toBe(200);
+    expect(((await r.json()) as any).teamSynced).toBe(true);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0].url).toContain("/api/admin/teams/org-test/snapshot");
+    expect(snapshots[0].body.members).toEqual([{ did: "did:privy:creator", wallet: CREATOR, email: null, role: "owner", status: "active", allowanceCredits: null }]);
     const { getMember, visibleOrgIds } = await import("../../../../lib/members");
     const me = await getMember("org-test", "did:privy:creator");
     expect(me?.role).toBe("owner");
