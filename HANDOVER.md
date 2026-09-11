@@ -51,6 +51,9 @@ gates run in the gateway per request.
   env backup `.env.prod.before-team-finance-20260911134458` on the box; the new
   `PRIVY_BROKER_AUTH_KEY` is also saved in the private deploy folder as
   `.env.prod.after-team-finance`. Never rotate that key: team wallets need it.
+  Redeployed from `f90797e` (approvers sign Privy intents in the browser):
+  rollback gateway image `tor-gateway:before-browser-approval`, web to
+  `trulyopenrouter-pox1ufip2`.
   Teams set their own wallet limits (plans, payout caps, recipients) through a
   Privy policy intent; API keys belong to the issuing login, and 14 keys issued
   before that remain usable but only operators can revoke them

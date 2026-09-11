@@ -87,8 +87,9 @@ allows only `eth_signTransaction` for:
 - test USDC `transfer` to approved recipients up to `TEAM_PAYOUT_CAP_USDC`.
 
 An owner or manager proposes an intent with fully prepared terms (nonce, gas,
-and gas price). The financial approver authorizes it with their session, the
-broker co-signs, and the gateway checks the signed bytes against the reviewed
+and gas price). The financial approver signs the exact Privy request in their
+browser session, the broker co-signs, and the gateway checks the signed bytes
+against the reviewed
 terms, stores them, and only then broadcasts to Hedera. Reconciliation checks
 the same transaction hash, and an intent is confirmed only after its receipt.
 A refund waits while any request billed to the team is unresolved. A wrong
