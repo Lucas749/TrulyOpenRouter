@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { Pool } from "pg";
-import { MemoryKeyStore, PgKeyStore, issueKey, verifyKey } from "../src/keys.js";
+import { KeyConflictError, MemoryKeyStore, PgKeyStore, issueKey, verifyKey } from "../src/keys.js";
 
 describe("api keys", () => {
   it("issues verifiable keys, rejects wrong ones", () => {
@@ -27,6 +27,15 @@ describe("api keys", () => {
     expect(issueKey({}, "did:privy:owner").record.ownerUserId).toBe("did:privy:owner");
     expect(issueKey().record.ownerUserId).toBeNull();
   });
+
+  it("never overwrites an issued prefix", async () => {
+    const store = new MemoryKeyStore();
+    const first = issueKey({}, "did:privy:a");
+    await store.save(first.record);
+    await store.revoke(first.record.prefix);
+    await expect(store.save({ ...issueKey({}, "did:privy:b").record, prefix: first.record.prefix })).rejects.toBeInstanceOf(KeyConflictError);
+    expect(await store.find(first.key)).toMatchObject({ ownerUserId: "did:privy:a", revoked: true });
+  });
 });
 
 // Use a disposable database. Never point TEST_DATABASE_URL at production.
@@ -42,13 +51,14 @@ integration("durable api keys", () => {
     await pool.end();
   });
 
-  it("keeps the issuing login, even when the same prefix is saved again", async () => {
+  it("keeps the issuing login and revoked state when the same prefix is issued again", async () => {
     const owned = issueKey({}, "did:privy:owner");
     const legacy = issueKey();
     try {
       await store.save(owned.record);
       expect((await store.find(owned.key))?.ownerUserId).toBe("did:privy:owner");
-      await store.save({ ...owned.record, ownerUserId: "did:privy:attacker", revoked: true });
+      await store.revoke(owned.record.prefix);
+      await expect(store.save({ ...issueKey({}, "did:privy:attacker").record, prefix: owned.record.prefix })).rejects.toBeInstanceOf(KeyConflictError);
       expect(await store.find(owned.key)).toMatchObject({ ownerUserId: "did:privy:owner", revoked: true });
       await store.save(legacy.record);
       expect((await store.find(legacy.key))?.ownerUserId).toBeNull();

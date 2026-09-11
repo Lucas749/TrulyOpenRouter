@@ -19,6 +19,9 @@ export interface ApiKeyRecord {
   ownerUserId?: string | null; // Privy login that issued the key; null for legacy keys
 }
 
+/// @notice A new key's prefix is already taken; issue another key instead of overwriting.
+export class KeyConflictError extends Error {}
+
 export interface IssuedKey {
   key: string; // tor_sk_… — shown ONCE, never stored
   record: ApiKeyRecord;
@@ -65,6 +68,7 @@ export class MemoryKeyStore implements KeyStore {
   private byPrefix = new Map<string, ApiKeyRecord>();
 
   async save(record: ApiKeyRecord): Promise<void> {
+    if (this.byPrefix.has(record.prefix)) throw new KeyConflictError("key prefix already issued");
     this.byPrefix.set(record.prefix, record);
   }
 
@@ -103,12 +107,14 @@ export class PgKeyStore implements KeyStore {
   }
 
   async save(record: ApiKeyRecord): Promise<void> {
-    await this.q().query(
+    // Never overwrite an existing prefix: that would revive or rescope another login's key.
+    const { rows } = await this.q().query(
       `INSERT INTO api_keys (prefix, key_hash, created_at, expires_at, scopes, revoked, owner_user_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (prefix) DO UPDATE SET revoked = EXCLUDED.revoked, scopes = EXCLUDED.scopes`,
+       ON CONFLICT (prefix) DO NOTHING RETURNING prefix`,
       [record.prefix, `${record.salt}:${record.hash}`, record.createdAt, record.scopes.expiresAt ?? null, JSON.stringify(record.scopes), record.revoked, record.ownerUserId ?? null],
     );
+    if (!rows.length) throw new KeyConflictError("key prefix already issued");
   }
 
   async find(key: string): Promise<ApiKeyRecord | undefined> {

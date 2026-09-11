@@ -6,7 +6,7 @@ import { createPublicClient, createWalletClient, http, parseAbi, recoverMessageA
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, fileChallenge, REGISTRY_ABI, type HostInfo } from "./registry.js";
-import { issueKey, type KeyStore, MemoryKeyStore, PgKeyStore, verifyKey, type KeyScopes } from "./keys.js";
+import { issueKey, KeyConflictError, type KeyStore, MemoryKeyStore, PgKeyStore, verifyKey, type KeyScopes } from "./keys.js";
 import { allowanceExceeded, type CapStore, PgCapStore, SpendCapStore, sumSpent } from "./allowances.js";
 import { MemoryOrgRules, type OrgRuleStore, PgOrgRules } from "./orgrules.js";
 import { buildReceipt, MemoryReceiptLog, PgReceiptLog, type ReceiptLog, sha256hex } from "./receipts.js";
@@ -1125,8 +1125,17 @@ export function createApp(opts: GatewayOptions = {}) {
     const login = await verifiedLogin(req, res);
     if (!login) return;
     const scopes = (req.body?.scopes ?? {}) as KeyScopes;
-    const { key, record } = issueKey(scopes, login.identity.userId);
-    await opts.keys.save(record);
+    let issued = issueKey(scopes, login.identity.userId);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await opts.keys.save(issued.record);
+        break;
+      } catch (e) {
+        if (!(e instanceof KeyConflictError) || attempt >= 5) throw e;
+        issued = issueKey(scopes, login.identity.userId); // prefix taken: draw a new key
+      }
+    }
+    const { key, record } = issued;
     // Proper per-key budget account: deterministic derivation from the single master
     // (env in dev, Key Ring in prod). Funding stays an explicit operator step.
     // Display only — resolution re-derives from the master on every use.
