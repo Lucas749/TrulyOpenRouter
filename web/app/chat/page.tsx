@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import LoginButton from "../components/login-button";
+import { useAuthFetch } from "../components/use-auth-fetch";
 
 const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What can you run on a laptop GPU?", "How do host payouts work?"];
 
@@ -55,7 +56,19 @@ export default function ChatPage() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const authFetch = useAuthFetch();
+  // Bill to personal credits or a team you belong to (team wallet credits).
+  const [teams, setTeams] = useState<{ id: string; display_name: string }[]>([]);
+  const [billTo, setBillTo] = useState("personal");
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    authFetch("/api/team/orgs")
+      .then((r) => r.json())
+      .then((d) => setTeams(Array.isArray(d.data) ? d.data : []))
+      .catch(() => setTeams([]));
+  }, [authenticated, authFetch]);
 
   const msgs = useMemo(() => threads.find((t) => t.id === currentId)?.msgs ?? [], [threads, currentId]);
 
@@ -143,8 +156,9 @@ export default function ChatPage() {
       const r = await fetch(`${GATEWAY}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        // The gateway verifies that the selected wallet belongs to this login.
-        body: JSON.stringify({ model, messages: [{ role: "user", content: text }], ...(handle ? { userHandle: handle } : {}) }),
+        // The gateway verifies that the selected wallet belongs to this login, or
+        // that this login is an active member of the selected team.
+        body: JSON.stringify({ model, messages: [{ role: "user", content: text }], ...(billTo !== "personal" ? { tor_team: billTo } : handle ? { userHandle: handle } : {}) }),
       });
       const d = await r.json();
       apply({
@@ -213,7 +227,15 @@ export default function ChatPage() {
         </p>
       </aside>
     <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-2xl flex-1 flex-col px-6">
-      <div className="flex items-center justify-end py-3">
+      <div className="flex items-center justify-end gap-2 py-3">
+        {teams.length > 0 && (
+          <select value={billTo} onChange={(e) => setBillTo(e.target.value)} className="rounded-full border border-black/10 px-3 py-1 text-sm" aria-label="Bill to">
+            <option value="personal">Personal credits</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>{t.display_name} team credits</option>
+            ))}
+          </select>
+        )}
         <select
           value={model}
           onChange={(e) => setModel(e.target.value)}

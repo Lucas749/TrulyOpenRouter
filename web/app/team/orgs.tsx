@@ -5,6 +5,7 @@ import { apiError } from "../../lib/api-error";
 import { useAuthFetch } from "../components/use-auth-fetch";
 import OrgMembers from "./members";
 import OrgRules from "./rules";
+import TeamTreasury from "./treasury";
 
 export interface TeamOrg {
   id: string;
@@ -129,6 +130,7 @@ export default function TeamOrgs({
             </div>
             <OrgMembers orgId={o.id} me={me} mock={mock} />
             <OrgRules orgId={o.id} me={me} mock={mock} />
+            <TeamTreasury orgId={o.id} mock={mock} />
             {(o.wallets ?? []).map((w) => (
               <div key={w.id} className="flex flex-col gap-1 rounded-lg bg-[#F7F7F5] p-3 font-mono text-xs">
                 <span>{w.address}</span>
