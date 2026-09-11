@@ -2,7 +2,7 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import { boundedCompletion, MemoryBillingRequests, PgBillingRequests, type BillingRequests } from "./billing.js";
 import { privySession, privySubscriber, subscriberWallet, SubscriberError, type VerifySession, type VerifySubscriber } from "./subscriber.js";
-import { createPublicClient, createWalletClient, http, parseAbi, recoverMessageAddress, type Address } from "viem";
+import { createPublicClient, createWalletClient, getAddress, http, parseAbi, recoverMessageAddress, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, fileChallenge, REGISTRY_ABI, type HostInfo } from "./registry.js";
@@ -131,7 +131,7 @@ export async function verifyOnce(opts: GatewayOptions): Promise<CheckReport[]> {
   const target = candidates[Math.floor(Math.random() * candidates.length)];
   const report = await spotCheck(
     target,
-    verificationSender(opts, target.endpoint, target.address),
+    verificationSender(opts, target.endpoint, target.payee ?? target.address),
     PROBES,
     refs[target.modelId].refs,
     { model: target.modelId },
@@ -188,6 +188,8 @@ async function resolveRegisteredHosts(opts: GatewayOptions, modelId: string): Pr
         .filter((h) => h.modelId === modelId)
         .map((h, i) => ({
           address: (h.address ?? `0x${String(i + 1).padStart(40, "0")}`) as `0x${string}`,
+          // An operator's own host names the account it is paid at; a malformed payee rejects the list.
+          ...(h.payee ? { payee: getAddress(h.payee) } : {}),
           endpoint: String(h.endpoint),
           modelId: String(h.modelId),
           modelDigest: (h.modelDigest ?? "demo") as `0x${string}`,
@@ -616,7 +618,7 @@ export function createApp(opts: GatewayOptions = {}) {
       emit("routed", { model });
       emit("submitted", { endpoint });
       const paidFetch = opts.x402
-        ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }, { payee: host?.address, ceiling: opts.x402Ceiling, accounts: opts.hederaAccounts })
+        ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }, { payee: host?.payee ?? host?.address, ceiling: opts.x402Ceiling, accounts: opts.hederaAccounts })
         : undefined;
       // The gateway buffers the completion and replays its own SSE envelope —
       // upstream always gets a plain request, never a stream (its SSE frames
@@ -850,7 +852,7 @@ export function createApp(opts: GatewayOptions = {}) {
     try {
       const report = await spotCheck(
         found,
-        verificationSender(opts, found.endpoint, found.address),
+        verificationSender(opts, found.endpoint, found.payee ?? found.address),
         PROBES,
         refs.refs,
         { model: found.modelId },

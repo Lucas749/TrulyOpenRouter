@@ -310,7 +310,8 @@ gateway payer (`gateway/src/payer.ts`) requires:
 - the exact scheme on `hedera:testnet` in test USDC (`0.0.429274`);
 - an amount no higher than `X402_MAX_PAYMENT_UNITS` (default 10000, $0.01);
 - a facilitator fee payer other than the gateway's payment account;
-- a payee account whose EVM alias is the routed host's registered address;
+- a payee account whose EVM alias is the routed host's registered address, or
+  the `payee` an operator declares for its own `HOSTS_JSON` host;
 - a payment account holding at least the amount;
 - room under the shared daily ceilings `X402_DAILY_CAP_UNITS` and
   `X402_DAILY_PAYMENTS`.

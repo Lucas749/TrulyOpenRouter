@@ -10,6 +10,7 @@ export const REGISTRY_ABI = parseAbi([
 
 export interface HostInfo {
   address: Address;
+  payee?: Address; // HOSTS_JSON only: the account an operator's own host is paid at; registry hosts are paid at `address`
   registry?: Address;
   registeredModelId?: string;
   registeredEndpoint?: string;
