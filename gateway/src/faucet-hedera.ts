@@ -14,7 +14,7 @@ export class HederaFaucetSender implements FaucetSender {
     this.key = PrivateKey.fromStringECDSA(privateKey.replace(/^0x/, ""));
     this.address = `0x${this.key.publicKey.toEvmAddress()}`;
     this.client = Client.forTestnet().setOperator(accountId, this.key)
-      .setDefaultRegenerateTransactionId(false).setMaxAttempts(2).setRequestTimeout(10000);
+      .setDefaultRegenerateTransactionId(false).setMaxAttempts(2).setRequestTimeout(15000);
   }
 
   async balanceTinybar(): Promise<bigint> {
