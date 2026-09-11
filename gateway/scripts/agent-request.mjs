@@ -10,13 +10,14 @@
 //        the key sealed in your Ledger Key Ring, decrypted into memory with `wallet-cli ring decrypt`
 //        (needs WALLET_PASS, e.g. WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w)),
 //      TOR_AGENT_KEY_FILE (default ~/.config/trulyopenrouter/agent-key): a plain key file, used only without a sealed key,
-//      TOR_APPROVE=ledger-cli: approve an over-limit request from this terminal with Ledger's wallet CLI
-//        (TOR_LEDGER_ACCOUNT picks the wallet-cli account label; TOR_LEDGER_AMOUNT defaults to "0 ETH").
+//      TOR_APPROVE=ledger: approve an over-limit request from this terminal on the enrolled Ledger over USB
+//        (agent-demo/ledger-sign.mjs; run `npm --prefix agent-demo install` once).
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const base = (process.env.TOR_BASE ?? "https://trulyopenrouter.vercel.app/api/gw").replace(/\/+$/, "");
 const configDir = join(homedir(), ".config", "trulyopenrouter");
@@ -60,76 +61,27 @@ const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/j
 const body = JSON.stringify({ model: process.env.MODEL ?? "qwen2.5:0.5b", messages: [{ role: "user", content: prompt }], max_tokens: Number(process.env.MAX_TOKENS ?? 256) });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const cliJson = (text) => {
-  try {
-    return JSON.parse(String(text ?? "").slice(String(text ?? "").indexOf("{")));
-  } catch {
-    return null;
-  }
-};
-
-/// The wallet-cli account holding `address` on a Sepolia network. Accounts that do not name Sepolia are
-/// never picked, so an approval can never be sent on mainnet by accident.
-function ledgerCliAccount(address) {
-  const view = cliJson(spawnSync("wallet-cli", ["session", "view", "--output", "json"], { encoding: "utf8" }).stdout);
-  const found = [];
-  const walk = (value, key) => {
-    if (Array.isArray(value)) return value.forEach((v) => walk(v, key));
-    if (!value || typeof value !== "object") return;
-    const own = String(value.address ?? value.freshAddress ?? "").toLowerCase();
-    if (own === address.toLowerCase() && `${key} ${JSON.stringify(value)}`.toLowerCase().includes("sepolia")) found.push(value.label ?? value.account ?? key);
-    for (const [k, v] of Object.entries(value)) walk(v, k);
-  };
-  walk(view, "");
-  return found.find((label) => typeof label === "string" && label) ?? null;
-}
-
-function firstHash(value) {
-  if (typeof value === "string") return /^0x[0-9a-fA-F]{64}$/.test(value) ? value : null;
-  if (!value || typeof value !== "object") return null;
-  for (const v of Object.values(value)) {
-    const hash = firstHash(v);
-    if (hash) return hash;
-  }
-  return null;
-}
-
-/// Terminal approval: Ledger's wallet CLI sends the approval code from the enrolled Ledger to itself,
-/// confirmed on the device, and the gateway verifies that transaction on chain before granting the spend.
-/// Any step that cannot run leaves the approval pending for the approval page.
-async function approveWithLedgerCli(approvalId) {
+/// Terminal approval: the enrolled Ledger signs the exact approval message over USB (Ledger's Device
+/// Management Kit, agent-demo/ledger-sign.mjs), and the gateway checks the signature against the enrolled
+/// address. Any step that cannot run leaves the approval pending for the approval page.
+async function approveOnLedger(approvalId) {
   const auth = { Authorization: `Bearer ${key}` };
   const res = await fetch(`${base}/v1/agent/approvals/${encodeURIComponent(approvalId)}`, { headers: auth });
-  const tx = (await res.json().catch(() => ({}))).ledger_transaction;
-  if (!res.ok || !tx) return console.error("This approval has no terminal Ledger route. Use the approval page instead.");
-  const account = process.env.TOR_LEDGER_ACCOUNT ?? ledgerCliAccount(tx.from);
-  if (!account) {
-    return console.error(`No wallet-cli Sepolia account for ${tx.from}. With the Ledger connected, run once: wallet-cli account discover ${tx.network}`);
+  const ledger = (await res.json().catch(() => ({}))).ledger;
+  if (!res.ok || !ledger) return console.error("This approval has no Ledger route. Use the approval page instead.");
+  const signerScript = fileURLToPath(new URL("../../agent-demo/ledger-sign.mjs", import.meta.url));
+  const signed = spawnSync(process.execPath, [signerScript, ledger.address], { input: ledger.message, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] });
+  const signature = String(signed.stdout ?? "").trim();
+  if (signed.status !== 0 || !/^0x[0-9a-fA-F]{130}$/.test(signature)) {
+    return console.error("No Ledger signature. The approval stays pending, and the approval link still works.");
   }
-  const args = ["send", account, "--to", tx.to, "--amount", process.env.TOR_LEDGER_AMOUNT ?? "0 ETH", "--data", tx.data, "--output", "json"];
-  const dryRun = spawnSync("wallet-cli", [...args, "--dry-run"], { encoding: "utf8" });
-  if (dryRun.status !== 0 || !`${account} ${dryRun.stdout}`.toLowerCase().includes("sepolia")) {
-    return console.error(`wallet-cli could not prepare the Sepolia approval (${account}): ${String(dryRun.stdout || dryRun.stderr).slice(0, 300)}`);
-  }
-  console.error(`Confirm on your Ledger: a Sepolia transaction from ${tx.from} to itself with approval code ${tx.data.slice(0, 18)}…`);
-  const sent = spawnSync("wallet-cli", [...args, "--device-timeout", "180000"], { encoding: "utf8", stdio: ["inherit", "pipe", "inherit"] });
-  const hash = firstHash(cliJson(sent.stdout));
-  if (sent.status !== 0 || !hash) return console.error(`wallet-cli send did not return a transaction: ${String(sent.stdout || sent.error?.message).slice(0, 300)}`);
-  console.error(`Sent ${hash}. The gateway is verifying it on chain…`);
-  for (let i = 0; i < 60; i++) {
-    const r = await fetch(`${base}/v1/agent/approvals/${encodeURIComponent(approvalId)}/ledger-transaction`, {
-      method: "POST",
-      headers: { ...auth, "Content-Type": "application/json" },
-      body: JSON.stringify({ transactionHash: hash }),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (r.ok) return console.error("Verified on chain: approved by the enrolled Ledger.");
-    if (!["transaction_pending", "chain_unavailable"].includes(d?.error?.type)) {
-      return console.error(`The gateway refused the approval transaction (${r.status}): ${d?.error?.message ?? "unknown error"}`);
-    }
-    await sleep(5000);
-  }
-  console.error("The approval transaction was not confirmed within 5 minutes.");
+  const r = await fetch(`${base}/v1/agent/approvals/${encodeURIComponent(approvalId)}/ledger-signature`, {
+    method: "POST",
+    headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ signature }),
+  });
+  const d = await r.json().catch(() => ({}));
+  console.error(r.ok ? "Approved on the enrolled Ledger." : `The gateway refused the Ledger signature (${r.status}): ${d?.error?.message ?? "unknown error"}`);
 }
 
 async function send() {
@@ -142,7 +94,7 @@ if (status === 403 && data?.error?.type === "approval_required") {
   const approval = data.error;
   console.error(`${approval.message}\nApproval needed: ${approval.approval_url}\nExtra credits requested: ${approval.additional_credits_requested} (${approval.constraint})`);
   let state = approval.approval_state;
-  if (process.env.TOR_APPROVE === "ledger-cli" && state === "pending") await approveWithLedgerCli(approval.approval_id);
+  if (process.env.TOR_APPROVE === "ledger" && state === "pending") await approveOnLedger(approval.approval_id);
   while (state === "pending") {
     await sleep(Math.max(1, Number(approval.poll_after_seconds ?? 5)) * 1000);
     const res = await fetch(`${base}/v1/agent/approvals/${encodeURIComponent(approval.approval_id)}`, { headers: { Authorization: `Bearer ${key}` } });

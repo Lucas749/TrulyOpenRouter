@@ -33,18 +33,19 @@ WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w)
 
 The first output line says where the key came from: `Agent key: decrypted from the Ledger Key Ring (tor/agent)`.
 
-## Approve over-limit spend from the terminal (Ledger wallet CLI)
+## Approve over-limit spend on the Ledger from the terminal
 
-Add `TOR_APPROVE=ledger-cli` to the command above. On `approval_required`, the helper runs `wallet-cli send`: a
-Sepolia transaction from the enrolled Ledger to itself carrying the approval code. The user confirms it on the
-device, and the gateway verifies the transaction on chain before granting the spend. Tell the user to watch the
-Ledger as soon as the output says `Confirm on your Ledger`.
+Add `TOR_APPROVE=ledger` to the command above. On `approval_required`, the helper fetches the exact approval text and
+`agent-demo/ledger-sign.mjs` asks the Ledger connected over USB to sign it (Ledger's Device Management Kit). The script
+first checks that the device is the agent's enrolled Ledger. The gateway verifies the signature against that address,
+then the request is sent once. Nothing touches a chain.
 
-One-time setup by the user: the Ethereum app has **Blind signing** on, the Ledger's Ethereum address holds a little
-Sepolia ETH for gas, and `wallet-cli account discover ethereum:sepolia` has run with the device connected.
+One-time setup: `npm --prefix agent-demo install`. For each approval the user keeps the Ledger plugged in and unlocked
+with the Ethereum app open, and Ledger Live quit. Tell the user to watch the Ledger as soon as the output says
+`Read the approval on the Ledger and sign it`.
 
-If the output says there is no Sepolia account, the send failed, or the gateway refused the transaction, the
-approval stays pending and the approval link still works. Relay the message; do not retry the send.
+If the output says `No Ledger found`, `not the agent's enrolled Ledger`, `You rejected`, or `No Ledger signature`, the
+approval stays pending and the approval link still works. Relay the message; do not start another run.
 
 Read the task output after a few seconds and act on what it shows:
 

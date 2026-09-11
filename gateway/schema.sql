@@ -305,7 +305,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS agent_approvals_open_idx ON agent_approvals (a
 CREATE INDEX IF NOT EXISTS agent_approvals_org_idx ON agent_approvals (org_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS approval_evidence (
   approval_id text PRIMARY KEY REFERENCES agent_approvals (id) ON DELETE CASCADE,
-  method text NOT NULL CHECK (method IN ('org_owner', 'ledger', 'ledger_tx')),
+  method text NOT NULL CHECK (method IN ('org_owner', 'ledger')),
   message text NOT NULL,
   signature text NOT NULL,
   signer text NOT NULL,
@@ -313,14 +313,6 @@ CREATE TABLE IF NOT EXISTS approval_evidence (
   actor_role text,
   verified_at bigint NOT NULL
 );
--- Terminal Ledger approvals keep the device-confirmed transaction hash as their evidence.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'approval_evidence_method_check' AND pg_get_constraintdef(oid) NOT LIKE '%ledger_tx%') THEN
-    ALTER TABLE approval_evidence DROP CONSTRAINT approval_evidence_method_check;
-    ALTER TABLE approval_evidence ADD CONSTRAINT approval_evidence_method_check CHECK (method IN ('org_owner', 'ledger', 'ledger_tx'));
-  END IF;
-END $$;
 
 -- Personal agent budget funding. Each leg's signed bytes are stored before
 -- broadcast; retries resume the same operation and never repeat a leg.

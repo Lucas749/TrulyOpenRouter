@@ -3,8 +3,7 @@ import { readFileSync } from "node:fs";
 import { Pool } from "pg";
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { normalizePolicy, PgAgents, type Agent } from "../src/agents.js";
-import { approvalMessage, approveByLedgerTransaction, decideAgentApproval, GRANT_TTL_MS, MAX_PENDING_PER_AGENT, PgApprovals, type AgentApproval, type ApprovalMethod } from "../src/approvals.js";
-import { ledgerTransactionData, type LedgerTransaction } from "../src/ledger.js";
+import { approvalMessage, approveByLedgerSignature, decideAgentApproval, GRANT_TTL_MS, MAX_PENDING_PER_AGENT, PgApprovals, type AgentApproval, type ApprovalMethod } from "../src/approvals.js";
 import { normalizeSnapshot, PgTeams } from "../src/teams.js";
 
 const OWNER = privateKeyToAccount(generatePrivateKey());
@@ -134,44 +133,27 @@ integration("agent approvals", () => {
     expect(await approvals.evidence(approval.id)).toMatchObject({ method: "ledger", signer: LEDGER.address.toLowerCase() });
   });
 
-  it("approves from a terminal only with a mined transaction from the enrolled Ledger to itself carrying this approval's code", async () => {
-    const { approval } = await request(personalAgent, "req-tx", ["ledger"]);
-    const data = ledgerTransactionData(approvalMessage(approval, { origin: ORIGIN, agentName: personalAgent.name }));
-    const ledger = LEDGER.address.toLowerCase();
-    const hash = (n: number) => `0x${n.toString(16).padStart(64, "0")}`;
-    const tx = (over: Partial<LedgerTransaction>): LedgerTransaction => ({ from: ledger, to: ledger, input: data, chainId: 11_155_111, status: "success", ...over });
-    const txs = new Map<string, LedgerTransaction>([
-      [hash(1), tx({ status: null })],
-      [hash(2), tx({ status: "reverted" })],
-      [hash(3), tx({ from: OWNER.address.toLowerCase() })],
-      [hash(4), tx({ to: OWNER.address.toLowerCase() })],
-      [hash(5), tx({ input: ledgerTransactionData("another approval") })],
-      [hash(6), tx({ chainId: 1 })],
-      [hash(7), tx({})],
-    ]);
-    const txDeps = { ...deps, chain: { network: "ethereum:sepolia", chainId: 11_155_111, transaction: async (h: string) => txs.get(h) ?? null } };
-    const relay = (h: string, agentId = personalAgent.id) => approveByLedgerTransaction(txDeps, approval.id, agentId, h);
+  it("accepts a relayed terminal approval only when the enrolled Ledger signed this approval's exact message", async () => {
+    const { approval } = await request(personalAgent, "req-usb", ["ledger"]);
+    const relay = (signature: string, agentId = personalAgent.id) => approveByLedgerSignature(deps, approval.id, agentId, signature);
 
     await expect(relay("0x1234")).rejects.toMatchObject({ status: 400 });
-    await expect(relay(hash(7), teamAgent.id)).rejects.toMatchObject({ status: 404 });
-    await expect(relay(hash(9))).rejects.toMatchObject({ status: 409, type: "transaction_pending" });
-    await expect(relay(hash(1))).rejects.toMatchObject({ status: 409, type: "transaction_pending" });
-    await expect(relay(hash(2))).rejects.toMatchObject({ type: "transaction_failed" });
-    await expect(relay(hash(3))).rejects.toMatchObject({ status: 401, type: "wrong_sender" });
-    await expect(relay(hash(4))).rejects.toMatchObject({ status: 401, type: "wrong_sender" });
-    await expect(relay(hash(5))).rejects.toMatchObject({ status: 401, type: "wrong_approval" });
-    await expect(relay(hash(6))).rejects.toMatchObject({ type: "wrong_chain" });
-    await expect(relay(hash(7))).resolves.toMatchObject({ state: "approved" });
-    expect(await approvals.evidence(approval.id)).toMatchObject({ method: "ledger_tx", signer: ledger, actorRole: "enrolled_ledger" });
-    await expect(relay(hash(7))).rejects.toMatchObject({ status: 409, type: "already_decided" });
+    await expect(relay(await sign(LEDGER, approval), teamAgent.id)).rejects.toMatchObject({ status: 404 });
+    await expect(relay(await sign(OWNER, approval))).rejects.toMatchObject({ status: 401, type: "bad_signature" });
+    await expect(relay(await LEDGER.signMessage({ message: "approve anything" }))).rejects.toMatchObject({ status: 401, type: "bad_signature" });
+    await expect(relay(await sign(LEDGER, approval))).resolves.toMatchObject({ state: "approved" });
+    expect(await approvals.evidence(approval.id)).toMatchObject({ method: "ledger", signer: LEDGER.address.toLowerCase(), actorRole: "enrolled_ledger" });
+    await expect(relay(await sign(LEDGER, approval))).rejects.toMatchObject({ status: 409, type: "already_decided" });
   });
 
-  it("refuses a terminal approval where the Ledger route is not permitted or the window ended", async () => {
-    const chain = { network: "ethereum:sepolia", chainId: 11_155_111, transaction: async () => null };
-    const ownersOnly = (await request(teamAgent, "req-tx-owner", ["org_owner"])).approval;
-    await expect(approveByLedgerTransaction({ ...deps, chain }, ownersOnly.id, teamAgent.id, `0x${"a".repeat(64)}`)).rejects.toMatchObject({ status: 403, type: "method_not_permitted" });
-    const late = (await request(personalAgent, "req-tx-late", ["ledger"])).approval;
-    await expect(approveByLedgerTransaction({ ...deps, chain, now: () => late.expiresAt + 1 }, late.id, personalAgent.id, `0x${"a".repeat(64)}`)).rejects.toMatchObject({ status: 409, type: "expired" });
+  it("refuses a relayed Ledger approval when the Ledger route is not permitted, the window ended, or the policy changed", async () => {
+    const ownersOnly = (await request(teamAgent, "req-usb-owner", ["org_owner"])).approval;
+    await expect(approveByLedgerSignature(deps, ownersOnly.id, teamAgent.id, await sign(LEDGER, ownersOnly))).rejects.toMatchObject({ status: 403, type: "method_not_permitted" });
+    const late = (await request(personalAgent, "req-usb-late", ["ledger"])).approval;
+    await expect(approveByLedgerSignature({ ...deps, now: () => late.expiresAt + 1 }, late.id, personalAgent.id, await sign(LEDGER, late))).rejects.toMatchObject({ status: 409, type: "expired" });
+    const stale = (await request(personalAgent, "req-usb-stale", ["ledger"])).approval;
+    await pool.query(`UPDATE agents SET policy_revision = policy_revision + 1 WHERE id = $1`, [personalAgent.id]);
+    await expect(approveByLedgerSignature(deps, stale.id, personalAgent.id, await sign(LEDGER, stale))).rejects.toMatchObject({ status: 409, type: "stale_approval" });
   });
 
   it("creates at most one grant when owner and Ledger decisions race", async () => {
