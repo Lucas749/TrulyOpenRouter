@@ -10,9 +10,10 @@ import { join } from "path";
 // environment (injected once via keychain substitution, never logged), each
 // mapped secret is decrypted into memory. Plaintext never touches disk.
 //
-// Dev fallback: when SECRETS_BACKEND != "ring" (or a .enc file is missing),
-// plain env vars are used as today — local dev never needs the device.
-// Production MUST run SECRETS_BACKEND=ring with all four files present.
+// Dev: when SECRETS_BACKEND != "ring", plain env vars are used as today — local
+// dev never needs the device. Ring mode: protected financial secrets come only
+// from the Ring; a missing file or failed decryption leaves them unset, which
+// disables the dependent operation instead of using an environment key.
 
 export interface RingRunner {
   decrypt(key: string, ciphertext: Buffer): Promise<string>;
@@ -51,26 +52,38 @@ export const RING_MAP: Record<string, string> = {
   X402_PAYER_KEY: "tor/x402-payer",
   HCS_OPERATOR_KEY: "tor/hcs-operator",
   HOST_KEY: "tor/host", // demo-host key: tap-gated release/heartbeat executor only
+  PRIVY_BROKER_AUTH_KEY: "tor/privy-broker", // team treasury quorum co-signer
 };
 
+/// @notice Budget derivation, x402 signing, and the treasury broker key never fall back to env in ring mode.
+export const PROTECTED_SECRETS = new Set(["BUDGET_MASTER", "X402_PAYER_KEY", "PRIVY_BROKER_AUTH_KEY"]);
+
 /// @notice Load mapped secrets from gateway/secrets/*.enc into process.env.
-/// Missing files fall back to existing env (dev); when strict, they throw.
+/// Protected secrets that cannot be decrypted are removed from env and reported as
+/// unavailable. Other missing secrets fall back to existing env; when strict, they throw.
 export async function loadRingSecrets(
   opts: { secretsDir?: string; strict?: boolean; runner?: RingRunner } = {},
-): Promise<{ loaded: string[]; fallback: string[] }> {
+): Promise<{ loaded: string[]; fallback: string[]; unavailable: string[] }> {
   const dir = opts.secretsDir ?? join(process.cwd(), "secrets");
   const loaded: string[] = [];
   const fallback: string[] = [];
+  const unavailable: string[] = [];
   for (const [env, key] of Object.entries(RING_MAP)) {
     const short = key.split("/")[1] ?? key;
+    const guarded = PROTECTED_SECRETS.has(env);
+    if (guarded) delete process.env[env];
     try {
       const ciphertext = await readFile(join(dir, `${short}.enc`));
       process.env[env] = await decryptSecret(key, ciphertext, opts.runner);
       loaded.push(env);
     } catch (e: any) {
+      if (guarded) {
+        unavailable.push(env);
+        continue;
+      }
       if (opts.strict) throw e;
       fallback.push(env);
     }
   }
-  return { loaded, fallback };
+  return { loaded, fallback, unavailable };
 }

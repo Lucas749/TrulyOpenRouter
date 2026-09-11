@@ -27,4 +27,5 @@ prov OPERATOR_KEY vault-operator
 prov X402_PAYER_KEY x402-payer
 prov HCS_OPERATOR_KEY hcs-operator
 prov HOST_KEY host
+prov PRIVY_BROKER_AUTH_KEY privy-broker
 echo "done — ciphertext only; verify with: git status --short secrets/"

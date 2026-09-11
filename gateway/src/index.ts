@@ -2134,12 +2134,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // Live legs (all env-driven, all optional in dev):
   //   REGISTRY (HostRegistry) + RPC_URL + MODELS + VAULT_ADDRESS + OPERATOR_KEY (vault debit)
   // Secrets: SECRETS_BACKEND=ring decrypts gateway/secrets/*.enc (Ledger Key Ring)
-  // into memory first — ciphertext in repo, keys in trustchain. Env is the fallback.
+  // into memory first — ciphertext in repo, keys in trustchain. Financial secrets
+  // never fall back to env: without them their operations stay disabled.
   const { loadRingSecrets } = await import("./ring.js");
   if (process.env.SECRETS_BACKEND === "ring") {
-    const { loaded, fallback } = await loadRingSecrets({ strict: true });
+    const { loaded, fallback, unavailable } = await loadRingSecrets({ strict: true });
     console.log(`ring secrets: ${loaded.join(",")} (device-backed, never on disk)`);
     if (fallback.length) console.log(`env fallback: ${fallback.join(",")}`);
+    if (unavailable.length) console.warn(`ring secrets unavailable, dependent financial operations disabled: ${unavailable.join(",")}`);
   }
   const rpcUrl = process.env.RPC_URL ?? "";
   // Storage: Postgres when DATABASE_URL is set (RDS in prod), otherwise the
