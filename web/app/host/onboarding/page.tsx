@@ -8,6 +8,7 @@ import { createPublicClient, formatEther, http, parseEther } from "viem";
 import LoginButton from "../../components/login-button";
 import { contractUrl } from "../../../lib/chain";
 import { loadHostFunding } from "../../../lib/host-funding";
+import HostFaucet from "./host-faucet";
 
 const RPC = "https://testnet.hashio.io/api";
 const GW = "/api/gw"; // same-origin proxy, never localhost
@@ -323,9 +324,10 @@ function HostOnboardingInner() {
           {done && (
             <p className="mb-0 mt-3 text-sm text-[#0B7A5D]">serving ✓ — earnings flow to your login wallet</p>
           )}
+          {valid && !done && <HostFaucet key={clean.toLowerCase()} address={clean} onFunded={refresh} />}
           {valid && balance !== null && !funded && (
             <p className="mb-0 mt-3 text-sm text-[#8A5300]">
-              Needs ≥ {NEED_HBAR} HBAR to register (drip covers account creation, the faucet covers stake + gas).
+              Needs ≥ {NEED_HBAR} HBAR to register. Get 5 HBAR from us, or use the Hedera faucet for stake + gas.
               {fromOwned && hostState !== "live" ? " Attached to your account ✓ — fund it, then register from your terminal." : ""}
             </p>
           )}
