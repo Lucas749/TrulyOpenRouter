@@ -391,6 +391,9 @@ describe("team wallet limits", () => {
       { ...change, usdcPayoutCap: "1.1234567" },
       { ...change, recipients: [] },
       { ...change, recipients: ["not-an-address"] },
+      { ...change, recipients: [VAULT] },
+      { ...change, recipients: ["0x0000000000000000000000000000000000068cda"] },
+      { ...change, recipients: [TEAM_WALLET] },
     ]) {
       await expect(proposeTreasuryIntent(d, "org-1", OWNER, "update_policy", bad)).rejects.toMatchObject({ status: 400 });
     }

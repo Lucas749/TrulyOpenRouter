@@ -361,6 +361,9 @@ export async function provisionTeamWallet(d: TreasuryDeps, input: { name: string
   if (!recipients.length || recipients.some((r) => !/^0x[0-9a-f]{40}$/.test(r))) {
     throw new TreasuryError(400, "invalid_request", "At least one payout recipient wallet is required.");
   }
+  if (recipients.some((r) => r === d.vault.toLowerCase() || r === TEST_USDC_ADDRESS.toLowerCase())) {
+    throw new TreasuryError(400, "invalid_request", "Payout recipients cannot be the vault or the test USDC token.");
+  }
   const plans: Array<{ planId: bigint; priceTinybar: bigint }> = [];
   for (const planId of d.planIds) {
     const plan = await d.chain.plan(planId);
@@ -471,6 +474,11 @@ async function proposePolicyChange(d: TreasuryDeps, team: Team & { walletId: str
   const recipients = [...new Set((Array.isArray(params.recipients) ? params.recipients : []).map((r) => String(r).trim().toLowerCase()))];
   if (!recipients.length || recipients.length > 20 || recipients.some((r) => !/^0x[0-9a-f]{40}$/.test(r))) {
     throw new TreasuryError(400, "invalid_request", "List 1 to 20 payout recipient wallet addresses.");
+  }
+  // A contract recipient would let payouts carry arbitrary calls to it, bypassing the plan and token limits.
+  const reserved = [d.vault, TEST_USDC_ADDRESS, team.walletAddress].map((a) => a.toLowerCase());
+  if (recipients.some((r) => reserved.includes(r))) {
+    throw new TreasuryError(400, "invalid_request", "Payout recipients cannot be the vault, the test USDC token, or the team wallet itself.");
   }
   const rules = treasuryPolicyRules({ vault: d.vault, plans, recipients, hbarPayoutCapWei, usdcPayoutCapUnits });
   const policyChange: PolicyChange = {
