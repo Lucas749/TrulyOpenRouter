@@ -53,6 +53,9 @@ services:
       # laptop (see LEDGER-WALKTHROUGH.md) — same code, different backend.
       - BUDGET_MASTER=${BUDGET_MASTER:?set in .env.prod}
       - OPERATOR_KEY=${OPERATOR_KEY:-}
+      - FAUCET_ACCOUNT_ID=${FAUCET_ACCOUNT_ID:-}
+      - FAUCET_PRIVATE_KEY=${FAUCET_PRIVATE_KEY:-}
+      - FAUCET_DAILY_GRANTS=${FAUCET_DAILY_GRANTS:-10}
       - X402_PAYER_ID=${X402_PAYER_ID:-}
       - X402_PAYER_KEY=${X402_PAYER_KEY:-}
       - HCS_TOPIC_ID=${HCS_TOPIC_ID:-}

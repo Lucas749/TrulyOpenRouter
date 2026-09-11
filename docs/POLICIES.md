@@ -209,3 +209,25 @@ Pausing drains new routes without starting the stake release timer. Resuming
 requires the registration to remain active. Model discovery includes signed
 model updates; verification summaries are specific to the effective model.
 Deregistering and releasing stake remain separate onchain actions.
+
+## Testnet host funding
+
+The onboarding funding button sends exactly 5 testnet HBAR from a dedicated
+backend account. The web server verifies the login access token and forwards
+the verified user ID through the private gateway admin API. The gateway checks
+the host's account link, permits one grant per address and one new host per
+login every 24 hours, and caps the pool at 10 grants per rolling 24 hours
+(`FAUCET_DAILY_GRANTS`). Account links are metadata, not proof of key custody;
+the verified-login and global limits bound the public testnet subsidy.
+
+Postgres serializes reservations and saves the signed native transaction before
+broadcast. Retries reuse its transaction ID and bytes, including after a restart.
+Uncertain outcomes remain pending and reserve funds until consensus or mirror
+history confirms the result. A failed or expired unresolved grant needs operator
+review; do not delete it or sign a replacement without checking its transaction
+history. An empty pool does not consume the user's eligibility.
+
+`FAUCET_ACCOUNT_ID` and `FAUCET_PRIVATE_KEY` belong only on the gateway. This
+wallet is separate from operator, subscription, and host funds. Each pending
+grant reserves 5 HBAR plus a maximum 1 HBAR network fee. The service always uses
+Hedera testnet. No contract deployment is involved.

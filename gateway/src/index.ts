@@ -7,7 +7,8 @@ import { issueKey, type KeyStore, MemoryKeyStore, PgKeyStore, verifyKey, type Ke
 import { allowanceExceeded, type CapStore, PgCapStore, SpendCapStore, sumSpent } from "./allowances.js";
 import { MemoryOrgRules, type OrgRuleStore, PgOrgRules } from "./orgrules.js";
 import { buildReceipt, MemoryReceiptLog, PgReceiptLog, type ReceiptLog, sha256hex } from "./receipts.js";
-import { dbEnabled, ensureSchema } from "./db.js";
+import { db, dbEnabled, ensureSchema } from "./db.js";
+import { FaucetError, PgHostFaucet, type HostFaucet } from "./faucet.js";
 import { type Health, MemoryHealth, PgHealth } from "./health.js";
 import { createVaultDebit, createVaultSpendCapWriter, readVaultCredits, type SpendCapWriter } from "./vault.js";
 import { type HostMeta, MemoryHostMeta, PgHostMeta, validRegion } from "./hostmeta.js";
@@ -33,6 +34,7 @@ class OrgPolicyDenied extends Error {
 }
 
 export interface GatewayOptions {
+  faucet?: HostFaucet;
   payTo?: string; // Hedera service account; empty = dev mode (x402 gate off)
   registry?: Address;
   legacyRegistries?: Address[];
@@ -938,6 +940,19 @@ export function createApp(opts: GatewayOptions = {}) {
     return true;
   }
 
+  // Verified login IDs arrive only through the web server's private admin hop.
+  app.post("/api/admin/host-faucet", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    if (!opts.faucet) return res.status(503).json({ error: { message: "Our test HBAR pool is unavailable. Please use the Hedera faucet.", type: "unavailable" } });
+    try {
+      const result = await opts.faucet.claim(String(req.body?.address ?? ""), String(req.body?.userId ?? ""));
+      return res.status(result.status === "pending" ? 202 : result.status === "failed" ? 502 : 200).json(result);
+    } catch (error) {
+      if (error instanceof FaucetError) return res.status(error.status).json({ error: { message: error.message, type: error.code } });
+      return res.status(503).json({ error: { message: "Funding is temporarily unavailable. Please retry or use the Hedera faucet.", type: "unavailable" } });
+    }
+  });
+
   // One-click Hedera account creation: sends 0.5 HBAR from the operator to a
   // fresh EVM address, which auto-creates its 0.0.x account (HIP-583 hollow
   // account). Only-if-nonexistent (mirror-checked) so each address drips once —
@@ -1234,6 +1249,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     taps: pg ? new PgTapStore() : new FileTapStore(),
     orgRules: pg ? new PgOrgRules() : new MemoryOrgRules(),
   };
+  if (pg && process.env.FAUCET_ACCOUNT_ID && process.env.FAUCET_PRIVATE_KEY) {
+    const { HederaFaucetSender } = await import("./faucet-hedera.js");
+    const sender = new HederaFaucetSender(process.env.FAUCET_ACCOUNT_ID, process.env.FAUCET_PRIVATE_KEY);
+    opts.faucet = new PgHostFaucet(db(), sender, address => opts.meta!.ownerOf(address), Number(process.env.FAUCET_DAILY_GRANTS || 10));
+    console.log(`host funding: ${sender.accountId} · 5 testnet HBAR per grant`);
+  }
   if (process.env.REGISTRY) opts.registry = process.env.REGISTRY as Address;
   opts.legacyRegistries = (process.env.LEGACY_REGISTRIES ?? "").split(",").map((r) => r.trim()).filter(Boolean) as Address[];
   if (rpcUrl) opts.rpcUrl = rpcUrl;

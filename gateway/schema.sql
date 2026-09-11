@@ -49,6 +49,16 @@ CREATE TABLE IF NOT EXISTS host_meta (
   owner_user_id text
 );
 CREATE INDEX IF NOT EXISTS host_meta_owner_idx ON host_meta (owner_user_id);
+-- Dedicated testnet funding. Retain signed bytes so retries cannot pay twice.
+CREATE TABLE IF NOT EXISTS host_faucet_grants (
+  address text PRIMARY KEY,
+  user_id text NOT NULL,
+  created_at bigint NOT NULL,
+  transaction_id text NOT NULL UNIQUE,
+  signed_transaction text NOT NULL,
+  status text NOT NULL CHECK (status IN ('pending', 'sent', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS host_faucet_grants_created_idx ON host_faucet_grants (created_at);
 ALTER TABLE host_meta ADD COLUMN IF NOT EXISTS geo text;
 ALTER TABLE host_meta ADD COLUMN IF NOT EXISTS geo_at bigint;
 
