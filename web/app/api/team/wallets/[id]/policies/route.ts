@@ -1,12 +1,20 @@
 import { NextResponse } from "next/server";
 import { privyApi } from "../../../../../../lib/privy-server";
+import { visibleOrgIds } from "../../../../../../lib/members";
+import { requireSession } from "../../../../../../lib/session";
 
-/// @notice Read a wallet's attached policies (names, rules). Policy CHANGES need quorum
-/// authorization signatures (roadmap) — attach happens at wallet creation instead.
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+/// @notice Read a team wallet's attached policies (names, rules) for members of
+/// the owning organization only. Policy changes need quorum authorization.
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireSession(req);
+  if (session instanceof Response) return session;
   try {
     const { id } = await params;
     const wallet: any = await privyApi("GET", `/wallets/${id}`);
+    const orgId = wallet.entity?.type === "organization" ? wallet.entity.id : null;
+    if (!orgId || !(await visibleOrgIds(session)).has(orgId)) {
+      return NextResponse.json({ error: "wallet not found" }, { status: 404 });
+    }
     const policies: any[] = [];
     for (const pid of wallet.policy_ids ?? []) {
       try {

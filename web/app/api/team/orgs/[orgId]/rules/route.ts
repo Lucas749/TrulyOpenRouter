@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOrgMeta, getRules, listRuleChanges, memberByWallet, proposeRuleChange, roleRank, verifyActionMessage } from "../../../../../../lib/members";
-import { stableJson } from "../../../../../../lib/member-messages";
+import { requireSession, requireTeamViewer, sessionOwnsWallet, walletNotLinked } from "../../../../../../lib/session";
 
 // GET: current rules + change history for the org.
 // POST: propose a change (owner/manager-signed). Body:
@@ -9,6 +9,8 @@ import { stableJson } from "../../../../../../lib/member-messages";
 export async function GET(req: Request, { params }: { params: Promise<{ orgId: string }> }): Promise<Response> {
   try {
     const { orgId } = await params;
+    const session = await requireTeamViewer(req, orgId);
+    if (session instanceof Response) return session;
     const status = new URL(req.url).searchParams.get("status") as "pending" | "approved" | "denied" | null;
     return NextResponse.json({ rules: await getRules(orgId), changes: await listRuleChanges(orgId, status ?? undefined) });
   } catch (e: any) {
@@ -17,6 +19,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ orgId: s
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ orgId: string }> }): Promise<Response> {
+  const session = await requireSession(req);
+  if (session instanceof Response) return session;
   try {
     const { orgId } = await params;
     const body = (await req.json().catch(() => ({}))) as {
@@ -30,6 +34,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     if (!body.kind || !body.payload || typeof body.payload !== "object" || !body.memberDid || !body.signature || !body.message || !body.signerWallet) {
       return NextResponse.json({ error: "kind + payload + memberDid + signature + message + signerWallet required" }, { status: 400 });
     }
+    if (!sessionOwnsWallet(session, body.signerWallet)) return walletNotLinked();
     const proposer = await memberByWallet(orgId, body.signerWallet);
     if (!proposer || roleRank(proposer.role) < 1) {
       return NextResponse.json({ error: "signer is not an owner or manager" }, { status: 403 });

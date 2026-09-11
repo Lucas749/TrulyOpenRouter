@@ -3,6 +3,7 @@
 import { apiError } from "../../lib/api-error";
 import { useCallback, useEffect, useState } from "react";
 import { useSignMessage } from "@privy-io/react-auth";
+import { useAuthFetch } from "../components/use-auth-fetch";
 import { approvalMessage, inviteClaimMessage, memberActionMessage, shortId, spendBarState } from "../../lib/member-messages";
 import { MOCK_TEAM_MEMBERS, MOCK_TEAM_ORG, MOCK_TEAM_REQUESTS } from "../../lib/mock";
 
@@ -97,6 +98,7 @@ export default function OrgMembers({
   mock: boolean;
 }) {
   const { signMessage } = useSignMessage();
+  const authFetch = useAuthFetch();
   const [members, setMembers] = useState<Member[] | null>(null);
   const [requests, setRequests] = useState<IncreaseRequest[] | null>(null);
   const [defCap, setDefCap] = useState<number | null>(null);
@@ -128,8 +130,8 @@ export default function OrgMembers({
     }
     try {
       const [m, r] = await Promise.all([
-        (await fetch(`/api/team/orgs/${orgId}/members`)).json(),
-        (await fetch(`/api/team/orgs/${orgId}/requests`)).json(),
+        (await authFetch(`/api/team/orgs/${orgId}/members`)).json(),
+        (await authFetch(`/api/team/orgs/${orgId}/requests`)).json(),
       ]);
       setMembers(m.members ?? []);
       setRequests(r.data ?? []);
@@ -138,7 +140,7 @@ export default function OrgMembers({
       setMembers([]);
       setRequests([]);
     }
-  }, [orgId, mock]);
+  }, [orgId, mock, authFetch]);
 
   useEffect(() => {
     load();
@@ -172,7 +174,7 @@ export default function OrgMembers({
     setBusy(tag);
     setErr(null);
     try {
-      const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const r = await authFetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d: any = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(apiError(d, r.status));
       await load();
@@ -256,7 +258,7 @@ export default function OrgMembers({
       setErr(`signing rejected: ${String(e?.message ?? e).slice(0, 120)}`);
       return;
     }
-    const r = await fetch(`/api/team/orgs/${orgId}/members/${encodeURIComponent(did)}`, {
+    const r = await authFetch(`/api/team/orgs/${orgId}/members/${encodeURIComponent(did)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ walletAddress: bindWallet.trim(), signature, message, signerWallet: myWallet }),
@@ -281,7 +283,7 @@ export default function OrgMembers({
       setErr(`signing rejected: ${String(e?.message ?? e).slice(0, 120)}`);
       return;
     }
-    const r = await fetch(`/api/team/orgs/${orgId}/members/${encodeURIComponent(did)}`, {
+    const r = await authFetch(`/api/team/orgs/${orgId}/members/${encodeURIComponent(did)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ allowanceCredits: editCap.trim() === "" ? null : Number(editCap), signature, message, signerWallet: myWallet }),
@@ -305,7 +307,7 @@ export default function OrgMembers({
       setErr(`signing rejected: ${String(e?.message ?? e).slice(0, 120)}`);
       return;
     }
-    const r = await fetch(`/api/team/orgs/${orgId}/members/${encodeURIComponent(did)}`, {
+    const r = await authFetch(`/api/team/orgs/${orgId}/members/${encodeURIComponent(did)}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ signature, message, signerWallet: myWallet }),

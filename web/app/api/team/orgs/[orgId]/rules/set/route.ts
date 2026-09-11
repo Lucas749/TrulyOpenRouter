@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { memberByWallet, roleRank, setRuleDirect } from "../../../../../../../lib/members";
 import { syncRulesToGateway } from "../../../../../../../lib/rule-sync";
+import { requireSession, sessionOwnsWallet, walletNotLinked } from "../../../../../../../lib/session";
 
 // POST /set { kind, payload, memberDid, signature, message, signerWallet }:
 // owner sets a rule DIRECTLY — one wallet signature, applied + synced immediately.
 // (Managers use propose → inbox → owner approves instead.) The message binds
 // action "rule-set" + {orgId, kind, payload} + expiry, canonical form.
 export async function POST(req: Request, { params }: { params: Promise<{ orgId: string }> }): Promise<Response> {
+  const session = await requireSession(req);
+  if (session instanceof Response) return session;
   try {
     const { orgId } = await params;
     const body = (await req.json().catch(() => ({}))) as {
@@ -20,6 +23,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     if (!body.kind || !body.payload || typeof body.payload !== "object" || !body.memberDid || !body.signature || !body.message || !body.signerWallet) {
       return NextResponse.json({ error: "kind + payload + memberDid + signature + message + signerWallet required" }, { status: 400 });
     }
+    if (!sessionOwnsWallet(session, body.signerWallet)) return walletNotLinked();
     const setter = await memberByWallet(orgId, String(body.signerWallet));
     if (!setter || roleRank(setter.role) < 2) {
       return NextResponse.json({ error: "only owners can set rules directly (managers propose)" }, { status: 403 });

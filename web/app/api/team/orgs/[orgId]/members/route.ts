@@ -14,6 +14,7 @@ import {
   verifyActionMessage,
 } from "../../../../../../lib/members";
 import { clearCap, syncCap, syncSpendCap } from "../../../../../../lib/gateway-admin";
+import { requireSession, requireTeamViewer, sessionOwnsWallet, walletNotLinked } from "../../../../../../lib/session";
 
 async function gatewaySpend(prefix: string | undefined): Promise<number | null> {
   if (!prefix) return null;
@@ -29,10 +30,13 @@ async function gatewaySpend(prefix: string | undefined): Promise<number | null> 
 }
 
 // GET: members with live spend + effective caps (Anthropic-style resolved view).
-export async function GET(_req: Request, { params }: { params: Promise<{ orgId: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ orgId: string }> }) {
   try {
     const { orgId } = await params;
-    const meta = (await getOrgMeta(orgId)) ?? (await ensureOrg(orgId));
+    const session = await requireTeamViewer(req, orgId);
+    if (session instanceof Response) return session;
+    const meta = await getOrgMeta(orgId);
+    if (!meta) return NextResponse.json({ error: "team not found" }, { status: 404 });
     const rows = await Promise.all(
       meta.members
         .filter((m) => m.status !== "removed")
@@ -62,9 +66,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ orgId: 
   }
 }
 
-// POST: owner adds a member. Owner proves it with a wallet personal_sign; first
-// member of an ownerless org becomes founding owner (one-time bootstrap, locked after).
+// POST: owner adds a member. Owner proves it with a wallet personal_sign from a
+// wallet linked to their login; the creator of an ownerless org may found it once.
 export async function POST(req: Request, { params }: { params: Promise<{ orgId: string }> }) {
+  const session = await requireSession(req);
+  if (session instanceof Response) return session;
   try {
     const { orgId } = await params;
     const body = (await req.json().catch(() => ({}))) as {
@@ -89,6 +95,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       } catch (e: any) {
         return NextResponse.json({ error: `bad signature: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 401 });
       }
+      if (!sessionOwnsWallet(session, signer)) return walletNotLinked();
       const meta = await getOrgMeta(orgId);
       const owner = meta?.members.find((m) => m.role === "owner" && m.status === "active" && m.walletAddress.toLowerCase() === signer.toLowerCase());
       if (!owner) return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
@@ -130,7 +137,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       } catch (e: any) {
         return NextResponse.json({ error: `bad signature: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 401 });
       }
-      if (!bootstrapping) {
+      if (!sessionOwnsWallet(session, signer)) return walletNotLinked();
+      if (bootstrapping) {
+        if (!bootMeta.creatorWallet || !sessionOwnsWallet(session, bootMeta.creatorWallet)) {
+          return NextResponse.json({ error: "only the team creator can found an ownerless team" }, { status: 403 });
+        }
+      } else {
         const authed = await memberByWallet(orgId, signer);
         if (!authed || roleRank(authed.role) < 1) {
           return NextResponse.json({ error: "signer is not an owner or manager" }, { status: 403 });
@@ -185,10 +197,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     } catch (e: any) {
       return NextResponse.json({ error: `bad signature: ${String(e?.message ?? e).slice(0, 120)}` }, { status: 401 });
     }
+    if (!sessionOwnsWallet(session, signer)) return walletNotLinked();
     if (bootstrapping) {
-      // Signer must BE the member they register — no claiming wallets for others.
+      // Signer must BE the member they register — no claiming wallets for others —
+      // and only the verified creator may found an ownerless team.
       if (signer.toLowerCase() !== String(body.member.walletAddress).toLowerCase()) {
         return NextResponse.json({ error: "signer must match the registered wallet" }, { status: 403 });
+      }
+      if (!meta.creatorWallet || !sessionOwnsWallet(session, meta.creatorWallet)) {
+        return NextResponse.json({ error: "only the team creator can found an ownerless team" }, { status: 403 });
       }
     } else {
       const authed = await memberByWallet(orgId, signer);

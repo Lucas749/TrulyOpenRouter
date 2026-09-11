@@ -3,7 +3,23 @@ import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { addMember, approvalMessage, ensureOrg, memberActionMessage } from "../../../../../lib/members";
+
+const sessions = vi.hoisted(() => new Map<string, { userId: string; wallets: string[] }>());
+vi.mock("@privy-io/server-auth", () => ({
+  PrivyClient: class {
+    async verifyAuthToken(token: string) {
+      const s = sessions.get(token);
+      if (!s) throw new Error("invalid token");
+      return { userId: s.userId };
+    }
+    async getUser(userId: string) {
+      const s = [...sessions.values()].find((x) => x.userId === userId);
+      return { linkedAccounts: (s?.wallets ?? []).map((address) => ({ type: "wallet", chainType: "ethereum", address })) };
+    }
+  },
+}));
+
+import { approvalMessage, ensureOrg, memberActionMessage, setOrgCreator } from "../../../../../lib/members";
 import { GET as listMembers, POST as addMemberRoute } from "./members/route";
 import { PATCH as patchMember, DELETE as removeMemberRoute } from "./members/[did]/route";
 import { GET as listRequests, POST as createRequestRoute } from "./requests/route";
@@ -14,9 +30,11 @@ const MEMBER = privateKeyToAccount(generatePrivateKey());
 const MANAGER = privateKeyToAccount(generatePrivateKey());
 const ORG = "org-test";
 
-function owner() {
-  return { did: "did:owner", walletAddress: OWNER.address, role: "owner" as const };
+// Every team call carries a verified login; the signing wallet must be linked to it.
+function req(token: string | null, method = "GET", body?: unknown, url = "http://x") {
+  return new Request(url, { method, headers: token ? { authorization: `Bearer ${token}` } : {}, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }
+const org = { params: Promise.resolve({ orgId: ORG }) };
 
 // NOTE: the message binds the EFFECTIVE role. Clients GET members first:
 // empty list -> founding owner flow -> sign role "owner". Strict on purpose.
@@ -27,6 +45,15 @@ async function signedAdd(did: string, wallet: string, role = "member", allowance
   return { member: { did, walletAddress: wallet, role, allowanceCredits: allowance }, signature, message, signerWallet: OWNER.address };
 }
 
+async function foundOwner() {
+  await ensureOrg(ORG);
+  await setOrgCreator(ORG, OWNER.address);
+  const first = await signedAdd("did:owner", OWNER.address, "owner");
+  const r = await addMemberRoute(req("owner", "POST", first), org);
+  expect(r.status).toBe(200);
+  return r;
+}
+
 export const spendCapCalls: any[] = [];
 
 beforeEach(async () => {
@@ -34,6 +61,13 @@ beforeEach(async () => {
   const { resetMembersDb } = await import("../../../../../lib/db-test");
   await resetMembersDb(["org-test"]);
   process.env.GATEWAY_ADMIN_TOKEN = "route-test-token";
+  process.env.NEXT_PUBLIC_PRIVY_APP_ID = "app";
+  process.env.PRIVY_APP_SECRET = "secret";
+  sessions.clear();
+  sessions.set("owner", { userId: "did:owner", wallets: [OWNER.address.toLowerCase()] });
+  sessions.set("member", { userId: "did:m1", wallets: [MEMBER.address.toLowerCase()] });
+  sessions.set("manager", { userId: "did:mgr", wallets: [MANAGER.address.toLowerCase()] });
+  sessions.set("stranger", { userId: "did:stranger", wallets: ["0x0000000000000000000000000000000000009999"] });
   spendCapCalls.length = 0;
   vi.unstubAllGlobals();
   vi.stubGlobal(
@@ -53,32 +87,29 @@ beforeEach(async () => {
 
 describe("members routes", () => {
   it("bootstraps the founding owner, then owner-gates further adds", async () => {
-    await ensureOrg(ORG);
-    const first = await signedAdd("did:owner", OWNER.address, "owner"); // empty org -> founding owner flow
-    const r1 = await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
-    expect(r1.status).toBe(200);
+    const r1 = await foundOwner();
     expect(((await r1.json()) as any).bootstrappedOwner).toBe(true);
 
     // non-owner signature rejected
     const rogueMsg = memberActionMessage("member-add", { orgId: ORG, did: "did:rogue", wallet: MEMBER.address, role: "member" }, Date.now() + 300_000);
     const rogue = await MEMBER.signMessage({ message: rogueMsg });
     const r2 = await addMemberRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ member: { did: "did:rogue", walletAddress: MEMBER.address }, signature: rogue, message: rogueMsg, signerWallet: MEMBER.address }) }),
-      { params: Promise.resolve({ orgId: ORG }) },
+      req("member", "POST", { member: { did: "did:rogue", walletAddress: MEMBER.address }, signature: rogue, message: rogueMsg, signerWallet: MEMBER.address }),
+      org,
     );
     expect(r2.status).toBe(403);
 
     // owner adds member with allowance
     const add = await signedAdd("did:m1", MEMBER.address, "member", 100);
     (add.member as any).keyPrefix = "prefixm1abcd";
-    const r3 = await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(add) }), { params: Promise.resolve({ orgId: ORG }) });
+    const r3 = await addMemberRoute(req("owner", "POST", add), org);
     expect(r3.status).toBe(200);
     // onchain mirror: wallet + budget prefix capped at the effective allowance
     expect(((await r3.json()) as any).chainSynced).toBe("synced");
     expect(spendCapCalls.at(-1)).toMatchObject({ address: MEMBER.address, prefix: "prefixm1abcd", capCredits: 100, periodDays: 30 });
 
     // list shows resolved caps + live spend
-    const list = await listMembers(new Request("http://x"), { params: Promise.resolve({ orgId: ORG }) });
+    const list = await listMembers(req("member"), org);
     const data: any = await list.json();
     expect(data.members).toHaveLength(2);
     const m1 = data.members.find((m: any) => m.did === "did:m1");
@@ -86,150 +117,141 @@ describe("members routes", () => {
     expect(m1.spentCredits).toBe(30);
   });
 
-  it("sets the org default (owner-signed)", async () => {
-    await ensureOrg(ORG);
-    const first = await signedAdd("did:owner", OWNER.address, "owner");
-    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
+  it("requires a verified login, hides teams from outsiders, and binds signatures to the login", async () => {
+    await foundOwner();
+    expect((await listMembers(req(null), org)).status).toBe(401);
+    expect((await listMembers(req("stranger"), org)).status).toBe(404);
+    expect((await listRequests(req("stranger"), org)).status).toBe(404);
+    // A valid owner signature replayed from another login is refused.
+    const add = await signedAdd("did:m1", MEMBER.address, "member", 100);
+    expect((await addMemberRoute(req("stranger", "POST", add), org)).status).toBe(403);
+    expect((await addMemberRoute(req(null, "POST", add), org)).status).toBe(401);
+  });
 
+  it("only the verified creator can found an ownerless team", async () => {
+    await ensureOrg(ORG);
+    await setOrgCreator(ORG, OWNER.address);
+    const expires = Date.now() + 300_000;
+    const message = memberActionMessage("member-add", { orgId: ORG, did: "did:m1", wallet: MEMBER.address, role: "owner" }, expires);
+    const signature = await MEMBER.signMessage({ message });
+    const hijack = await addMemberRoute(
+      req("member", "POST", { member: { did: "did:m1", walletAddress: MEMBER.address, role: "owner" }, signature, message, signerWallet: MEMBER.address }),
+      org,
+    );
+    expect(hijack.status).toBe(403);
+  });
+
+  it("sets the org default (owner-signed)", async () => {
+    await foundOwner();
     const expires = Date.now() + 300_000;
     const msg = memberActionMessage("org-set-default", { orgId: ORG, default: "500" }, expires);
     const sig = await OWNER.signMessage({ message: msg });
-    const ok = await addMemberRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ setDefault: 500, signature: sig, message: msg, signerWallet: OWNER.address }) }),
-      { params: Promise.resolve({ orgId: ORG }) },
-    );
+    const ok = await addMemberRoute(req("owner", "POST", { setDefault: 500, signature: sig, message: msg, signerWallet: OWNER.address }), org);
     expect(ok.status).toBe(200);
     expect(((await ok.json()) as any).defaultAllowanceCredits).toBe(500);
 
     const rogueMsg = memberActionMessage("org-set-default", { orgId: ORG, default: "1" }, expires);
     const rogue = await MEMBER.signMessage({ message: rogueMsg });
-    const denied = await addMemberRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ setDefault: 1, signature: rogue, message: rogueMsg, signerWallet: MEMBER.address }) }),
-      { params: Promise.resolve({ orgId: ORG }) },
-    );
+    const denied = await addMemberRoute(req("member", "POST", { setDefault: 1, signature: rogue, message: rogueMsg, signerWallet: MEMBER.address }), org);
     expect(denied.status).toBe(403);
   });
 
   it("invites by wallet alone (did defaults, login matches by wallet)", async () => {
-    const first = await signedAdd("did:owner", OWNER.address, "owner");
-    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
+    await foundOwner();
     const expires = Date.now() + 300_000;
     const did = `wallet:${MEMBER.address.toLowerCase()}`;
     const msg = memberActionMessage("member-add", { orgId: ORG, did, wallet: MEMBER.address, role: "member" }, expires);
     const sig = await OWNER.signMessage({ message: msg });
-    const r = await addMemberRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ member: { walletAddress: MEMBER.address }, signature: sig, message: msg, signerWallet: OWNER.address }) }),
-      { params: Promise.resolve({ orgId: ORG }) },
-    );
+    const r = await addMemberRoute(req("owner", "POST", { member: { walletAddress: MEMBER.address }, signature: sig, message: msg, signerWallet: OWNER.address }), org);
     expect(r.status).toBe(200);
     expect(((await r.json()) as any).member.did).toBe(did);
   });
 
   it("enforces prescoped manager powers (invite+allowance+decide, nothing else)", async () => {
-    ensureOrg(ORG);
-    const first = await signedAdd("did:owner", OWNER.address, "owner");
-    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
+    await foundOwner();
     // Owner invites a manager.
     const mgr = await signedAdd("did:mgr", MANAGER.address, "manager");
-    const mgrRes = await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(mgr) }), { params: Promise.resolve({ orgId: ORG }) });
+    const mgrRes = await addMemberRoute(req("owner", "POST", mgr), org);
     expect(mgrRes.status).toBe(200);
     // Owner invites a plain member for the manager to manage.
     const add = await signedAdd("did:m1", MEMBER.address, "member", 100);
     (add.member as any).keyPrefix = "prefixm1abcd";
-    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(add) }), { params: Promise.resolve({ orgId: ORG }) });
+    await addMemberRoute(req("owner", "POST", add), org);
 
     const mgrSigned = async (action: string, bind: Record<string, string>) => {
       const message = memberActionMessage(action, bind, Date.now() + 300_000);
       return { message, signature: await MANAGER.signMessage({ message }), signerWallet: MANAGER.address };
     };
+    const member = { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) };
     // Manager sets allowance -> 200.
     const setMsg = await mgrSigned("member-set", { orgId: ORG, did: "did:m1" });
-    const patched = await patchMember(
-      new Request("http://x", { method: "PATCH", body: JSON.stringify({ allowanceCredits: 250, ...setMsg }) }),
-      { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) },
-    );
+    const patched = await patchMember(req("manager", "PATCH", { allowanceCredits: 250, ...setMsg }), member);
     expect(patched.status).toBe(200);
     expect(((await patched.json()) as any).member.allowanceCredits).toBe(250);
     expect(spendCapCalls.at(-1)).toMatchObject({ address: MEMBER.address, capCredits: 250 });
     // Manager invites a member -> 200.
     const invMsg = memberActionMessage("member-add", { orgId: ORG, did: "did:m2", wallet: MEMBER.address, role: "member" }, Date.now() + 300_000);
     const invited = await addMemberRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ member: { did: "did:m2", walletAddress: MEMBER.address, role: "member" }, signature: await MANAGER.signMessage({ message: invMsg }), message: invMsg, signerWallet: MANAGER.address }) }),
-      { params: Promise.resolve({ orgId: ORG }) },
+      req("manager", "POST", { member: { did: "did:m2", walletAddress: MEMBER.address, role: "member" }, signature: await MANAGER.signMessage({ message: invMsg }), message: invMsg, signerWallet: MANAGER.address }),
+      org,
     );
     expect(invited.status).toBe(200);
     // Manager mints an owner -> 403.
     const escMsg = memberActionMessage("member-add", { orgId: ORG, did: "did:evil", wallet: MEMBER.address, role: "owner" }, Date.now() + 300_000);
     const esc = await addMemberRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ member: { did: "did:evil", walletAddress: MEMBER.address, role: "owner" }, signature: await MANAGER.signMessage({ message: escMsg }), message: escMsg, signerWallet: MANAGER.address }) }),
-      { params: Promise.resolve({ orgId: ORG }) },
+      req("manager", "POST", { member: { did: "did:evil", walletAddress: MEMBER.address, role: "owner" }, signature: await MANAGER.signMessage({ message: escMsg }), message: escMsg, signerWallet: MANAGER.address }),
+      org,
     );
     expect(esc.status).toBe(403);
-    // Manager removes -> 403. Manager decides requests -> tested below via decide route shape.
+    // Manager removes -> 403.
     const rmMsg = await mgrSigned("member-remove", { orgId: ORG, did: "did:m1" });
-    const removed = await removeMemberRoute(
-      new Request("http://x", { method: "DELETE", body: JSON.stringify(rmMsg) }),
-      { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) },
-    );
+    const removed = await removeMemberRoute(req("manager", "DELETE", rmMsg), member);
     expect(removed.status).toBe(403);
     // Plain member sets allowance -> 403.
     const memMsg = memberActionMessage("member-set", { orgId: ORG, did: "did:m1" }, Date.now() + 300_000);
     const memSig = await MEMBER.signMessage({ message: memMsg });
-    const memSet = await patchMember(
-      new Request("http://x", { method: "PATCH", body: JSON.stringify({ allowanceCredits: 5, signature: memSig, message: memMsg, signerWallet: MEMBER.address }) }),
-      { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) },
-    );
+    const memSet = await patchMember(req("member", "PATCH", { allowanceCredits: 5, signature: memSig, message: memMsg, signerWallet: MEMBER.address }), member);
     expect(memSet.status).toBe(403);
     // Manager changes a role -> 403 (owner-only).
     const roleMsg = await mgrSigned("member-set", { orgId: ORG, did: "did:m1" });
-    const roleCh = await patchMember(
-      new Request("http://x", { method: "PATCH", body: JSON.stringify({ role: "manager", ...roleMsg }) }),
-      { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) },
-    );
+    const roleCh = await patchMember(req("manager", "PATCH", { role: "manager", ...roleMsg }), member);
     expect(roleCh.status).toBe(403);
     // Manager decides an increase request -> 200, cap applied.
     const reqMsg = memberActionMessage("increase-request", { orgId: ORG, memberDid: "did:m1", amountCredits: "300" }, Date.now() + 300_000);
     const reqSig = await MEMBER.signMessage({ message: reqMsg });
     const created = await createRequestRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ memberDid: "did:m1", amountCredits: 300, signature: reqSig, message: reqMsg, signerWallet: MEMBER.address }) }),
-      { params: Promise.resolve({ orgId: ORG }) },
+      req("member", "POST", { memberDid: "did:m1", amountCredits: 300, signature: reqSig, message: reqMsg, signerWallet: MEMBER.address }),
+      org,
     );
     expect(created.status).toBe(200);
-    const req = ((await created.json()) as any).request;
-    const decMsg = approvalMessage(req, "approve", Date.now() + 300_000);
+    const request = ((await created.json()) as any).request;
+    const decMsg = approvalMessage(request, "approve", Date.now() + 300_000);
     const decSig = await MANAGER.signMessage({ message: decMsg });
     const decided = await decideRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ decision: "approve", signerWallet: MANAGER.address, signature: decSig, message: decMsg }) }),
-      { params: Promise.resolve({ orgId: ORG, id: req.id }) },
+      req("manager", "POST", { decision: "approve", signerWallet: MANAGER.address, signature: decSig, message: decMsg }),
+      { params: Promise.resolve({ orgId: ORG, id: request.id }) },
     );
     expect(decided.status).toBe(200);
     expect(((await decided.json()) as any).request.status).toBe("approved");
   });
 
   it("edits allowance (sync-first) and removes members", async () => {
-    await ensureOrg(ORG);
-    const first = await signedAdd("did:owner", OWNER.address, "owner");
-    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
+    await foundOwner();
     const add = await signedAdd("did:m1", MEMBER.address, "member", 100);
     (add.member as any).keyPrefix = "prefixm1abcd";
-    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(add) }), { params: Promise.resolve({ orgId: ORG }) });
+    await addMemberRoute(req("owner", "POST", add), org);
+    const member = { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) };
 
     const expires = Date.now() + 300_000;
     const setMsg = memberActionMessage("member-set", { orgId: ORG, did: "did:m1" }, expires);
     const setSig = await OWNER.signMessage({ message: setMsg });
-    const patched = await patchMember(
-      new Request("http://x", { method: "PATCH", body: JSON.stringify({ allowanceCredits: 250, signature: setSig, message: setMsg, signerWallet: OWNER.address }) }),
-      { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) },
-    );
+    const patched = await patchMember(req("owner", "PATCH", { allowanceCredits: 250, signature: setSig, message: setMsg, signerWallet: OWNER.address }), member);
     expect(patched.status).toBe(200);
     expect(((await patched.json()) as any).member.allowanceCredits).toBe(250);
 
     const rmMsg = memberActionMessage("member-remove", { orgId: ORG, did: "did:m1" }, expires);
     const rmSig = await OWNER.signMessage({ message: rmMsg });
-    const removed = await removeMemberRoute(
-      new Request("http://x", { method: "DELETE", body: JSON.stringify({ signature: rmSig, message: rmMsg, signerWallet: OWNER.address }) }),
-      { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) },
-    );
+    const removed = await removeMemberRoute(req("owner", "DELETE", { signature: rmSig, message: rmMsg, signerWallet: OWNER.address }), member);
     expect(removed.status).toBe(200);
     expect(((await removed.json()) as any).member.status).toBe("removed");
     // onchain mirror: ex-member denied (cap 0) before removal
@@ -239,25 +261,23 @@ describe("members routes", () => {
 
 describe("requests routes", () => {
   it("member requests, owner approves with wallet signature, cap applies", async () => {
-    await ensureOrg(ORG);
-    const first = await signedAdd("did:owner", OWNER.address, "owner");
-    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(first) }), { params: Promise.resolve({ orgId: ORG }) });
+    await foundOwner();
     const add = await signedAdd("did:m1", MEMBER.address, "member", 100);
     (add.member as any).keyPrefix = "prefixm1abcd";
-    await addMemberRoute(new Request("http://x", { method: "POST", body: JSON.stringify(add) }), { params: Promise.resolve({ orgId: ORG }) });
+    await addMemberRoute(req("owner", "POST", add), org);
 
     // member-signed increase request
     const expires = Date.now() + 300_000;
     const reqMsg = memberActionMessage("increase-request", { orgId: ORG, memberDid: "did:m1", amountCredits: "400" }, expires);
     const reqSig = await MEMBER.signMessage({ message: reqMsg });
     const created = await createRequestRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ memberDid: "did:m1", amountCredits: 400, signature: reqSig, message: reqMsg, signerWallet: MEMBER.address }) }),
-      { params: Promise.resolve({ orgId: ORG }) },
+      req("member", "POST", { memberDid: "did:m1", amountCredits: 400, signature: reqSig, message: reqMsg, signerWallet: MEMBER.address }),
+      org,
     );
     expect(created.status).toBe(200);
     const reqId = ((await created.json()) as any).request.id;
 
-    const inbox = await listRequests(new Request("http://x/api?status=pending"), { params: Promise.resolve({ orgId: ORG }) });
+    const inbox = await listRequests(req("owner", "GET", undefined, "http://x/api?status=pending"), org);
     expect(((await inbox.json()) as any).data).toHaveLength(1);
 
     // owner approves with wallet signature over the canonical decision message
@@ -265,7 +285,7 @@ describe("requests routes", () => {
     const decMsg = approvalMessage({ id: reqId, orgId: ORG, memberDid: "did:m1", amountCredits: 400 }, "approve", decExpires);
     const decSig = await OWNER.signMessage({ message: decMsg });
     const decided = await decideRoute(
-      new Request("http://x", { method: "POST", body: JSON.stringify({ decision: "approve", signature: decSig, message: decMsg, signerWallet: OWNER.address }) }),
+      req("owner", "POST", { decision: "approve", signature: decSig, message: decMsg, signerWallet: OWNER.address }),
       { params: Promise.resolve({ orgId: ORG, id: reqId }) },
     );
     expect(decided.status).toBe(200);

@@ -222,16 +222,18 @@ export async function setOrgCreator(orgId: string, wallet: string): Promise<void
   }
 }
 
-/// @notice Orgs visible to a wallet: created by them OR spend-member of them.
+/// @notice Orgs visible to a verified login: created by it, an active membership
+/// (Privy subject or linked wallet), or a pending invite to its login email.
 /// Anything else (other people's orgs, ancient test junk) stays invisible.
-export async function visibleOrgIds(wallet: string | null): Promise<Set<string>> {
+export async function visibleOrgIds(identity: { userId: string; wallets: string[]; emails?: string[] }): Promise<Set<string>> {
   const out = new Set<string>();
-  if (!wallet) return out;
-  const w = wallet.toLowerCase();
+  const wallets = identity.wallets.map((w) => w.toLowerCase());
+  const emails = (identity.emails ?? []).map((e) => e.toLowerCase());
   const s = await read();
   for (const [id, o] of Object.entries(s.orgs)) {
-    if (o.creatorWallet === w) out.add(id);
-    else if (o.members.some((m) => m.status === "active" && (m.walletAddress.toLowerCase() === w))) out.add(id);
+    if (o.creatorWallet && wallets.includes(o.creatorWallet)) out.add(id);
+    else if (o.members.some((m) => m.status === "active" && (m.did === identity.userId || (!!m.walletAddress && wallets.includes(m.walletAddress.toLowerCase()))))) out.add(id);
+    else if (o.members.some((m) => m.status === "invited" && !!m.email && emails.includes(m.email.toLowerCase()))) out.add(id);
   }
   return out;
 }

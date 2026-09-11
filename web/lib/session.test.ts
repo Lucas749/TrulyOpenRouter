@@ -21,7 +21,7 @@ describe("team session verification", () => {
       { type: "wallet", chainType: "solana", address: "not-evm" },
       { type: "email", address: "owner@example.com" },
     ] });
-    expect(await sessionUser(request("Bearer token-1"))).toEqual({ userId: "did:privy:owner", wallets: [`0x${"ab".repeat(20)}`], token: "token-1" });
+    expect(await sessionUser(request("Bearer token-1"))).toEqual({ userId: "did:privy:owner", wallets: [`0x${"ab".repeat(20)}`], emails: ["owner@example.com"], token: "token-1" });
   });
 
   it("returns null without a token or with an invalid one", async () => {
@@ -32,7 +32,7 @@ describe("team session verification", () => {
   });
 
   it("matches members by subject or linked wallet, never by an unlinked address", () => {
-    const s = { userId: "did:privy:owner", wallets: [`0x${"ab".repeat(20)}`], token: "t" };
+    const s = { userId: "did:privy:owner", wallets: [`0x${"ab".repeat(20)}`], emails: [], token: "t" };
     expect(isSessionMember({ did: "did:privy:owner", walletAddress: "" }, s)).toBe(true);
     expect(isSessionMember({ did: "wallet:x", walletAddress: `0x${"AB".repeat(20)}` }, s)).toBe(true);
     expect(isSessionMember({ did: "did:privy:other", walletAddress: `0x${"cd".repeat(20)}` }, s)).toBe(false);

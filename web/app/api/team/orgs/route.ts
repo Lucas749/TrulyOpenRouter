@@ -2,21 +2,22 @@ import { NextResponse } from "next/server";
 import { newAuthKeypair, privyApi } from "../../../../lib/privy-server";
 import { saveQuorumKey } from "../../../../lib/quorum-keys";
 import { visibleOrgIds } from "../../../../lib/members";
+import { requireSession } from "../../../../lib/session";
 
 export async function GET(req: Request) {
+  const session = await requireSession(req);
+  if (session instanceof Response) return session;
   try {
-    const wallet = new URL(req.url).searchParams.get("wallet") ?? "";
     const orgs: any = await privyApi("GET", "/organizations");
     const list: any[] = orgs.data ?? orgs ?? [];
     const wallets: any = await privyApi("GET", "/wallets").catch(() => ({ data: [] }));
     const all: any[] = wallets.data ?? [];
-    // Only your orgs: created by you or spend-member of. Everyone else's
-    // (including ancient test junk) stays invisible. No wallet = unfiltered
-    // (local dev convenience, never relied on for auth).
-    const visible = wallet ? await visibleOrgIds(wallet) : null;
+    // Only orgs this login created, belongs to, or is invited to. There is no
+    // unfiltered listing: identity comes from the verified token.
+    const visible = await visibleOrgIds(session);
     return NextResponse.json({
       data: list
-        .filter((o: any) => !visible || visible.has(o.id))
+        .filter((o: any) => visible.has(o.id))
         .map((o: any) => ({
           ...o,
           wallets: all
@@ -33,18 +34,23 @@ export async function GET(req: Request) {
 /// Optional capUsd attaches a spending-cap policy AT CREATION in USD terms,
 /// converted to native (HBAR) wei at the indicative rate in lib/fx.ts — our
 /// chain's native token IS HBAR, so the policy covers HBAR sends by construction.
-/// (Legacy capWei passthrough kept for compat.) Creation is app-authed; later
-/// policy changes need quorum authorization signatures — roadmap, documented.
+/// (Legacy capWei passthrough kept for compat.) The verified login becomes the
+/// founding owner; later policy changes need quorum authorization signatures.
 export async function POST(req: Request) {
+  const session = await requireSession(req);
+  if (session instanceof Response) return session;
   try {
-    const { name, capWei, capUsd, creatorWallet } = (await req.json().catch(() => ({}))) as {
+    const { name, capWei, capUsd } = (await req.json().catch(() => ({}))) as {
       name?: string;
       capWei?: string;
       capUsd?: number;
-      creatorWallet?: string;
     };
     if (!name || typeof name !== "string" || name.length > 64) {
       return NextResponse.json({ error: "name required (<=64 chars)" }, { status: 400 });
+    }
+    const creatorWallet = session.wallets[0];
+    if (!creatorWallet) {
+      return NextResponse.json({ error: "Link a wallet to your login before creating a team." }, { status: 400 });
     }
     let cap = capWei;
     if (capUsd !== undefined) {
@@ -87,16 +93,14 @@ export async function POST(req: Request) {
       walletBody.policy_ids = [policy.id];
     }
     const wallet: any = await privyApi("POST", "/wallets", walletBody);
-    if (creatorWallet && /^0x[0-9a-fA-F]{40}$/.test(creatorWallet)) {
-      // The creator becomes founding owner immediately — otherwise they create
-      // a team they can't act on (no membership = no invite/propose UI).
-      const { addMember, setOrgCreator } = await import("../../../../lib/members");
-      await setOrgCreator(org.id, creatorWallet);
-      try {
-        await addMember(org.id, { did: `wallet:${creatorWallet.toLowerCase()}`, walletAddress: creatorWallet, role: "owner" });
-      } catch {
-        // already a member (retry path) — membership is what matters, not this write
-      }
+    // The creator becomes founding owner immediately — otherwise they create
+    // a team they can't act on (no membership = no invite/propose UI).
+    const { addMember, setOrgCreator } = await import("../../../../lib/members");
+    await setOrgCreator(org.id, creatorWallet);
+    try {
+      await addMember(org.id, { did: session.userId, walletAddress: creatorWallet, role: "owner" });
+    } catch {
+      // already a member (retry path) — membership is what matters, not this write
     }
     return NextResponse.json({ org, quorumId: quorum.id, policy, wallet });
   } catch (e: any) {

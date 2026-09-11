@@ -83,13 +83,17 @@ describe("org visibility (only yours)", () => {
     await ensureOrg("org2");
     await addMember("org2", { did: "did:m1", walletAddress: MEMBER_WALLET, role: "member" });
     await ensureOrg("org3"); // stranger org: no creator, no membership
-    expect(await visibleOrgIds(null)).toEqual(new Set());
-    expect(await visibleOrgIds(OWNER.address)).toEqual(new Set(["org1"]));
-    expect(await visibleOrgIds(MEMBER_WALLET)).toEqual(new Set(["org2"]));
-    expect(await visibleOrgIds("0x0000000000000000000000000000000000009999")).toEqual(new Set());
+    const ownerLogin = { userId: "did:owner-login", wallets: [OWNER.address] };
+    expect(await visibleOrgIds({ userId: "did:nobody", wallets: [] })).toEqual(new Set());
+    expect(await visibleOrgIds(ownerLogin)).toEqual(new Set(["org1"]));
+    expect(await visibleOrgIds({ userId: "did:other", wallets: [MEMBER_WALLET] })).toEqual(new Set(["org2"]));
+    expect(await visibleOrgIds({ userId: "did:m1", wallets: [] })).toEqual(new Set(["org2"])); // Privy subject match
+    expect(await visibleOrgIds({ userId: "did:x", wallets: ["0x0000000000000000000000000000000000009999"] })).toEqual(new Set());
+    await inviteMember("org3", { email: "invitee@example.com", role: "member" });
+    expect(await visibleOrgIds({ userId: "did:i", wallets: [], emails: ["invitee@example.com"] })).toEqual(new Set(["org3"]));
     // first-writer-wins: creator can't be hijacked later
     await setOrgCreator("org1", MEMBER_WALLET);
-    expect(await visibleOrgIds(OWNER.address)).toEqual(new Set(["org1"]));
+    expect(await visibleOrgIds(ownerLogin)).toEqual(new Set(["org1"]));
   });
 });
 

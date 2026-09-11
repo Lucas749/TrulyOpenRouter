@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSignMessage } from "@privy-io/react-auth";
+import { useAuthFetch } from "../components/use-auth-fetch";
 import { memberActionMessage, ruleDecisionMessage, stableJson } from "../../lib/member-messages";
 
 // Firm rules, designed like the landing page: one row per rule, current value
@@ -51,6 +52,7 @@ export default function OrgRules({
   mock: boolean;
 }) {
   const { signMessage } = useSignMessage();
+  const authFetch = useAuthFetch();
   const [rules, setRules] = useState<Rules | null>(null);
   const [pending, setPending] = useState<RuleChange[]>([]);
   const [history, setHistory] = useState<RuleChange[]>([]);
@@ -81,7 +83,7 @@ export default function OrgRules({
       return;
     }
     try {
-      const d: any = await (await fetch(`/api/team/orgs/${orgId}/rules`)).json();
+      const d: any = await (await authFetch(`/api/team/orgs/${orgId}/rules`)).json();
       setRules(d.rules ?? null);
       const all: RuleChange[] = d.changes ?? [];
       setPending(all.filter((r) => r.status === "pending"));
@@ -106,14 +108,14 @@ export default function OrgRules({
       setHosts(hl);
     } catch {}
     try {
-      const m: any = await (await fetch(`/api/team/orgs/${orgId}/members`)).json();
+      const m: any = await (await authFetch(`/api/team/orgs/${orgId}/members`)).json();
       const mine = (m.members ?? []).find(
         (x: any) => x.did === me?.did || (x.walletAddress && me?.wallet && x.walletAddress.toLowerCase() === me.wallet.toLowerCase()),
       );
       setIsOwner(mine?.role === "owner");
       setCanManage(mine?.role === "owner" || mine?.role === "manager");
     } catch {}
-  }, [orgId, mock, me?.did, me?.wallet]);
+  }, [orgId, mock, me?.did, me?.wallet, authFetch]);
 
   useEffect(() => {
     load();
@@ -137,7 +139,7 @@ export default function OrgRules({
         const signature = await sign(message).catch((e: any) => {
           throw new Error(`signing rejected: ${String(e?.message ?? e).slice(0, 120)}`);
         });
-        const r = await fetch(`/api/team/orgs/${orgId}/rules/set`, {
+        const r = await authFetch(`/api/team/orgs/${orgId}/rules/set`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ kind, payload, memberDid: me.did, signature, message, signerWallet: me.wallet }),
@@ -150,7 +152,7 @@ export default function OrgRules({
         const signature = await sign(message).catch((e: any) => {
           throw new Error(`signing rejected: ${String(e?.message ?? e).slice(0, 120)}`);
         });
-        const r = await fetch(`/api/team/orgs/${orgId}/rules`, {
+        const r = await authFetch(`/api/team/orgs/${orgId}/rules`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ kind, payload, memberDid: me.did, signature, message, signerWallet: me.wallet }),
@@ -187,7 +189,7 @@ export default function OrgRules({
       const signature = await sign(message).catch((e: any) => {
         throw new Error(`signing rejected: ${String(e?.message ?? e).slice(0, 120)}`);
       });
-      const r = await fetch(`/api/team/orgs/${orgId}/rules/changes/${req.id}`, {
+      const r = await authFetch(`/api/team/orgs/${orgId}/rules/changes/${req.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ decision, signerWallet: me.wallet, signature, message }),

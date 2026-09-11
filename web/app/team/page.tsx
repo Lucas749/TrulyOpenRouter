@@ -24,7 +24,6 @@ export default function TeamPage() {
       <main className="mx-auto flex max-w-[720px] flex-col gap-6 px-6 py-10">
         <p className="m-0 text-sm text-[#6E6E73]">Shared wallets with quorum ownership. Creating a team provisions key quorum → organization → wallet in one call.</p>
         <TeamOrgs me={me} mock={mock} />
-        <p className="m-0 font-mono text-[11px] text-[#8F8F8F]">approvals behind the button: propose → server-held quorum key authorizes → auto-executes. Server keys exist for teams created after the key-store change; older teams show the approve error with the fix.</p>
       </main>
     </div>
   );
