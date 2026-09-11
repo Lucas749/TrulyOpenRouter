@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const sdk = vi.hoisted(() => ({ verifyAuthToken: vi.fn(), getUser: vi.fn() }));
 vi.mock("@privy-io/server-auth", () => ({ PrivyClient: class { verifyAuthToken = sdk.verifyAuthToken; getUser = sdk.getUser; } }));
-import { privySubscriber } from "../src/subscriber.js";
+import { privySession, privySubscriber } from "../src/subscriber.js";
 
 beforeEach(() => { vi.resetAllMocks(); });
 it("derives wallet ownership from the verified subject and server-side linked accounts", async () => {
@@ -14,6 +14,11 @@ it("derives wallet ownership from the verified subject and server-side linked ac
   expect(await privySubscriber("app", "secret")("signed-token")).toEqual([`0x${"ab".repeat(20)}`]);
   expect(sdk.verifyAuthToken.mock.calls).toEqual([["signed-token"]]);
   expect(sdk.getUser.mock.calls).toEqual([["did:privy:verified"]]);
+});
+it("returns the verified subject together with its linked wallets", async () => {
+  sdk.verifyAuthToken.mockResolvedValue({ userId: "did:privy:owner" });
+  sdk.getUser.mockResolvedValue({ linkedAccounts: [{ type: "wallet", chainType: "ethereum", address: `0x${"CD".repeat(20)}` }] });
+  expect(await privySession("app", "secret")("signed-token")).toEqual({ userId: "did:privy:owner", wallets: [`0x${"cd".repeat(20)}`] });
 });
 it("rejects invalid tokens before fetching wallet ownership", async () => {
   sdk.verifyAuthToken.mockRejectedValue(new Error("expired signature"));

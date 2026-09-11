@@ -7,7 +7,11 @@ export class SubscriberError extends Error {
 
 export type VerifySubscriber = (token: string) => Promise<Address[]>;
 
-export function privySubscriber(appId?: string, secret?: string): VerifySubscriber {
+/// @notice A verified login: the Privy subject plus its server-side linked wallets.
+export interface VerifiedSession { userId: string; wallets: Address[] }
+export type VerifySession = (token: string) => Promise<VerifiedSession>;
+
+export function privySession(appId?: string, secret?: string): VerifySession {
   const client = appId && secret ? new PrivyClient(appId, secret) : null;
   return async token => {
     if (!client) throw new SubscriberError(503, "auth_unavailable", "Login verification is unavailable. Try again later.");
@@ -16,11 +20,16 @@ export function privySubscriber(appId?: string, secret?: string): VerifySubscrib
     catch { throw new SubscriberError(401, "authentication_required", "Sign in again to continue."); }
     try {
       const user = await client.getUser(userId);
-      return user.linkedAccounts.flatMap(account =>
+      return { userId, wallets: user.linkedAccounts.flatMap(account =>
         account.type === "wallet" && account.chainType === "ethereum" && /^0x[\da-f]{40}$/i.test(account.address)
-          ? [account.address.toLowerCase() as Address] : []);
+          ? [account.address.toLowerCase() as Address] : []) };
     } catch { throw new SubscriberError(503, "auth_unavailable", "Wallet ownership could not be verified. Try again later."); }
   };
+}
+
+export function privySubscriber(appId?: string, secret?: string): VerifySubscriber {
+  const session = privySession(appId, secret);
+  return async token => (await session(token)).wallets;
 }
 
 export async function subscriberWallet(token: string | undefined, claimed: unknown, verify?: VerifySubscriber): Promise<Address> {
