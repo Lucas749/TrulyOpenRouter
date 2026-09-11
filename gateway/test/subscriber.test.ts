@@ -28,13 +28,15 @@ async function setup(overrides: GatewayOptions = {}) {
   const settle = vi.fn(async () => "0xconfirmed");
   const receipts = new MemoryReceiptLog();
   const subscriptionCredits = vi.fn(async () => 10n);
+  const endpoint = listen(upstream);
   const base = listen(createApp({
     verifySubscriber: async token => {
       if (token !== "valid-session") throw new SubscriberError(401, "authentication_required", "Invalid session");
       return [alice];
     },
     subscriptionCredits, settle, receipts,
-    fallbackUpstream: listen(upstream), ...overrides,
+    fetchHosts: async () => [{ address: bob, modelId: "qwen", modelDigest: "0xabc", endpoint,
+      pricePerReq: 100_000n, pricePer1kTokens: 100_000n, active: true, stake: 1n, lastHeartbeat: Date.now() }], ...overrides,
   }));
   const chat = (token?: string, userHandle?: string, sse = false) => fetch(`${base}/v1/chat/completions`, {
     method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(sse ? { Accept: "text/event-stream" } : {}) },
@@ -98,6 +100,32 @@ describe("subscriber enforcement", () => {
     expect((await ctx.chat(issued.key)).status).toBe(401);
   });
 
+  it("checks enough credits for the bounded request and does not leave a hold on denial", async () => {
+    const credits = vi.fn(async () => 1n);
+    const ctx = await setup({ subscriptionCredits: credits });
+    expect((await ctx.chat("valid-session", alice, true)).status).toBe(402);
+    expect(ctx.served.mock.calls).toHaveLength(0);
+    credits.mockResolvedValue(10n);
+    expect((await ctx.chat("valid-session", alice)).status).toBe(200);
+  });
+
+  it("serializes concurrent spending and re-reads credits after confirmed settlement", async () => {
+    let finish: () => void = () => {};
+    let start: () => void = () => {};
+    const started = new Promise<void>(r => { start = r; });
+    const done = new Promise<void>(r => { finish = r; });
+    let balance = 10n;
+    const ctx = await setup({ subscriptionCredits: async () => balance,
+      settle: async () => { start(); await done; balance = 0n; return "0xtx"; } });
+    const first = ctx.chat("valid-session", alice);
+    await started;
+    expect((await ctx.chat("valid-session", alice)).status).toBe(409);
+    finish();
+    expect((await first).status).toBe(200);
+    expect((await ctx.chat("valid-session", alice)).status).toBe(402);
+    expect(ctx.served.mock.calls).toHaveLength(1);
+  });
+
   it("does not release a completion after failed settlement", async () => {
     const ctx = await setup({ settle: async () => { throw new Error("debit reverted"); } });
     const response = await ctx.chat("valid-session", alice);
@@ -105,6 +133,8 @@ describe("subscriber enforcement", () => {
     const body = await response.json();
     expect(body.error.type).toBe("settlement_pending");
     expect(body.choices).toBeUndefined();
+    expect((await ctx.chat("valid-session", alice)).status).toBe(409);
+    expect(ctx.served.mock.calls).toHaveLength(1);
   });
 
   it("protects operator-funded verification probes", async () => {

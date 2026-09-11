@@ -6,6 +6,7 @@ export function sha256hex(s: string): string {
 }
 
 export interface ReceiptInput {
+  requestId?: string; // unique request identity for concurrency-safe payment attribution
   promptHash: string;
   completionHash: string;
   modelDigest: string;
@@ -34,7 +35,8 @@ export interface Receipt extends ReceiptInput {
 /// @notice Bodies never touch a receipt — hashes only (see privacy split, SPEC §1b…§4).
 export function buildReceipt(input: ReceiptInput, ts = Date.now()): Receipt {
   const id = sha256hex(
-    [input.promptHash, input.completionHash, input.modelDigest, input.host, input.priceWei, input.latencyMs].join("|"),
+    [input.promptHash, input.completionHash, input.modelDigest, input.host, input.priceWei, input.latencyMs,
+      ...(input.requestId ? [input.requestId, input.user ?? ""] : [])].join("|"),
   );
   return { ...input, id, ts };
 }

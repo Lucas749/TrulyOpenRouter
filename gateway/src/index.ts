@@ -1,4 +1,6 @@
 import express from "express";
+import { randomUUID } from "node:crypto";
+import { boundedCompletion, MemoryBillingRequests, PgBillingRequests, type BillingRequests } from "./billing.js";
 import { privySubscriber, subscriberWallet, SubscriberError, type VerifySubscriber } from "./subscriber.js";
 import { createPublicClient, createWalletClient, http, parseAbi, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
@@ -20,7 +22,7 @@ import { type DeviceFlow, MemoryDeviceFlow, PgDeviceFlow } from "./device.js";
 import { proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
 import { loadReferences, MemoryVerifier, PgVerifier, PROBES, spotCheck, type CheckReport, type Verifier } from "./verify.js";
 import { createPaidFetch } from "./payer.js";
-import { settleCall, type DebitFn } from "./settle.js";
+import { priceForCall, settleCall, type DebitFn } from "./settle.js";
 import { FileTapStore, PgTapStore, tapInstruction, type TapKind, type TapStatus, type TapStore, verifyTapTransfer } from "./taps.js";
 import { cachedGeo } from "./geo.js";
 import { createTapExecutor } from "./tap-exec.js";
@@ -36,6 +38,7 @@ class OrgPolicyDenied extends Error {
 }
 
 export interface GatewayOptions {
+  billing?: BillingRequests;
   requireSubscription?: boolean; // secure by default; false only in isolated development/tests
   verifySubscriber?: VerifySubscriber;
   subscriptionCredits?: (payer: Address) => Promise<bigint | null>;
@@ -210,6 +213,7 @@ export async function resolveHosts(opts: GatewayOptions, modelId: string): Promi
 export function createApp(opts: GatewayOptions = {}) {
   opts.runtime ??= new MemoryHostRuntime();
   const requireSubscription = opts.requireSubscription !== false;
+  const billing = opts.billing ?? new MemoryBillingRequests();
   const app = express();
   app.use(express.json({ limit: "10mb" }));
   app.get("/health", (_req, res) => res.json({ ok: true, service: "tor-gateway" }));
@@ -275,6 +279,10 @@ export function createApp(opts: GatewayOptions = {}) {
 
   app.post("/v1/chat/completions", async (req, res) => {
     let selectedHost: HostInfo | null = null;
+    const requestId = randomUUID();
+    let billingPayer: string | null = null;
+    let paymentStarted = false;
+    let availableCredits = 0n;
     try {
       const model = req.body?.model;
       if (typeof model !== "string" || !model) {
@@ -324,11 +332,16 @@ export function createApp(opts: GatewayOptions = {}) {
         if (!payer || !opts.settle || (!opts.subscriptionCredits && (!opts.vaultAddress || !opts.rpcUrl))) {
           throw new SubscriberError(503, "billing_unavailable", "Subscription billing is unavailable. Try again later.");
         }
+        if (!await billing.acquire(payer, requestId)) {
+          throw new SubscriberError(409, "billing_pending", "A previous request is running or its payment needs reconciliation. Wait before retrying.");
+        }
+        billingPayer = payer;
         const credits = await (opts.subscriptionCredits
           ? opts.subscriptionCredits(payer as Address)
-          : readVaultCredits(opts.rpcUrl!, opts.vaultAddress!, payer as Address));
+          : readVaultCredits(opts.rpcUrl!, opts.vaultAddress!, payer as Address)).catch(() => null);
         if (credits === null) throw new SubscriberError(503, "billing_unavailable", "Your credit balance could not be verified. Try again later.");
         if (credits <= 0n) throw new SubscriberError(402, "payment_required", "Out of credits — subscribe to continue.");
+        availableCredits = credits;
       }
       // Org rules gate (firm policy). Handle = key:<prefix> for keyed calls,
       // wallet:<addr> for browser calls. Blocks speak plainly: the caller asked
@@ -386,7 +399,7 @@ export function createApp(opts: GatewayOptions = {}) {
           return;
         }
       }
-      const fallback = opts.fallbackUpstream ?? process.env.UPSTREAM_URL;
+      const fallback = requireSubscription ? undefined : opts.fallbackUpstream ?? process.env.UPSTREAM_URL;
       const t0 = Date.now();
       const sse = (req.headers.accept ?? "").includes("text/event-stream");
       const emit = (event: string, data: unknown) => {
@@ -401,7 +414,6 @@ export function createApp(opts: GatewayOptions = {}) {
         const credits = await readVaultCredits(opts.rpcUrl, opts.vaultAddress, walletHandle.slice(7) as Address);
         if (credits !== null && credits <= 0n) throw new SubscriberError(402, "payment_required", "Out of credits — subscribe to continue.");
       }
-      emit("routed", { model });
       const { endpoint, host } = await selectUpstream(model, async () => {
         const hosts = await resolveHosts(opts, model);
         // Failing verification = out of rotation until it recovers. The directory
@@ -438,13 +450,22 @@ export function createApp(opts: GatewayOptions = {}) {
         }
         return pool;
       }, fallback);
+      const bounded = requireSubscription ? boundedCompletion(req.body) : null;
+      if (bounded) {
+        const maximum = priceForCall(host, bounded.promptCeiling, bounded.completionCeiling);
+        if (maximum < 1n) throw new SubscriberError(503, "billing_unavailable", "This host has no billable subscription price.");
+        if (availableCredits < maximum) throw new SubscriberError(402, "payment_required", `This request needs up to ${maximum} credits available. Shorten it or add credits; only actual usage is charged.`);
+        await billing.submitted(payer!, requestId, host!.address, maximum);
+        paymentStarted = true;
+      }
       selectedHost = host;
+      emit("routed", { model });
       emit("submitted", { endpoint });
       const paidFetch = opts.x402 ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }) : undefined;
       // The gateway buffers the completion and replays its own SSE envelope —
       // upstream always gets a plain request, never a stream (its SSE frames
       // are not JSON and would die in res.json()).
-      const upstreamBody = { ...((req.body ?? {}) as object), stream: false };
+      const upstreamBody = bounded?.body ?? { ...((req.body ?? {}) as object), stream: false };
       const { out, paid, x402Transaction } = await proxyWithFallback(endpoint, upstreamBody, opts.x402, paidFetch, () => emit("paying", {}));
       if (paid) emit("paid-host", { transaction: x402Transaction ?? null });
       if (host && opts.health) await opts.health.recordLatency(host.address, Date.now() - t0);
@@ -453,6 +474,7 @@ export function createApp(opts: GatewayOptions = {}) {
       const tokensIn = Number(usage.prompt_tokens ?? 0);
       const tokensOut = Number(usage.completion_tokens ?? 0);
       const receiptInput = {
+        requestId,
         promptHash: sha256hex(JSON.stringify(req.body.messages ?? req.body)),
         completionHash: sha256hex(JSON.stringify(out)),
         modelDigest: host?.modelDigest ?? "fallback",
@@ -465,8 +487,9 @@ export function createApp(opts: GatewayOptions = {}) {
         user: keyPrefix ? `key:${keyPrefix}` : (walletHandle ?? "dev"),
         ...(x402Transaction ? { x402Transaction } : {}),
       };
-      if (opts.receipts) await opts.receipts.append(buildReceipt(receiptInput));
-      const receipt = (await opts.receipts?.list(1))?.[0]?.id;
+      const builtReceipt = buildReceipt(receiptInput);
+      if (opts.receipts) await opts.receipts.append(builtReceipt);
+      const receipt = builtReceipt.id;
       const settled = opts.settle
         ? await settleCall(
             {
@@ -502,6 +525,7 @@ export function createApp(opts: GatewayOptions = {}) {
       if (requireSubscription && !settled.settled) {
         throw new SubscriberError(503, "settlement_pending", "Payment could not be confirmed. Your completion has not been released.");
       }
+      if (billingPayer) { await billing.release(billingPayer, requestId); billingPayer = null; }
       emit("settled", { receipt });
       if (sse) {
         res.write(`data: ${JSON.stringify({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled })}\n\n`);
@@ -510,11 +534,11 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       res.json({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled });
     } catch (e: any) {
-      if (selectedHost && opts.health) await opts.health.recordFail(selectedHost.address);
+      if (selectedHost && opts.health && !(e instanceof SubscriberError)) await opts.health.recordFail(selectedHost.address);
       // Mid-stream failures must not touch headers twice — that crashes the process.
       if (res.headersSent) {
         try {
-          res.write(`event: error\ndata: ${JSON.stringify({ message: String(e?.message ?? e).slice(0, 200) })}\n\n`);
+          res.write(`event: error\ndata: ${JSON.stringify({ message: String(e?.message ?? e).slice(0, 200), ...(e instanceof SubscriberError ? { type: e.type } : {}) })}\n\n`);
           res.end();
         } catch {}
         return;
@@ -529,6 +553,8 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       const code = String(e?.message ?? "").startsWith("no hosts") ? 404 : 502;
       res.status(code).json({ error: { message: String(e?.message ?? e).slice(0, 200), type: "upstream_error" } });
+    } finally {
+      if (billingPayer && !paymentStarted) await billing.release(billingPayer, requestId).catch(() => {});
     }
   });
 
@@ -1248,6 +1274,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const pg = dbEnabled();
   const opts: GatewayOptions = {
+    billing: pg ? new PgBillingRequests() : new MemoryBillingRequests(),
     verifySubscriber: privySubscriber(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET),
     availability: new EndpointAvailability(),
     runtime: pg ? new PgHostRuntime() : new MemoryHostRuntime(),

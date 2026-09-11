@@ -25,6 +25,16 @@ CREATE TABLE IF NOT EXISTS receipts (
 CREATE INDEX IF NOT EXISTS receipts_ts_idx ON receipts (ts DESC);
 CREATE INDEX IF NOT EXISTS receipts_payer_idx ON receipts (payer, ts DESC);
 
+-- Retain unresolved payment attempts across restarts. Reconcile before release.
+CREATE TABLE IF NOT EXISTS billing_requests (
+  payer text PRIMARY KEY,
+  request_id text NOT NULL UNIQUE,
+  created_at bigint NOT NULL,
+  submitted boolean NOT NULL DEFAULT false,
+  host text,
+  maximum_credits text
+);
+
 -- API keys (restart-safe issuance + revocation).
 CREATE TABLE IF NOT EXISTS api_keys (
   prefix text PRIMARY KEY,
