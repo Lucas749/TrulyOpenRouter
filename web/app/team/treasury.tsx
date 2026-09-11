@@ -17,7 +17,7 @@ import { useAuthFetch } from "../components/use-auth-fetch";
 
 interface Intent {
   id: string;
-  kind: "buy_credits" | "refund" | "payout_hbar" | "payout_usdc";
+  kind: "buy_credits" | "refund" | "payout_hbar" | "payout_usdc" | "update_policy";
   state: string;
   terms: Record<string, string>;
   transactionHash: string | null;
@@ -31,7 +31,8 @@ interface TreasuryView {
   network: string;
   team: { walletAddress: string | null; state: string; approverUserId: string | null; payoutRecipients: string[] } | null;
   balances: { hbarWei: string | null; credits: string | null; testUsdcUnits: string | null };
-  plans: { planId: string; priceTinybar: string; credits: string }[];
+  plans: { planId: string; priceTinybar: string; credits: string; allowed: boolean }[];
+  limits: { planIds: string[]; hbarPayoutCap: string; usdcPayoutCap: string; recipients: string[] } | null;
   intents: Intent[];
   me: { role: string; financialApprover: boolean };
 }
@@ -71,6 +72,11 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
   const [payoutAsset, setPayoutAsset] = useState<"payout_hbar" | "payout_usdc">("payout_hbar");
   const [payoutRecipient, setPayoutRecipient] = useState("");
   const [payoutAmount, setPayoutAmount] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [limitPlans, setLimitPlans] = useState<string[]>([]);
+  const [limitHbar, setLimitHbar] = useState("");
+  const [limitUsdc, setLimitUsdc] = useState("");
+  const [limitRecipients, setLimitRecipients] = useState("");
   const base = `/api/gw/api/team/orgs/${encodeURIComponent(orgId)}`;
 
   const load = useCallback(async () => {
@@ -98,8 +104,10 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
       const r = await authFetch(`${base}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(apiError(d, r.status));
+      return true;
     } catch (e) {
       setErr(String((e as Error)?.message ?? e).slice(0, 240));
+      return false;
     } finally {
       setBusy(null);
       await load();
@@ -128,8 +136,18 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
     }
   }
 
+  function editLimits() {
+    if (!view?.limits) return;
+    setLimitPlans(view.limits.planIds);
+    setLimitHbar(view.limits.hbarPayoutCap);
+    setLimitUsdc(view.limits.usdcPayoutCap);
+    setLimitRecipients(view.limits.recipients.join("\n"));
+    setEditing(true);
+  }
+
   const team = view?.team;
   const canPropose = view?.me.role === "owner" || view?.me.role === "manager";
+  const isOwner = view?.me.role === "owner";
   const openIntent = view?.intents.find((i) => ["proposed", "awaiting_approvals", "authorized", "signed", "submitted", "uncertain"].includes(i.state));
 
   return (
@@ -177,11 +195,82 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
                 <span className="font-mono text-[11px] text-[#8F8F8F]">covers the plan price plus network fees</span>
               </div>
 
+              {view.limits && (
+                <div className="flex flex-col gap-2 rounded-lg border border-dashed border-black/15 p-3">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="text-xs text-[#5D5D5D]">Wallet limits</span>
+                    <span className="font-mono text-[11px] text-[#6E6E73]">
+                      plans {view.limits.planIds.join(", ")} · payouts up to {view.limits.hbarPayoutCap} HBAR or {view.limits.usdcPayoutCap} test USDC per transaction · {view.limits.recipients.length} approved recipient{view.limits.recipients.length === 1 ? "" : "s"}
+                    </span>
+                    {isOwner && !editing && (
+                      <button onClick={editLimits} disabled={!!busy || !!openIntent} className="ml-auto rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] disabled:opacity-40">
+                        Change limits
+                      </button>
+                    )}
+                  </div>
+                  {isOwner && editing && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] text-[#6E6E73]">Credit plans the team may buy</span>
+                        {view.plans.map((p) => {
+                          const on = limitPlans.includes(p.planId);
+                          return (
+                            <button
+                              key={p.planId}
+                              onClick={() => setLimitPlans((cur) => (on ? cur.filter((x) => x !== p.planId) : [...cur, p.planId]))}
+                              className={`rounded-full border px-3 py-1 font-mono text-[11px] ${on ? "border-black bg-black text-white" : "border-black/10 bg-white"}`}
+                            >
+                              {Number(p.credits).toLocaleString("en-US")} credits · {Number(p.priceTinybar) / 1e8} HBAR
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <label className="flex flex-col gap-1 text-[11px] text-[#6E6E73]">
+                          Max HBAR payout per transaction
+                          <input value={limitHbar} onChange={(e) => setLimitHbar(e.target.value)} inputMode="decimal" className="h-8 w-32 rounded-lg border border-black/10 px-2.5 font-mono text-xs text-black" />
+                        </label>
+                        <label className="flex flex-col gap-1 text-[11px] text-[#6E6E73]">
+                          Max test USDC payout per transaction
+                          <input value={limitUsdc} onChange={(e) => setLimitUsdc(e.target.value)} inputMode="decimal" className="h-8 w-32 rounded-lg border border-black/10 px-2.5 font-mono text-xs text-black" />
+                        </label>
+                      </div>
+                      <label className="flex flex-col gap-1 text-[11px] text-[#6E6E73]">
+                        Approved payout recipients, one wallet address per line
+                        <textarea value={limitRecipients} onChange={(e) => setLimitRecipients(e.target.value)} rows={3} className="rounded-lg border border-black/10 px-2.5 py-2 font-mono text-xs text-black" />
+                      </label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={async () => {
+                            const proposed = await post("limits", "/intents", {
+                              kind: "update_policy",
+                              planIds: limitPlans.map(Number),
+                              hbarPayoutCap: limitHbar.trim(),
+                              usdcPayoutCap: limitUsdc.trim(),
+                              recipients: limitRecipients.split(/[\s,]+/).filter(Boolean),
+                            });
+                            if (proposed) setEditing(false);
+                          }}
+                          disabled={!!busy || !limitPlans.length}
+                          className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40"
+                        >
+                          {busy === "limits" ? "preparing…" : "Propose new limits"}
+                        </button>
+                        <button onClick={() => setEditing(false)} disabled={!!busy} className="rounded-full border border-black/15 px-3 py-1 text-[11px] disabled:opacity-40">
+                          Cancel
+                        </button>
+                        <span className="font-mono text-[11px] text-[#8F8F8F]">the financial approver authorizes the change; Privy then enforces it on every signature</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {canPropose && (
                 <div className="flex flex-col gap-2 rounded-lg border border-dashed border-black/15 p-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs text-[#5D5D5D]">Buy compute credits</span>
-                    {view.plans.map((p) => (
+                    {view.plans.filter((p) => p.allowed).map((p) => (
                       <button
                         key={p.planId}
                         onClick={() => post(`buy-${p.planId}`, "/intents", { kind: "buy_credits", planId: Number(p.planId) })}
@@ -244,11 +333,17 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
                         {i.terms.amount && <span>{i.terms.amount} {i.kind === "payout_usdc" ? "test USDC" : "HBAR"}</span>}
                         {i.terms.recipient && <span className="break-all">to {i.terms.recipient}</span>}
                         {i.terms.vault && <span className="break-all">vault {i.terms.vault}</span>}
-                        <span>max fee {i.terms.maxFeeHbar} HBAR</span>
-                        <span>nonce {i.terms.nonce}</span>
+                        {i.terms.plans && <span>plans {i.terms.plans}</span>}
+                        {i.terms.hbarPayoutCap && <span>HBAR payouts up to {i.terms.hbarPayoutCap}</span>}
+                        {i.terms.usdcPayoutCap && <span>test USDC payouts up to {i.terms.usdcPayoutCap}</span>}
+                        {i.terms.recipients && <span className="break-all">recipients {i.terms.recipients}</span>}
+                        {i.terms.previous && <span>was {i.terms.previous}</span>}
+                        {i.terms.maxFeeHbar && <span>max fee {i.terms.maxFeeHbar} HBAR</span>}
+                        {i.terms.nonce && <span>nonce {i.terms.nonce}</span>}
                         <span>{i.terms.network}</span>
                       </div>
                       {i.result.creditsAdded && <span className="font-mono text-[11px] text-[#0B7A5D]">+{i.result.creditsAdded} credits confirmed onchain</span>}
+                      {i.result.policyUpdated && <span className="font-mono text-[11px] text-[#0B7A5D]">new limits confirmed in the Privy policy</span>}
                       {i.error && <span className="font-mono text-[11px] text-[#B3261E]">{i.error}</span>}
                       <div className="flex flex-wrap items-center gap-2">
                         {i.state === "awaiting_approvals" && view.me.financialApprover && (
