@@ -53,7 +53,13 @@ gates run in the gateway per request.
   `.env.prod.after-team-finance`. Never rotate that key: team wallets need it.
   Redeployed from `f90797e` (approvers sign Privy intents in the browser):
   rollback gateway image `tor-gateway:before-browser-approval`, web to
-  `trulyopenrouter-pox1ufip2`.
+  `trulyopenrouter-pox1ufip2`. Then web `00d5383` (simplified Compute Treasury
+  panel; rollback web to `trulyopenrouter-pon41zgqh`) and gateway `62bcae7`:
+  the bundled guard's `HOSTS_JSON` entry names its payee
+  (`0x46B84077f60671fE2872c306e076734B4d8D2E79`, alias of `0.0.10378181`),
+  because the payee check refused every payment to the placeholder `0x…01`.
+  Rollback image `tor-gateway:before-host-payee`, env backup
+  `.env.prod.before-host-payee`.
   Teams set their own wallet limits (plans, payout caps, recipients) through a
   Privy policy intent; API keys belong to the issuing login, and 14 keys issued
   before that remain usable but only operators can revoke them
@@ -79,7 +85,8 @@ gates run in the gateway per request.
   linked wallets server-side. Body addresses cannot impersonate subscribers.
   API keys use their own funded budget accounts. Anonymous/invalid credentials
   receive 401, unowned wallets 403, insufficient credits 402, unknown balances
-  503. No `DEFAULT_PAYER` fallback. Paid traffic needs a registered host.
+  503. No `DEFAULT_PAYER` fallback. Paid traffic needs a registered host, or an
+  operator `HOSTS_JSON` host that names its payee.
   Postgres `billing_requests` serializes each payer and retains uncertain
   payments across restarts. Bounded text/output ceilings protect credit checks;
   only actual usage is debited. Unconfirmed debits withhold the completion.
