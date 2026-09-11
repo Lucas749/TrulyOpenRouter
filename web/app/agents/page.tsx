@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { apiError } from "../../lib/api-error";
+import { connectLedger } from "../../lib/ledger-device";
 import LoginButton from "../components/login-button";
 import { useAuthFetch } from "../components/use-auth-fetch";
 
@@ -180,6 +181,42 @@ export default function AgentsPage() {
       await openDetail(agent.id);
     });
 
+  const [deviceStep, setDeviceStep] = useState<string | null>(null);
+
+  /// @notice Sign a gateway challenge on a connected Ledger, returning its verified address and signature.
+  async function withLedger<T>(prompt: string, work: (ledger: Awaited<ReturnType<typeof connectLedger>>) => Promise<T>): Promise<T> {
+    setDeviceStep(prompt);
+    const ledger = await connectLedger((step) => setDeviceStep(`Ledger: ${step}`));
+    try {
+      return await work(ledger);
+    } finally {
+      await ledger.close();
+      setDeviceStep(null);
+    }
+  }
+
+  // Enroll (no approver yet), replace (new device, then the current one), or remove (current device).
+  const changeLedger = (agent: AgentRow, action: "enroll" | "replace" | "remove") =>
+    run(`ledger-${agent.id}`, async () => {
+      const base = `${GW}/agents/${encodeURIComponent(agent.id)}/ledger`;
+      const newAddress = action === "remove" ? null : await withLedger("Connect the Ledger to enroll and confirm its address on the device", (l) => l.verifiedAddress());
+      const challengeRes = await authFetch(`${base}/challenge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: newAddress }) });
+      const challenge = await challengeRes.json();
+      if (!challengeRes.ok) throw new Error(apiError(challenge, challengeRes.status));
+      let signature: string | undefined;
+      let currentSignature: string | undefined;
+      if (action !== "remove") signature = await withLedger("Approve the enrollment message on the new Ledger", (l) => l.signMessage(challenge.message));
+      if (action !== "enroll") {
+        const current = await withLedger("Now connect the currently enrolled Ledger and approve the change", (l) => l.signMessage(challenge.message));
+        if (action === "remove") signature = current;
+        else currentSignature = current;
+      }
+      const r = await authFetch(base, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: challenge.message, token: challenge.token, signature, currentSignature }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(apiError(d, r.status));
+      await openDetail(agent.id);
+    }).finally(() => setDeviceStep(null));
+
   const teamName = (orgId: string | null) => (orgId ? teams.find((t) => t.id === orgId)?.display_name ?? orgId : "Personal budget");
   const limitLabel = (v: number | null) => (v === null ? "no limit" : `${v.toLocaleString("en-US")} credits`);
 
@@ -329,6 +366,26 @@ export default function AgentsPage() {
                   <span>Ledger {detail.agent.ledgerAddress ? `enrolled ${detail.agent.ledgerAddress}` : "not enrolled"}</span>
                   <span>policy revision {detail.agent.policyRevision}</span>
                 </div>
+                {detail.agent.state !== "revoked" && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-black/15 p-3">
+                    <span className="text-xs text-[#5D5D5D]">
+                      {detail.agent.ledgerAddress
+                        ? "Ledger approvals are on. Replacing or removing the approver needs the enrolled device."
+                        : detail.agent.orgId
+                          ? "Team owners can enroll a Ledger as an extra approval route for this agent."
+                          : "Enroll a Ledger to approve this agent's exceptions and protect its limits."}
+                    </span>
+                    {!detail.agent.ledgerAddress ? (
+                      <button onClick={() => changeLedger(detail.agent, "enroll")} disabled={!!busy} className="rounded-full bg-black px-3 py-1 text-[11px] text-white disabled:opacity-40">Connect Ledger</button>
+                    ) : (
+                      <>
+                        <button onClick={() => changeLedger(detail.agent, "replace")} disabled={!!busy} className="rounded-full border border-black/10 px-3 py-1 text-[11px] disabled:opacity-40">Replace Ledger</button>
+                        <button onClick={() => changeLedger(detail.agent, "remove")} disabled={!!busy} className="rounded-full border border-black/10 px-3 py-1 text-[11px] disabled:opacity-40">Remove Ledger</button>
+                      </>
+                    )}
+                    {deviceStep && <span className="font-mono text-[11px] text-[#5D5D5D]">{deviceStep}</span>}
+                  </div>
+                )}
                 <div className="flex flex-col gap-1">
                   <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Keys</span>
                   {detail.credentials.map((c) => (

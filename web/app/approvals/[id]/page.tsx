@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { usePrivy, useSignMessage } from "@privy-io/react-auth";
 import { apiError } from "../../../lib/api-error";
+import { connectLedger } from "../../../lib/ledger-device";
 import LoginButton from "../../components/login-button";
 import { useAuthFetch } from "../../components/use-auth-fetch";
 
@@ -61,6 +62,7 @@ export default function ApprovalPage() {
   const [view, setView] = useState<ApprovalView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [deviceStep, setDeviceStep] = useState<string | null>(null);
   const path = `/api/gw/api/agent-approvals/${encodeURIComponent(id)}`;
 
   useEffect(() => {
@@ -86,7 +88,19 @@ export default function ApprovalPage() {
     setBusy(decision);
     setErr(null);
     try {
-      const signature = decision === "approve" ? (await signMessage({ message: view.message })).signature : undefined;
+      let signature: string | undefined;
+      if (decision === "approve" && method === "org_owner") signature = (await signMessage({ message: view.message })).signature;
+      if (decision === "approve" && method === "ledger") {
+        // The device shows and signs the exact message; disconnecting leaves the request pending.
+        setDeviceStep("Select your Ledger and open the Ethereum app");
+        const ledger = await connectLedger((step) => setDeviceStep(`Ledger: ${step}`));
+        try {
+          signature = await ledger.signMessage(view.message);
+        } finally {
+          await ledger.close();
+          setDeviceStep(null);
+        }
+      }
       const r = await authFetch(`${path}/decide`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -96,6 +110,7 @@ export default function ApprovalPage() {
       if (!r.ok) throw new Error(apiError(d, r.status));
       await reload();
     } catch (e) {
+      setDeviceStep(null);
       setErr(errorText(e));
     } finally {
       setBusy(null);
@@ -167,11 +182,17 @@ export default function ApprovalPage() {
                     {busy === "approve" ? "sign in wallet…" : "Approve spending increase"}
                   </button>
                 )}
+                {view.canApprove.ledger && (
+                  <button onClick={() => decide("approve", "ledger")} disabled={!!busy} className="h-10 rounded-full border border-black px-5 text-sm disabled:opacity-40">
+                    {busy === "approve" && deviceStep ? "confirm on Ledger…" : "Approve with Ledger"}
+                  </button>
+                )}
                 <button onClick={() => decide("deny", view.canApprove.org_owner ? "org_owner" : "ledger")} disabled={!!busy} className="h-10 rounded-full border border-black/15 px-5 text-sm disabled:opacity-40">
                   {busy === "deny" ? "denying…" : "Deny"}
                 </button>
               </section>
             )}
+            {deviceStep && <p className="m-0 font-mono text-xs text-[#5D5D5D]">{deviceStep}</p>}
             {a.state === "pending" && !view.canApprove.org_owner && !view.canApprove.ledger && (
               <p className="m-0 text-sm text-[#6E6E73]">Waiting for {a.methods.includes("org_owner") ? "an owner of the organization" : "the agent's enrolled Ledger"} to decide.</p>
             )}

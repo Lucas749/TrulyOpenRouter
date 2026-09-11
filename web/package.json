@@ -10,6 +10,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ledgerhq/device-management-kit": "^1.9.0",
+    "@ledgerhq/device-signer-kit-ethereum": "^1.18.0",
+    "@ledgerhq/device-transport-kit-web-hid": "^1.2.4",
     "@privy-io/node": "^0.34.0",
     "@privy-io/react-auth": "^3.40.0",
     "@privy-io/server-auth": "^1.32.5",
