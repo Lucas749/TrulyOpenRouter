@@ -5,14 +5,20 @@
 //
 //   TOR_AGENT_KEY=tor_sk_agt_... node scripts/agent-request.mjs "Summarize this repo"
 // Env: TOR_BASE (default https://trulyopenrouter.vercel.app/api/gw), MODEL, MAX_TOKENS,
-//      IDEMPOTENCY_KEY (default: a new random key per task).
+//      IDEMPOTENCY_KEY (default: a new random key per task),
+//      TOR_AGENT_KEY_FILE (default ~/.config/trulyopenrouter/agent-key, used when TOR_AGENT_KEY is unset).
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const base = (process.env.TOR_BASE ?? "https://trulyopenrouter.vercel.app/api/gw").replace(/\/+$/, "");
-const key = process.env.TOR_AGENT_KEY;
+const keyFile = process.env.TOR_AGENT_KEY_FILE ?? join(homedir(), ".config", "trulyopenrouter", "agent-key");
+// A key file lets an agent harness run this without the key in its environment or transcript.
+const key = process.env.TOR_AGENT_KEY ?? (() => { try { return readFileSync(keyFile, "utf8").trim(); } catch { return undefined; } })();
 const prompt = process.argv.slice(2).join(" ") || "hello";
 if (!key?.startsWith("tor_sk_agt_")) {
-  console.error("Set TOR_AGENT_KEY to an agent key (tor_sk_agt_...).");
+  console.error(`Set TOR_AGENT_KEY or save an agent key (tor_sk_agt_...) to ${keyFile}.`);
   process.exit(2);
 }
 
