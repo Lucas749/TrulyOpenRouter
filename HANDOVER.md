@@ -1,4 +1,4 @@
-# Handover — TrulyOpenRouter (as of the host controls rollout, 2026-09-11)
+# Handover — TrulyOpenRouter (as of host funding and payment checks, 2026-09-11)
 
 ## What this is
 Decentralized OpenRouter on Hedera testnet: users chat with LLMs through a
@@ -43,6 +43,41 @@ gates run in the gateway per request.
 - Repo: `https://github.com/Lucas749/TrulyOpenRouter`, small commits on `main`.
 
 ## What is built (this session worked newest-first)
+- **Host funding (2026-09-11)**: onboarding has a separate “Get HBAR from us”
+  button for 5 testnet HBAR. The original 0.5 HBAR account-creation drip and
+  external faucet remain. Login tokens are verified server-side; durable
+  Postgres grants prevent duplicate transfers and enforce account/global limits.
+  See the funding section in `docs/POLICIES.md`. Funding account: `0.0.10472711`
+  (`0xadb53d12b890fe05375bb0a8889c0fce174471c9`), funded with 10 HBAR at this
+  check. Key backup is `faucet-account.json` in the private deployment directory;
+  the gateway uses `FAUCET_ACCOUNT_ID` / `FAUCET_PRIVATE_KEY`. No contract change.
+  Web deployment `dpl_HZMhc3iotqFSfgVcPqD7k89wL3GM` is ready. Desktop/mobile
+  browser checks found no page errors or horizontal overflow; invalid login
+  tokens receive 401. Six isolated Postgres funding tests cover concurrent
+  claims, retries after restart, quotas, empty pools, and pending reservations.
+- **One Dubai host, paid serving**: removed four stale local tunnel processes.
+  The remaining host is `0x0a51951FD42123674D4a744C3aB7F968b7f4222f`, native
+  account `0.0.10472685`, at
+  `https://tim-crown-plants-guitars.trycloudflare.com`. One Ollama container and
+  one guard container serve it. Gateway reachability checks cache for 15 seconds,
+  preserve registration/stake metadata, and exclude unreachable hosts from
+  serving counts and routing. The older Dubai registrations now show offline.
+  CLI setup resolves the registered key's native account and persists the
+  public payee in the compose `.env`, enabling x402 automatically. Adopting a
+  new tunnel stops the previous managed process after verifying its identity.
+- **Payment proof**: direct unpaid requests return 402 with 0.001 testnet USDC
+  requirements. Three test transfers reached the current host (0.003 USDC
+  total), including one whose gateway response was interrupted during rollout.
+  A complete routed request returned `ready`, `tor_settled:true`, and receipt
+  `a024ff1c5712e1e14277231db20263cae29a894dee8c6454ba2d440612773444`.
+  Its x402 transaction is `0.0.7162784@1789113636.229910595`; vault settlement is
+  `0x2808fbe4e5a0c12777b96f14b4ee183b60b2e1811dc8aa4785d8efdfee553d45`;
+  HCS sequence is 15. Host stats increased to one completed gateway request and
+  0.002 HBAR in available vault earnings. Gateway receipts now retain
+  `x402Transaction`, separate from `debitTx`. USDC is already in the host wallet;
+  the CLI withdrawal control releases HBAR from the vault. These are distinct
+  balances. No host withdrawal was submitted. Short inference took ~15 seconds
+  on this machine; an earlier 16-token response took ~49 seconds.
 - **Host controls and visual polish (2026-09-11)**: terminal redraw replaces
   the full viewport, preventing old tab text from overlapping; the TOR banner
   is restored on larger screens. Web host dashboard uses the landing page's

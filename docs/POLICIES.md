@@ -231,3 +231,19 @@ history. An empty pool does not consume the user's eligibility.
 wallet is separate from operator, subscription, and host funds. Each pending
 grant reserves 5 HBAR plus a maximum 1 HBAR network fee. The service always uses
 Hedera testnet. No contract deployment is involved.
+
+## Host availability and payment receipts
+
+An active registration does not prove a running machine. The gateway probes
+each guard's health endpoint, caches the result for 15 seconds, and excludes
+unreachable endpoints from serving counts and routing. `registeredActive`
+retains the contract state; `active` also requires reachability and no signed
+pause. `availability` exposes the check time and reported payment mode.
+
+Registered CLI setup resolves the host's native account ID and enables its
+x402 guard. A direct unpaid request receives HTTP 402. The gateway's payer
+signs the USDC transfer and retries; the facilitator verifies it and settles
+the host payment. The gateway then settles the user's subscription credits
+through the HBAR vault. Receipts store the direct payment as `x402Transaction`
+and the vault settlement as `debitTx`. Direct USDC reaches the host wallet;
+the existing CLI withdrawal action releases the separate HBAR vault earnings.
