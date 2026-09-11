@@ -200,3 +200,30 @@ CREATE INDEX IF NOT EXISTS treasury_intents_org_idx ON treasury_intents (org_id,
 CREATE UNIQUE INDEX IF NOT EXISTS treasury_intents_open_idx ON treasury_intents (org_id)
   WHERE state IN ('proposed', 'awaiting_approvals', 'authorized', 'signed', 'submitted', 'uncertain');
 ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS payout_recipients jsonb NOT NULL DEFAULT '[]';
+
+-- Durable usage accounting for strict caps. A request reserves its maximum cost
+-- on every accounting subject before any host is paid; settlement moves the
+-- actual cost to spent. Unresolved payments keep their reservation until
+-- reconciled. Edits and key rotation never reset these counters.
+CREATE TABLE IF NOT EXISTS usage_counters (
+  subject text NOT NULL,
+  period text NOT NULL,
+  spent bigint NOT NULL DEFAULT 0,
+  reserved bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (subject, period)
+);
+CREATE TABLE IF NOT EXISTS usage_reservations (
+  request_id text PRIMARY KEY,
+  payer text NOT NULL,
+  agent_id text,
+  org_id text,
+  member_did text,
+  counters jsonb NOT NULL,
+  maximum_credits bigint NOT NULL,
+  actual_credits bigint,
+  approval_id text,
+  state text NOT NULL CHECK (state IN ('reserved', 'consumed', 'uncertain', 'released')),
+  created_at bigint NOT NULL,
+  updated_at bigint NOT NULL
+);
+CREATE INDEX IF NOT EXISTS usage_reservations_agent_idx ON usage_reservations (agent_id, state);
