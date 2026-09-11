@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
   scopes jsonb NOT NULL DEFAULT '{}',
   revoked boolean NOT NULL DEFAULT false
 );
+-- The Privy login that issued the key; null for keys issued before logins were required.
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS owner_user_id text;
 
 -- Member spend caps (admin-set; fail-closed when present).
 CREATE TABLE IF NOT EXISTS spend_caps (

@@ -2,7 +2,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import express from "express";
 import type { Server } from "http";
 import { createApp } from "../src/index.js";
-import { MemoryKeyStore } from "../src/keys.js";
+import { issueKey, MemoryKeyStore } from "../src/keys.js";
+import { SubscriberError } from "../src/subscriber.js";
 import { MemoryReceiptLog } from "../src/receipts.js";
 import { MemoryVerifier } from "../src/verify.js";
 
@@ -68,21 +69,33 @@ describe("routes", () => {
     expect(typeof res.facilitator).toBe("string");
   });
 
-  it("issues, enforces, and revokes api keys", async () => {
+  it("issues keys only to a signed-in login and lets only that login revoke them", async () => {
     const keys = new MemoryKeyStore();
-    const app = createApp({ requireSubscription: false, keys, fallbackUpstream: "http://127.0.0.1:1" });
+    const logins: Record<string, { userId: string; wallets: `0x${string}`[] }> = {
+      "owner-jwt": { userId: "did:privy:owner", wallets: [] },
+      "other-jwt": { userId: "did:privy:other", wallets: [] },
+    };
+    const app = createApp({
+      requireSubscription: false,
+      keys,
+      fallbackUpstream: "http://127.0.0.1:1",
+      verifySession: async (jwt) => {
+        if (!logins[jwt]) throw new SubscriberError(401, "authentication_required", "Invalid session");
+        return logins[jwt];
+      },
+    });
     const srv = app.listen(0);
     const port = (srv.address() as any).port;
     const url = `http://127.0.0.1:${port}`;
+    const call = (method: string, path: string, jwt?: string, body?: unknown) =>
+      fetch(`${url}${path}`, { method, headers: { "Content-Type": "application/json", ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     try {
-      const issued = await (
-        await fetch(`${url}/api/keys`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ scopes: { models: ["llama-3.1-8b"] } }),
-        })
-      ).json();
+      expect((await call("POST", "/api/keys", undefined, { scopes: {} })).status).toBe(401);
+      expect((await call("POST", "/api/keys", "tor_sk_notalogin", { scopes: {} })).status).toBe(401);
+      expect((await call("POST", "/api/keys", "forged-jwt", { scopes: {} })).status).toBe(401);
+      const issued = await (await call("POST", "/api/keys", "owner-jwt", { scopes: { models: ["llama-3.1-8b"] } })).json();
       expect(issued.key.startsWith("tor_sk_")).toBe(true);
+      expect((await keys.find(issued.key))?.ownerUserId).toBe("did:privy:owner");
 
       const chat = (key?: string, model = "llama-3.1-8b") =>
         fetch(`${url}/v1/chat/completions`, {
@@ -97,8 +110,23 @@ describe("routes", () => {
       expect((await chat("tor_sk_nope")).status).toBe(401);
       expect((await chat(issued.key, "qwen-2.5-7b")).status).toBe(404);
 
-      await fetch(`${url}/api/keys/${issued.prefix}`, { method: "DELETE" });
+      // Nobody but the issuing login can revoke the key or read its budget account.
+      expect((await call("DELETE", `/api/keys/${issued.prefix}`)).status).toBe(401);
+      expect((await call("DELETE", `/api/keys/${issued.prefix}`, "other-jwt")).status).toBe(404);
+      expect((await call("GET", `/api/keys/${issued.prefix}/budget`)).status).toBe(401);
+      expect((await call("GET", `/api/keys/${issued.prefix}/budget`, "other-jwt")).status).toBe(404);
+      expect((await call("GET", `/api/keys/${issued.key}/budget`, "owner-jwt")).status).toBe(404);
+      expect((await call("GET", `/api/keys/${issued.prefix}/budget`, "owner-jwt")).status).toBe(200);
+      expect((await chat(issued.key)).status).not.toBe(401);
+
+      expect((await call("DELETE", `/api/keys/${issued.prefix}`, "owner-jwt")).status).toBe(200);
       expect((await chat(issued.key)).status).toBe(401);
+
+      // Keys issued before logins were required still chat but cannot be managed through the API.
+      const legacy = issueKey();
+      await keys.save(legacy.record);
+      expect((await chat(legacy.key)).status).not.toBe(401);
+      expect((await call("DELETE", `/api/keys/${legacy.record.prefix}`, "owner-jwt")).status).toBe(404);
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }
@@ -602,13 +630,8 @@ describe("routes", () => {
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
-      const issued: any = await (
-        await fetch(`http://127.0.0.1:${port}/api/keys`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        })
-      ).json();
+      const issued = issueKey();
+      await keys.save(issued.record);
       // unmapped key, no DEFAULT_PAYER -> dev handle, debit attempted and recorded
       const r = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
         method: "POST",

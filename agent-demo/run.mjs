@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 // Budget-capped agent demo: issues a scoped key, spends it on prompts, stops at cap.
-// Env: GATEWAY (default http://127.0.0.1:4021), MODEL, BUDGET_CREDITS (default 5), PROMPT.
+// Env: GATEWAY (default http://127.0.0.1:4021), PRIVY_ACCESS_TOKEN (keys belong to a login),
+// MODEL, BUDGET_CREDITS (default 5), PROMPT.
 // No chain needed locally; against testnet the same flow pays x402 per call.
 const GATEWAY = process.env.GATEWAY ?? "http://127.0.0.1:4021";
 const MODEL = process.env.MODEL ?? "qwen2.5:0.5b";
 const BUDGET = Number(process.env.BUDGET_CREDITS ?? 5);
 const PROMPT = process.env.PROMPT ?? "Explain hash functions in one sentence.";
+const TOKEN = process.env.PRIVY_ACCESS_TOKEN;
+if (!TOKEN) throw new Error("Set PRIVY_ACCESS_TOKEN from a signed-in session: API keys belong to a login.");
 
 const keyRes = await fetch(`${GATEWAY}/api/keys`, {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
+  headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
   body: JSON.stringify({ scopes: { models: [MODEL] } }),
 });
 if (!keyRes.ok) throw new Error(`key issue failed: ${keyRes.status}`);

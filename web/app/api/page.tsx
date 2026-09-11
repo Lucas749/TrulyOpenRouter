@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useAuthFetch } from "../components/use-auth-fetch";
 
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
@@ -12,6 +13,7 @@ interface StoredKey {
 }
 
 export function ApiKeysPanel() {
+  const authFetch = useAuthFetch();
   const [models, setModels] = useState("");
   const [expiryDays, setExpiryDays] = useState("30");
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -55,7 +57,7 @@ export function ApiKeysPanel() {
     if (days > 0) scopes.expiresAt = Date.now() + days * 86_400_000;
     try {
       const r: any = await (
-        await fetch(`${GATEWAY}/api/keys`, {
+        await authFetch(`${GATEWAY}/api/keys`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ scopes }),
@@ -70,7 +72,13 @@ export function ApiKeysPanel() {
   }
 
   async function revoke(prefix: string) {
-    await fetch(`${GATEWAY}/api/keys/${prefix}`, { method: "DELETE" });
+    setMsg(null);
+    const r = await authFetch(`${GATEWAY}/api/keys/${prefix}`, { method: "DELETE" });
+    if (!r.ok) {
+      const d = (await r.json().catch(() => ({}))) as { error?: { message?: string } };
+      setMsg(`revoke failed: ${String(d.error?.message ?? r.status).slice(0, 160)}`);
+      return;
+    }
     persist(keys.filter((k) => k.prefix !== prefix));
   }
 

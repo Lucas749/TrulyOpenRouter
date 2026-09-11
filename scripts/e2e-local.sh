@@ -11,8 +11,10 @@ GW=$!
 trap "kill $GW" EXIT
 for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$PORT/health" > /dev/null && break; sleep 1; done
 
+# Keys belong to a signed-in login; this gateway also needs PRIVY_APP_ID and PRIVY_APP_SECRET.
 KEY=$(curl -sf -X POST "http://127.0.0.1:$PORT/api/keys" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${PRIVY_ACCESS_TOKEN:?export a Privy access token from a signed-in session}" \
   -d '{"scopes":{"models":["qwen2.5:0.5b"]}}' | python3 -c "import sys,json;print(json.load(sys.stdin)['key'])")
 echo "key: ${KEY%????????????????}…(redacted)"
 

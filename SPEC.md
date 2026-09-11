@@ -78,7 +78,7 @@ Base: PoC `packages/service` (Express + `@x402/express`, `@x402/hedera`, `@x402/
 - **x402 client-per-user:** gateway holds per-user Hedera **budget accounts** (ECDSA, allowance-capped, keys in Key Ring). Per request: build `TransferTransaction` (USDC testnet `0.0.429274`), sign with budget key, retry with `PAYMENT-SIGNATURE: base64(tx)` header against the host's route. Facilitator: **Blocky402 testnet `api.testnet.blocky402.com`** (qual REQUIRES settlement through Blocky402 — PoC default `x402.org` testnet does NOT satisfy this; override via env).
 - **Receipts:** `receiptHash = sha256(promptHash, completionHash, modelDigest, host, price, latency)` → HCS consensus log (Hedera SDK) + local DB for explorer. Prompt/completion bodies NEVER onchain.
 - **SSE stream** (copy PoC): `connecting → routed → payment required → signing → submitted → model running → settled`, plus `host` + `price` + HashScan link per bubble.
-- Endpoints: `POST /api/chat` (web app, Privy session), OpenAI-compatible `POST /v1/chat/completions` + `GET /v1/models` (Bearer `tor_sk_…` keys — any harness via `OPENAI_BASE_URL` + `OPENAI_API_KEY`), `GET /api/hosts`, `GET /api/receipts`, `POST /api/keys` (issue), `DELETE /api/keys/:id` (revoke). x402 stays downstream (gateway→host), invisible to key holders.
+- Endpoints: `POST /api/chat` (web app, Privy session), OpenAI-compatible `POST /v1/chat/completions` + `GET /v1/models` (Bearer `tor_sk_…` keys — any harness via `OPENAI_BASE_URL` + `OPENAI_API_KEY`), `GET /api/hosts`, `GET /api/receipts`, `POST /api/keys` (issue for the signed-in login), `DELETE /api/keys/:prefix` (only the issuing login revokes). x402 stays downstream (gateway→host), invisible to key holders.
 
 ## 4b. API keys (OpenAI-compatible — the harness distribution story)
 

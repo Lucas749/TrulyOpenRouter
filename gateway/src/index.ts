@@ -1100,14 +1100,32 @@ export function createApp(opts: GatewayOptions = {}) {
     });
   });
 
-  // Dev key management. Production issues keys from the web app (Privy session) instead.
+  // API keys belong to the Privy login that issues them. Only that login can revoke a
+  // key or read its budget account; chat still authenticates with the key alone.
+  async function ownedKey(req: any, res: any) {
+    if (!opts.keys) {
+      res.status(501).json({ error: { message: "key store not configured", type: "unavailable" } });
+      return null;
+    }
+    const login = await verifiedLogin(req, res);
+    if (!login) return null;
+    const record = await opts.keys.find(req.params.prefix);
+    if (!record || record.prefix !== req.params.prefix || !record.ownerUserId || stripDid(record.ownerUserId) !== stripDid(login.identity.userId)) {
+      res.status(404).json({ error: { message: "unknown key", type: "invalid_api_key" } });
+      return null;
+    }
+    return record;
+  }
+
   app.post("/api/keys", async (req, res) => {
     if (!opts.keys) {
       res.status(501).json({ error: { message: "key store not configured", type: "unavailable" } });
       return;
     }
+    const login = await verifiedLogin(req, res);
+    if (!login) return;
     const scopes = (req.body?.scopes ?? {}) as KeyScopes;
-    const { key, record } = issueKey(scopes);
+    const { key, record } = issueKey(scopes, login.identity.userId);
     await opts.keys.save(record);
     // Proper per-key budget account: deterministic derivation from the single master
     // (env in dev, Key Ring in prod). Funding stays an explicit operator step.
@@ -1117,16 +1135,17 @@ export function createApp(opts: GatewayOptions = {}) {
   });
 
   app.delete("/api/keys/:prefix", async (req, res) => {
-    if (!opts.keys || !(await opts.keys.revoke(req.params.prefix))) {
-      res.status(404).json({ error: { message: "unknown key", type: "invalid_api_key" } });
-      return;
-    }
+    const record = await ownedKey(req, res);
+    if (!record) return;
+    await opts.keys!.revoke(record.prefix);
     res.json({ revoked: true });
   });
 
   // Budget account funding status (derived address + onchain HBAR check when RPC is set).
   app.get("/api/keys/:prefix/budget", async (req, res) => {
-    const address = budgetAddressFor(req.params.prefix);
+    const record = await ownedKey(req, res);
+    if (!record) return;
+    const address = budgetAddressFor(record.prefix);
     let funded: boolean | null = null;
     if (address && opts.rpcUrl) {
       try {
@@ -1136,7 +1155,7 @@ export function createApp(opts: GatewayOptions = {}) {
         funded = null;
       }
     }
-    res.json({ prefix: req.params.prefix, budget: address, funded });
+    res.json({ prefix: record.prefix, budget: address, funded });
   });
 
   // Spend readout for a user handle (`key:<prefix>` or wallet address).
@@ -1690,6 +1709,15 @@ export function createApp(opts: GatewayOptions = {}) {
   async function sessionActor(req: any, res: any): Promise<{ identity: Identity; jwt: string } | null> {
     if (!opts.verifySession || !opts.agents) {
       res.status(501).json({ error: { message: "agents are not configured", type: "unavailable" } });
+      return null;
+    }
+    return verifiedLogin(req, res);
+  }
+
+  /// @notice The verified Privy login behind a bearer token. Answers 401, 501, or 503 itself otherwise.
+  async function verifiedLogin(req: any, res: any): Promise<{ identity: Identity; jwt: string } | null> {
+    if (!opts.verifySession) {
+      res.status(501).json({ error: { message: "login verification is not configured", type: "unavailable" } });
       return null;
     }
     const jwt = String(req.headers.authorization ?? "").match(/^Bearer (\S+)$/i)?.[1];

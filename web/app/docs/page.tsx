@@ -72,9 +72,10 @@ print(response.choices[0].message.content)`} />
     }
   }
 }`} />
-        <Snippet title="Keys + receipts (curl)" code={`# issue a scoped key (shown once)
+        <Snippet title="Keys + receipts (curl)" code={`# issue a scoped key for your login (shown once; easiest at /api)
 curl -X POST http://127.0.0.1:4121/api/keys \\
   -H 'Content-Type: application/json' \\
+  -H "Authorization: Bearer $PRIVY_ACCESS_TOKEN" \\
   -d '{"scopes":{"models":["qwen2.5:0.5b"]}}'
 
 # chat, response carries tor_receipt + tor_settled
@@ -97,8 +98,8 @@ curl http://127.0.0.1:4121/api/stats`} />
 # -> { id (sha256), modelDigest, host, priceWei, debitTx, hcsSeq }
 # debitTx: vault debit on HashScan · hcsSeq: same id on topic 0.0.10379640`} />
         <div id="keys"></div>
-        <Snippet title="Keys, caps and quota" code={`# scoped key (models allowlist, expiry) — shown once
-curl -X POST http://127.0.0.1:4121/api/keys -d '{"scopes":{"models":["qwen2.5:0.5b"]}}'
+        <Snippet title="Keys, caps and quota" code={`# scoped key for your login (models allowlist, expiry) — shown once
+curl -X POST http://127.0.0.1:4121/api/keys -H "Authorization: Bearer $PRIVY_ACCESS_TOKEN" -d '{"scopes":{"models":["qwen2.5:0.5b"]}}'
 # member allowance: 429 quota_exceeded past cap · vault debit is the backstop
 # key budget accounts derive per prefix (HKDF) — fund explicitly, never auto`} />
         <div id="hosts"></div>

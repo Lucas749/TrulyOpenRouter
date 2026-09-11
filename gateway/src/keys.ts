@@ -16,6 +16,7 @@ export interface ApiKeyRecord {
   scopes: KeyScopes;
   createdAt: number;
   revoked: boolean;
+  ownerUserId?: string | null; // Privy login that issued the key; null for legacy keys
 }
 
 export interface IssuedKey {
@@ -23,7 +24,7 @@ export interface IssuedKey {
   record: ApiKeyRecord;
 }
 
-export function issueKey(scopes: KeyScopes = {}): IssuedKey {
+export function issueKey(scopes: KeyScopes = {}, ownerUserId: string | null = null): IssuedKey {
   const key = `tor_sk_${randomBytes(24).toString("base64url")}`;
   const salt = randomBytes(16).toString("hex");
   return {
@@ -36,6 +37,7 @@ export function issueKey(scopes: KeyScopes = {}): IssuedKey {
       scopes,
       createdAt: Date.now(),
       revoked: false,
+      ownerUserId,
     },
   };
 }
@@ -87,6 +89,7 @@ function rowToRecord(row: any): ApiKeyRecord {
     scopes: typeof row.scopes === "string" ? JSON.parse(row.scopes) : (row.scopes ?? {}),
     createdAt: Number(row.created_at),
     revoked: !!row.revoked,
+    ownerUserId: row.owner_user_id ?? null,
   };
 }
 
@@ -101,10 +104,10 @@ export class PgKeyStore implements KeyStore {
 
   async save(record: ApiKeyRecord): Promise<void> {
     await this.q().query(
-      `INSERT INTO api_keys (prefix, key_hash, created_at, expires_at, scopes, revoked)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO api_keys (prefix, key_hash, created_at, expires_at, scopes, revoked, owner_user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (prefix) DO UPDATE SET revoked = EXCLUDED.revoked, scopes = EXCLUDED.scopes`,
-      [record.prefix, `${record.salt}:${record.hash}`, record.createdAt, record.scopes.expiresAt ?? null, JSON.stringify(record.scopes), record.revoked],
+      [record.prefix, `${record.salt}:${record.hash}`, record.createdAt, record.scopes.expiresAt ?? null, JSON.stringify(record.scopes), record.revoked, record.ownerUserId ?? null],
     );
   }
 
