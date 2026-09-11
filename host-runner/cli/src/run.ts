@@ -11,6 +11,7 @@ import { configDir, loadConfig, saveConfig } from "./config.js";
 import { findHostRegistry } from "./host-registry.js";
 import { currentHostSettings, publishHostSettings } from "./host-runtime.js";
 import { healthyGuard, rememberTunnel } from "./host-tunnel.js";
+import { enableGuardPayments } from "./guard-payment.js";
 import { banner, box, ok, Spinner, warn } from "./ui.js";
 import { FundingRequiredError, GAS_RESERVE_WEI, registrationError, registrationStake, registryValueWei } from "./registration.js";
 export { DEFAULT_STAKE_HBAR } from "./registration.js";
@@ -207,9 +208,8 @@ export async function run(o: RunOptions): Promise<void> {
 
     // 8. guard up (paid serving; dev-mode without HOST_WALLET is local-only)
     spin.start("starting payment guard");
-    const guard = await sh("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d", "guard"]);
-    if (!guard.ok) throw new Error("Guard startup failed. Check the service logs and retry.");
-    spin.stop(ok("guard up — set HOST_WALLET to your 0.0.x id for paid serving"));
+    const payTo = await enableGuardPayments(account.address, COMPOSE_FILE);
+    spin.stop(ok(`x402 enabled · payments to ${payTo}`));
 
     spin.start("updating host routing");
     const settings = await currentHostSettings(o.gateway);
