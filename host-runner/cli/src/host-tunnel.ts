@@ -18,6 +18,8 @@ async function identity(pid: number): Promise<string | null> {
 export async function rememberTunnel(pid: number, log: string): Promise<void> {
   const fingerprint = await identity(pid);
   if (!fingerprint) throw new Error("The tunnel process is no longer running.");
+  const previous = stored();
+  if (previous && previous.pid !== pid) await stopTunnel();
   mkdirSync(configDir(), { recursive: true, mode: 0o700 });
   writeFileSync(file(), JSON.stringify({ pid, identity: fingerprint, log }), { mode: 0o600 });
   rememberLogFiles({ tunnel: log });
