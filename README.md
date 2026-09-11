@@ -99,12 +99,16 @@ One quirk that cost us an afternoon: the hashio relay delivers contract
   signed bytes against the reviewed terms before broadcasting to Hedera. Team
   owners approve spending increases for members and agents with their Privy
   wallet signature.
-- **Ledger**: agents can enroll a Ledger through the Device Management Kit over
-  WebHID. Over-limit requests pause for an exact on-device approval and resume
-  once; widening or draining a protected agent needs the same device. Broker
-  secrets (budget master, x402 payer, Privy broker key) live in `wallet-cli
-  ring` with no environment fallback, and stake releases need a physical tap.
-  DX notes in `docs/DX-FEEDBACK-ledger.md`.
+- **Ledger**: an agent's key is sealed in the Ledger Key Ring (`wallet-cli
+  ring`) and decrypted in memory per task, so the agent never holds it in a
+  file, environment, or transcript. Agents enroll a Ledger through the Device
+  Management Kit. Over-limit requests pause until the enrolled Ledger signs the
+  exact approval, in the browser (WebHID) or from the terminal over USB
+  (`TOR_APPROVE=ledger`, `agent-demo/ledger-sign.mjs`), and resume once;
+  widening or draining a protected agent needs the same device. In ring mode
+  the gateway loads its broker secrets (budget master, x402 payer, Privy broker
+  key) from `wallet-cli ring` with no environment fallback, and stake releases
+  need a physical tap. DX notes in `docs/DX-FEEDBACK-ledger.md`.
 
 ## Honest staging
 
@@ -113,7 +117,9 @@ behavioral probing, not attestation. Everything above is exactly what runs —
 mock mode (`?mock=1`) is fixtures-only and bannered.
 
 Team finance and agents run on testnet with live checks for Privy policy
-enforcement, agent budgets, collections, and Key Ring decryption. A human
-Privy intent approval in the browser and a physical Ledger approval still need
-a live run, and the deployed gateway reads environment secrets until its
-server joins the Key Ring.
+enforcement, a browser-approved Privy treasury payout, agent budgets,
+collections, and Key Ring decryption. A Ledger was enrolled to an agent live in
+the browser; an over-limit approval on the device still needs a live run. The
+deployed gateway reads environment secrets: `ring init` needs the device on the
+machine it enrolls, and the gateway server has no USB port. Key Ring custody of
+the agent key and of the gateway secrets runs on the operator's Mac.

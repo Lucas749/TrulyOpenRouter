@@ -59,7 +59,12 @@ gates run in the gateway per request.
   (`0x46B84077f60671fE2872c306e076734B4d8D2E79`, alias of `0.0.10378181`),
   because the payee check refused every payment to the placeholder `0x…01`.
   Rollback image `tor-gateway:before-host-payee`, env backup
-  `.env.prod.before-host-payee`.
+  `.env.prod.before-host-payee`. Gateway `f01dcf1` adds terminal Ledger
+  approvals: `agent-demo/ledger-sign.mjs` signs the approval message over USB
+  and the agent relays it to `/v1/agent/approvals/:id/ledger-signature`. A
+  short-lived Sepolia transaction route (`17feedb`) was reverted; production's
+  `approval_evidence` check still also allows `ledger_tx`, which nothing writes.
+  Rollback image `tor-gateway:before-ledger-usb`, no env change.
   Teams set their own wallet limits (plans, payout caps, recipients) through a
   Privy policy intent; API keys belong to the issuing login, and 14 keys issued
   before that remain usable but only operators can revoke them
