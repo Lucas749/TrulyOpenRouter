@@ -7,6 +7,7 @@ import { apiError } from "../../lib/api-error";
 import { connectLedger } from "../../lib/ledger-device";
 import LoginButton from "../components/login-button";
 import { useAuthFetch } from "../components/use-auth-fetch";
+import AgentFunding from "./funding";
 
 // Agents workspace: agents get their own credentials with explicit limits,
 // funded by a team you belong to or by a personal budget. The gateway enforces
@@ -385,6 +386,14 @@ export default function AgentsPage() {
                     )}
                     {deviceStep && <span className="font-mono text-[11px] text-[#5D5D5D]">{deviceStep}</span>}
                   </div>
+                )}
+                {!detail.agent.orgId && detail.agent.budgetAddress && (
+                  <AgentFunding
+                    key={detail.agent.id}
+                    agentId={detail.agent.id}
+                    ledgerAddress={detail.agent.ledgerAddress}
+                    ledgerSign={(prompt, message) => withLedger(prompt, (l) => l.signMessage(message))}
+                  />
                 )}
                 <div className="flex flex-col gap-1">
                   <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Keys</span>
