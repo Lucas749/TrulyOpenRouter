@@ -64,6 +64,12 @@ services:
       - HCS_OPERATOR_ID=${HCS_OPERATOR_ID:-}
       - HCS_OPERATOR_KEY=${HCS_OPERATOR_KEY:-}
       - HOST_KEY=${HOST_KEY:-}
+      # Team treasury: broker authorization key (P-256, base64 PKCS8) that co-owns
+      # every team wallet quorum with the team's financial approver.
+      - PRIVY_BROKER_AUTH_KEY=${PRIVY_BROKER_AUTH_KEY:-}
+      - TEAM_PLAN_IDS=${TEAM_PLAN_IDS:-0}
+      - TEAM_PAYOUT_CAP_HBAR=${TEAM_PAYOUT_CAP_HBAR:-25}
+      - TEAM_PAYOUT_CAP_USDC=${TEAM_PAYOUT_CAP_USDC:-5}
     volumes:
       - gateway-data:/app/.data
     depends_on:
