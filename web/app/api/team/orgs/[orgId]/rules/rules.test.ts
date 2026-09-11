@@ -20,7 +20,7 @@ vi.mock("@privy-io/server-auth", () => ({
 }));
 
 import { addMember, decideRuleChange, ensureOrg, getRules, listRuleChanges, memberActionMessage, proposeRuleChange, validateRulePayload } from "../../../../../../lib/members";
-import { stableJson } from "../../../../../../lib/member-messages";
+import { ruleSetMessage, stableJson } from "../../../../../../lib/member-messages";
 import { GET as listRules, POST as proposeRoute } from "./route";
 import { POST as decideRoute } from "./changes/[id]/route";
 import { POST as setRoute } from "./set/route";
@@ -141,7 +141,7 @@ describe("org rules", () => {
     await addMember(ORG, { did: "did:mgr", walletAddress: MEMBER.address, role: "manager" });
     const params = { params: Promise.resolve({ orgId: ORG }) };
     const payload = { credits: 111 };
-    const msgLines = (e: number) => ["tor-team:rule-set", `expires: ${e}`, "kind: daily_cap", `orgId: ${ORG}`, `payload: ${stableJson(payload)}`].join("\n");
+    const msgLines = (e: number) => ruleSetMessage(ORG, "daily_cap", payload, e);
     const exp = Date.now() + 300_000;
     const msg = msgLines(exp);
     const sig = await OWNER.signMessage({ message: msg });
@@ -159,6 +159,51 @@ describe("org rules", () => {
     // tampered payload -> 400 (signature binds exact bytes)
     const evil = await setRoute(req("owner", { kind: "daily_cap", payload: { credits: 999 }, memberDid: "did:owner", signature: sig, message: msg, signerWallet: OWNER.address }), params);
     expect(evil.status).toBe(400);
+  });
+
+  it("accepts the exact message the rules page signs for every rule kind, and nothing reordered", async () => {
+    await ensureOrg(ORG);
+    await addMember(ORG, { did: "did:owner", walletAddress: OWNER.address, role: "owner" });
+    const params = { params: Promise.resolve({ orgId: ORG }) };
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["daily_cap", { credits: 500 }],
+      ["daily_cap", { credits: null }],
+      ["models", { models: ["m2", "m1"] }],
+      ["regions", { regions: ["us-oregon"] }],
+      ["verified", { only: true }],
+      ["rate_limit", { perMin: 20 }],
+      ["hosts", { hosts: ["0x0000000000000000000000000000000000000001"] }],
+      ["per_tx_cap", { usd: 2.5 }],
+    ];
+    for (const [kind, payload] of cases) {
+      const exp = Date.now() + 300_000;
+      // Built exactly as web/app/team/rules.tsx builds it before asking the wallet to sign.
+      const message = ruleSetMessage(ORG, kind, payload, exp);
+      expect(message).toBe(memberActionMessage("rule-set", { orgId: ORG, kind, payload: stableJson(payload) }, exp));
+      const signature = await OWNER.signMessage({ message });
+      const body = JSON.parse(JSON.stringify({ kind, payload, memberDid: "did:owner", signature, message, signerWallet: OWNER.address }));
+      expect([kind, (await setRoute(req("owner", body), params)).status]).toEqual([kind, 200]);
+    }
+    const exp = Date.now() + 300_000;
+    const reordered = ["tor-team:rule-set", `expires: ${exp}`, "kind: daily_cap", `orgId: ${ORG}`, 'payload: {"credits":7}'].join("\n");
+    const res = await setRoute(req("owner", { kind: "daily_cap", payload: { credits: 7 }, memberDid: "did:owner", signature: await OWNER.signMessage({ message: reordered }), message: reordered, signerWallet: OWNER.address }), params);
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses a decision on another team's rule change", async () => {
+    const OTHER_ORG = "org-rules-other";
+    await ensureOrg(ORG);
+    await ensureOrg(OTHER_ORG);
+    await addMember(ORG, { did: "did:owner", walletAddress: OWNER.address, role: "owner" });
+    const change = await proposeRuleChange(OTHER_ORG, "daily_cap", { credits: 1 }, "did:someone");
+    const { ruleDecisionMessage } = await import("../../../../../../lib/member-messages");
+    const message = ruleDecisionMessage({ id: change.id, orgId: OTHER_ORG, kind: "daily_cap", payloadJson: stableJson({ credits: 1 }) }, "approve", Date.now() + 300_000);
+    const res = await decideRoute(
+      req("owner", { decision: "approve", signerWallet: OWNER.address, signature: await OWNER.signMessage({ message }), message }),
+      { params: Promise.resolve({ orgId: ORG, id: change.id }) },
+    );
+    expect(res.status).toBe(404);
+    expect((await getRules(OTHER_ORG)).dailyCapCredits).toBeUndefined();
   });
 
   it("decideRuleChange validates directly", async () => {

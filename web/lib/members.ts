@@ -438,9 +438,9 @@ export function periodStartFor(meta: OrgMeta, did: string, now = Date.now()): nu
 // routes keep one import. Every member mutation is authorized by a Privy
 // embedded-wallet personal_sign over these bytes, verified server-side below.
 
-export { approvalMessage, inviteClaimMessage, memberActionMessage, parseActionMessage, ruleDecisionMessage, stableJson } from "./member-messages";
+export { approvalMessage, inviteClaimMessage, memberActionMessage, parseActionMessage, ruleDecisionMessage, ruleSetMessage, stableJson } from "./member-messages";
 export type { DecisionSubject, RuleDecisionSubject } from "./member-messages";
-import { inviteClaimMessage, parseActionMessage, ruleDecisionMessage, stableJson } from "./member-messages";
+import { inviteClaimMessage, parseActionMessage, ruleDecisionMessage, ruleSetMessage, stableJson } from "./member-messages";
 
 /// @notice Verifies signer + expiry + that every expected binding is present.
 /// Returns the recovered address on success, throws otherwise.
@@ -770,11 +770,9 @@ export async function setRuleDirect(
   validateRulePayload(kind, payload);
   const ok = await verifyApprovalSignature(message, signature, ownerWallet);
   if (!ok) throw new Error("signature is not from the recorded owner wallet");
-  const payloadJson = stableJson(payload);
   const exp = Number((message.match(/^expires: (\d+)$/m) ?? [])[1]);
   if (!Number.isFinite(exp) || now > exp) throw new Error("approval expired, sign again");
-  const lines = [`tor-team:rule-set`, `expires: ${exp}`, `kind: ${kind}`, `orgId: ${orgId}`, `payload: ${payloadJson}`];
-  if (message !== lines.join("\n")) throw new Error("signature does not match this rule set");
+  if (message !== ruleSetMessage(orgId, kind, payload, exp)) throw new Error("signature does not match this rule set");
   const s = await readRules();
   const cur = s.rules[orgId] ?? { orgId, updatedAt: 0 };
   s.rules[orgId] = applyRule(cur, kind as RuleKind, payload);

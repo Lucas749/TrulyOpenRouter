@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalMessage, memberActionMessage, parseActionMessage, shortId, spendBarState } from "../lib/member-messages";
+import { approvalMessage, memberActionMessage, parseActionMessage, ruleSetMessage, shortId, spendBarState } from "../lib/member-messages";
 
 describe("canonical message formats (PINNED, drift breaks live signatures)", () => {
   it("memberActionMessage sorts fields and appends expiry", () => {
@@ -14,6 +14,12 @@ describe("canonical message formats (PINNED, drift breaks live signatures)", () 
     expect(parseActionMessage("hello")).toBeNull();
     expect(parseActionMessage("tor-team:x\nno-colon-here")).toBeNull();
     expect(parseActionMessage("tor-team:x\nfoo: bar")).toBeNull(); // missing expires
+  });
+
+  it("ruleSetMessage pins the bytes the rules page signs", () => {
+    expect(ruleSetMessage("o1", "daily_cap", { credits: 111 }, 7)).toBe(
+      ["tor-team:rule-set", "kind: daily_cap", "orgId: o1", 'payload: {"credits":111}', "expires: 7"].join("\n"),
+    );
   });
 
   it("approvalMessage pins exact bytes", () => {

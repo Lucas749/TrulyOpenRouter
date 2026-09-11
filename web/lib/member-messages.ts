@@ -49,6 +49,11 @@ export function stableJson(v: unknown): string {
   return JSON.stringify(v) ?? "null";
 }
 
+/// @notice Owner sets a team rule directly. The client signs and the server checks these exact bytes.
+export function ruleSetMessage(orgId: string, kind: string, payload: Record<string, unknown>, expires: number): string {
+  return memberActionMessage("rule-set", { orgId, kind, payload: stableJson(payload) }, expires);
+}
+
 /// @notice Invite claim: the invitee proves wallet ownership. Server matches the
 /// email against an invited row. Trust note: email is self-asserted — this binds
 /// a PROVEN wallet to an owner-approved email, acceptable for capped testnet

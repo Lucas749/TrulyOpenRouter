@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSignMessage } from "@privy-io/react-auth";
 import { useAuthFetch } from "../components/use-auth-fetch";
-import { memberActionMessage, ruleDecisionMessage, stableJson } from "../../lib/member-messages";
+import { memberActionMessage, ruleDecisionMessage, ruleSetMessage, stableJson } from "../../lib/member-messages";
 
 // Firm rules, designed like the landing page: one row per rule, current value
 // left, control + Set right. Owners set directly (one signature, applied +
@@ -35,11 +35,6 @@ interface RuleChange {
 
 function usd(n: number): string {
   return `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-}
-
-function ruleSetMessage(orgId: string, kind: string, payload: Record<string, unknown>, expires: number): string {
-  // Must equal lib setRuleDirect's canonical form byte-for-byte.
-  return memberActionMessage("rule-set", { orgId, kind, payload: stableJson(payload) }, expires);
 }
 
 export default function OrgRules({
@@ -129,6 +124,11 @@ export default function OrgRules({
   // Owners set directly; managers propose into the inbox. Same form, one branch.
   async function submit(kind: string, payload: Record<string, unknown>, tag: string) {
     if (!me || !me.wallet) return;
+    // "1,000" or "$5" would become null (no limit) once serialized, so stop before signing.
+    if (Object.values(payload).some((v) => typeof v === "number" && !Number.isFinite(v))) {
+      setErr("enter a number, or leave it empty");
+      return;
+    }
     setBusy(tag);
     setErr(null);
     setNote(null);

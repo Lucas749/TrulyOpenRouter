@@ -37,6 +37,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     if (!decider || roleRank(decider.role) < 2) {
       return NextResponse.json({ error: "signer is not an active owner" }, { status: 403 });
     }
+    // The change must belong to this team: an owner of another team cannot decide it.
+    if (!(await listRuleChanges(orgId)).some((c) => c.id === id)) {
+      return NextResponse.json({ error: "rule change not found" }, { status: 404 });
+    }
     let decided;
     try {
       decided = await decideRuleChange(id, body.decision, decider.did, decider.walletAddress, body.signature, body.message);
