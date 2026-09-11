@@ -260,3 +260,41 @@ CREATE TABLE IF NOT EXISTS agent_credentials (
   revoked_at bigint
 );
 
+-- Human approvals for over-limit agent requests. One open approval per request
+-- and policy revision; a decision is single-use authority for that request.
+CREATE TABLE IF NOT EXISTS agent_approvals (
+  id text PRIMARY KEY,
+  agent_id text NOT NULL REFERENCES agents (id) ON DELETE CASCADE,
+  org_id text,
+  member_did text,
+  methods jsonb NOT NULL,
+  request_hash text NOT NULL,
+  idempotency_key text,
+  model text NOT NULL,
+  maximum_request_credits bigint NOT NULL,
+  additional_credits bigint NOT NULL,
+  limits jsonb NOT NULL,
+  policy_revision integer NOT NULL,
+  membership_revision integer NOT NULL,
+  ledger_revision integer NOT NULL,
+  nonce text NOT NULL,
+  expires_at bigint NOT NULL,
+  state text NOT NULL CHECK (state IN ('pending', 'approved', 'denied', 'expired', 'cancelled', 'reserved', 'consumed', 'uncertain')),
+  decided_at bigint,
+  grant_expires_at bigint,
+  reserved_request_id text,
+  created_at bigint NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_approvals_open_idx ON agent_approvals (agent_id, request_hash, policy_revision)
+  WHERE state IN ('pending', 'approved', 'reserved');
+CREATE INDEX IF NOT EXISTS agent_approvals_org_idx ON agent_approvals (org_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS approval_evidence (
+  approval_id text PRIMARY KEY REFERENCES agent_approvals (id) ON DELETE CASCADE,
+  method text NOT NULL CHECK (method IN ('org_owner', 'ledger')),
+  message text NOT NULL,
+  signature text NOT NULL,
+  signer text NOT NULL,
+  actor_user_id text NOT NULL,
+  actor_role text,
+  verified_at bigint NOT NULL
+);
