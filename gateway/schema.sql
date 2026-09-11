@@ -227,3 +227,36 @@ CREATE TABLE IF NOT EXISTS usage_reservations (
   updated_at bigint NOT NULL
 );
 CREATE INDEX IF NOT EXISTS usage_reservations_agent_idx ON usage_reservations (agent_id, state);
+
+-- Agents: stable identity (payer, counters, history) behind rotating credentials.
+CREATE TABLE IF NOT EXISTS agents (
+  id text PRIMARY KEY,
+  name text NOT NULL,
+  description text NOT NULL DEFAULT '',
+  owner_user_id text NOT NULL,
+  org_id text REFERENCES team_finance (org_id),
+  sponsor_did text,
+  payer_kind text NOT NULL CHECK (payer_kind IN ('team', 'personal')),
+  budget_label text UNIQUE,
+  state text NOT NULL CHECK (state IN ('ready', 'paused', 'revoked')),
+  policy jsonb NOT NULL,
+  policy_revision integer NOT NULL DEFAULT 1,
+  ledger_address text,
+  ledger_revision integer NOT NULL DEFAULT 0,
+  created_at bigint NOT NULL,
+  updated_at bigint NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agents_owner_idx ON agents (owner_user_id);
+CREATE INDEX IF NOT EXISTS agents_org_idx ON agents (org_id);
+-- Only salted hashes are stored; the prefix is a lookup handle, not an identity.
+CREATE TABLE IF NOT EXISTS agent_credentials (
+  id text PRIMARY KEY,
+  agent_id text NOT NULL REFERENCES agents (id) ON DELETE CASCADE,
+  prefix text NOT NULL UNIQUE,
+  salt text NOT NULL,
+  key_hash text NOT NULL,
+  issued_at bigint NOT NULL,
+  expires_at bigint,
+  revoked_at bigint
+);
+
