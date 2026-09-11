@@ -33,9 +33,9 @@ import { normalizeSnapshot, PgTeams, TeamError } from "./teams.js";
 import { approveTreasuryIntent, proposeTreasuryIntent, provisionTeamWallet, reconcileTreasuryIntent, rejectTreasuryIntent, teamLimitsView, TEST_USDC_ADDRESS, TreasuryError, type TreasuryDeps } from "./treasury.js";
 import { AGENT_KEY_PREFIX, AgentError, normalizePolicy, PgAgents, type Agent, type AgentPolicy } from "./agents.js";
 import { PgAccounting, periods, type CounterLimit, type Violation } from "./accounting.js";
-import { ApprovalError, approvalAuthority, approvalMessage, decideAgentApproval, PgApprovals, type AgentApproval, type ApprovalMethod } from "./approvals.js";
+import { ApprovalError, approvalAuthority, approvalMessage, approveByLedgerTransaction, decideAgentApproval, PgApprovals, type AgentApproval, type ApprovalMethod } from "./approvals.js";
 import type { Identity, TeamMember } from "./teams.js";
-import { challengeField, issueChallenge, LedgerChallengeError, messageSigner, stableJson, verifyChallenge } from "./ledger.js";
+import { challengeField, issueChallenge, LedgerChallengeError, ledgerTransactionData, messageSigner, sepoliaLedgerTxChain, stableJson, verifyChallenge, type LedgerTxChain } from "./ledger.js";
 import { buyAgentCredits, FundingError, fundingQuote, PgFundingStore, returnAgentFunds, type FundingDeps } from "./agent-funding.js";
 
 /// @notice Thrown when an org rule blocks a call. Caught by the chat handler
@@ -92,6 +92,7 @@ export interface GatewayOptions {
   agents?: PgAgents; // agent identities and credentials (Postgres); absent = agent endpoints 501
   accounting?: PgAccounting; // durable counters for strict agent and member caps
   approvals?: PgApprovals; // human approvals for over-limit agent requests
+  ledgerTx?: LedgerTxChain; // reads terminal Ledger approval transactions; absent = that route answers 501
   appOrigin?: string; // origin bound into approval messages and review links
   funding?: FundingDeps; // personal agent budget purchases and returns; absent = funding endpoints 501
   teamHosts?: TeamHostDeps & { store: PgTeamHosts; earnings(host: string): Promise<bigint>; usdcBalance(host: string): Promise<bigint> }; // host links + collections; absent = 501
@@ -2197,10 +2198,29 @@ export function createApp(opts: GatewayOptions = {}) {
       res.status(404).json({ error: { message: "Approval not found.", type: "not_found" } });
       return;
     }
+    const state = effectiveApprovalState(approval);
     res.json({
-      id: approval.id, state: effectiveApprovalState(approval), approval_methods: approval.methods, additional_credits: approval.additionalCredits,
+      id: approval.id, state, approval_methods: approval.methods, additional_credits: approval.additionalCredits,
       maximum_request_credits: approval.maximumRequestCredits, grant_expires_at: approval.grantExpiresAt, approval_url: `${origin}/approvals/${approval.id}`, poll_after_seconds: 5,
+      // What `wallet-cli send` needs to approve from a terminal with the enrolled Ledger.
+      ...(opts.ledgerTx && state === "pending" && approval.methods.includes("ledger") && agent.ledgerAddress
+        ? { ledger_transaction: { network: opts.ledgerTx.network, chain_id: opts.ledgerTx.chainId, from: agent.ledgerAddress, to: agent.ledgerAddress, data: ledgerTransactionData(approvalMessage(approval, { origin, agentName: agent.name })) } }
+        : {}),
     });
+  });
+
+  // Terminal Ledger approval: the agent relays the hash of the transaction its owner confirmed on the
+  // enrolled Ledger. The transaction read back from chain is the authority, not this caller.
+  app.post("/v1/agent/approvals/:id/ledger-transaction", async (req, res) => {
+    const agent = await agentFromKey(req, res);
+    if (!agent) return;
+    try {
+      if (!opts.approvals || !opts.teams || !opts.ledgerTx) throw new ApprovalError(501, "unavailable", "Terminal Ledger approvals are not configured.");
+      const approval = await approveByLedgerTransaction({ approvals: opts.approvals, agents: opts.agents!, teams: opts.teams, origin, chain: opts.ledgerTx }, req.params.id, agent.id, req.body?.transactionHash);
+      res.json({ id: approval.id, state: effectiveApprovalState(approval), grant_expires_at: approval.grantExpiresAt });
+    } catch (e) {
+      agentFailure(res, e);
+    }
   });
 
   // Human review: team owners see their organization's approvals; agent owners see their agents'.
@@ -2401,6 +2421,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     agents: pg ? new PgAgents() : undefined,
     accounting: pg ? new PgAccounting() : undefined,
     approvals: pg ? new PgApprovals() : undefined,
+    ledgerTx: pg ? sepoliaLedgerTxChain() : undefined,
     appOrigin: process.env.APP_ORIGIN,
   };
   if (pg && process.env.FAUCET_ACCOUNT_ID && process.env.FAUCET_PRIVATE_KEY) {

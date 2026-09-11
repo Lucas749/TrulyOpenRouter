@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { recoverMessageAddress, type Hex } from "viem";
+import { createPublicClient, http, keccak256, recoverMessageAddress, toBytes, type Hex } from "viem";
 
 // Server-issued challenges for Ledger enrollment and Ledger-protected changes.
 // The gateway builds the exact message and authenticates it with an HMAC, so a
@@ -14,6 +14,48 @@ export class LedgerChallengeError extends Error {
 }
 
 export const CHALLENGE_TTL_MS = 5 * 60_000;
+
+// Terminal approvals. Ledger's wallet CLI cannot sign a message, but `wallet-cli send` sends a
+// transaction the device confirms. The owner sends one from the enrolled address to itself on
+// Sepolia, carrying a code bound to the exact approval message; the gateway reads it back from chain.
+const APPROVAL_TX_TAG = "544f5261"; // "TORa"
+
+/// @notice Calldata for a terminal approval: a fixed tag plus keccak256 of the exact approval message.
+export function ledgerTransactionData(message: string): Hex {
+  return `0x${APPROVAL_TX_TAG}${keccak256(toBytes(message)).slice(2)}`;
+}
+
+export interface LedgerTransaction {
+  from: string;
+  to: string | null;
+  input: Hex;
+  chainId: number | null;
+  status: "success" | "reverted" | null; // null = not mined yet
+}
+
+export interface LedgerTxChain {
+  network: string; // wallet-cli network id
+  chainId: number;
+  transaction(hash: Hex): Promise<LedgerTransaction | null>;
+}
+
+/// @notice Ethereum Sepolia reader for terminal approvals; LEDGER_TX_RPC_URL overrides the public RPC.
+export function sepoliaLedgerTxChain(rpcUrl = process.env.LEDGER_TX_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com"): LedgerTxChain {
+  const client = createPublicClient({ transport: http(rpcUrl, { timeout: 15_000 }) });
+  return {
+    network: "ethereum:sepolia",
+    chainId: 11_155_111,
+    async transaction(hash) {
+      const tx = await client.getTransaction({ hash }).catch((e: { name?: string }) => {
+        if (e?.name === "TransactionNotFoundError") return null;
+        throw e;
+      });
+      if (!tx) return null;
+      const receipt = tx.blockNumber === null ? null : await client.getTransactionReceipt({ hash }).catch(() => null);
+      return { from: tx.from, to: tx.to ?? null, input: tx.input, chainId: tx.chainId ?? null, status: receipt ? receipt.status : null };
+    },
+  };
+}
 
 /// @notice Deterministic JSON (sorted keys) for binding structured terms into messages.
 export function stableJson(v: unknown): string {

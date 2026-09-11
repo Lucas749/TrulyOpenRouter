@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { recoverMessageAddress, type Hex } from "viem";
 import { db } from "./db.js";
+import { ledgerTransactionData, type LedgerTransaction, type LedgerTxChain } from "./ledger.js";
 import type { Agent, PgAgents } from "./agents.js";
 import type { Identity, PgTeams } from "./teams.js";
 
@@ -14,6 +15,8 @@ import type { Identity, PgTeams } from "./teams.js";
 // that request within a short grant window.
 
 export type ApprovalMethod = "org_owner" | "ledger";
+/// Evidence also records a Ledger approval relayed as a device-confirmed chain transaction.
+export type EvidenceMethod = ApprovalMethod | "ledger_tx";
 export type ApprovalState = "pending" | "approved" | "denied" | "expired" | "cancelled" | "reserved" | "consumed" | "uncertain";
 
 export interface ApprovalLimit {
@@ -163,7 +166,7 @@ export class PgApprovals {
   /// @notice Record one decision atomically. Returns null when it is no longer pending or has expired.
   async approve(
     id: string,
-    evidence: { method: ApprovalMethod; message: string; signature: string; signer: string; actorUserId: string; actorRole: string | null },
+    evidence: { method: EvidenceMethod; message: string; signature: string; signer: string; actorUserId: string; actorRole: string | null },
     now = Date.now(),
   ): Promise<AgentApproval | null> {
     const client = await this.pool.connect();
@@ -193,7 +196,7 @@ export class PgApprovals {
     }
   }
 
-  async evidence(id: string): Promise<{ method: ApprovalMethod; signer: string; actorUserId: string; actorRole: string | null; verifiedAt: number } | null> {
+  async evidence(id: string): Promise<{ method: EvidenceMethod; signer: string; actorUserId: string; actorRole: string | null; verifiedAt: number } | null> {
     const { rows } = await this.pool.query(`SELECT * FROM approval_evidence WHERE approval_id = $1`, [id]);
     const r = rows[0];
     return r ? { method: r.method, signer: r.signer, actorUserId: r.actor_user_id, actorRole: r.actor_role ?? null, verifiedAt: Number(r.verified_at) } : null;
@@ -299,6 +302,62 @@ export async function decideAgentApproval(
   const approved = await d.approvals.approve(
     approval.id,
     { method: input.method, message, signature: input.signature, signer, actorUserId: actor.identity.userId, actorRole: authority.role },
+    now,
+  );
+  if (!approved) throw new ApprovalError(409, "already_decided", "This approval was already decided.");
+  return approved;
+}
+
+/// @notice Approve from a terminal with the agent's enrolled Ledger. The owner sends a transaction with
+/// Ledger's wallet CLI (`send`), confirmed on the device, from the enrolled address to itself, carrying
+/// this approval's code. That transaction is the human authority, so the agent may relay its hash.
+export async function approveByLedgerTransaction(
+  d: DecisionDeps & { chain: LedgerTxChain },
+  approvalId: string,
+  agentId: string,
+  transactionHash: unknown,
+): Promise<AgentApproval> {
+  const now = (d.now ?? Date.now)();
+  if (typeof transactionHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(transactionHash)) {
+    throw new ApprovalError(400, "invalid_request", "transactionHash must be the 0x-prefixed hash of the approval transaction.");
+  }
+  const approval = await d.approvals.get(approvalId);
+  const agent = approval?.agentId === agentId ? await d.agents.get(agentId) : null;
+  if (!approval || !agent) throw new ApprovalError(404, "not_found", "Approval not found.");
+  if (approval.state !== "pending") throw new ApprovalError(409, "already_decided", `This approval is ${approval.state}.`);
+  if (now >= approval.expiresAt) {
+    await d.approvals.setState(approval.id, ["pending"], "expired");
+    throw new ApprovalError(409, "expired", "This approval window has ended. The agent can retry to request a new one.");
+  }
+  if (!approval.methods.includes("ledger") || !agent.ledgerAddress) {
+    throw new ApprovalError(403, "method_not_permitted", "This request cannot be approved with the agent's Ledger.");
+  }
+  const authority = await approvalAuthority(d, agent, { userId: agent.ownerUserId, wallets: [] });
+  if (agent.state !== "ready" || agent.policyRevision !== approval.policyRevision || agent.ledgerRevision !== approval.ledgerRevision ||
+      (agent.orgId && (!authority.sponsorActive || authority.membershipRevision !== approval.membershipRevision))) {
+    await d.approvals.setState(approval.id, ["pending"], "cancelled");
+    throw new ApprovalError(409, "stale_approval", "The agent's policy, team membership, or Ledger enrollment changed. The agent can retry to request a new approval.");
+  }
+  let tx: LedgerTransaction | null;
+  try {
+    tx = await d.chain.transaction(transactionHash as Hex);
+  } catch {
+    throw new ApprovalError(503, "chain_unavailable", "The approval transaction could not be read. Try again shortly.");
+  }
+  if (!tx || tx.status === null) throw new ApprovalError(409, "transaction_pending", "The approval transaction is not confirmed yet. Try again in a few seconds.");
+  if (tx.status !== "success") throw new ApprovalError(422, "transaction_failed", "The approval transaction failed on chain.");
+  if (tx.chainId !== null && tx.chainId !== d.chain.chainId) throw new ApprovalError(422, "wrong_chain", `The approval transaction must be on ${d.chain.network}.`);
+  const ledger = agent.ledgerAddress.toLowerCase();
+  if (tx.from.toLowerCase() !== ledger || tx.to?.toLowerCase() !== ledger) {
+    throw new ApprovalError(401, "wrong_sender", "The approval transaction must go from this agent's enrolled Ledger to itself.");
+  }
+  const message = approvalMessage(approval, { origin: d.origin, agentName: agent.name });
+  if (tx.input.toLowerCase() !== ledgerTransactionData(message)) {
+    throw new ApprovalError(401, "wrong_approval", "The transaction does not carry this approval's code.");
+  }
+  const approved = await d.approvals.approve(
+    approval.id,
+    { method: "ledger_tx", message, signature: transactionHash.toLowerCase(), signer: ledger, actorUserId: agent.ownerUserId, actorRole: "enrolled_ledger" },
     now,
   );
   if (!approved) throw new ApprovalError(409, "already_decided", "This approval was already decided.");
