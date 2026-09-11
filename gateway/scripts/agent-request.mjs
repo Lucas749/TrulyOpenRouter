@@ -6,21 +6,52 @@
 //   TOR_AGENT_KEY=tor_sk_agt_... node scripts/agent-request.mjs "Summarize this repo"
 // Env: TOR_BASE (default https://trulyopenrouter.vercel.app/api/gw), MODEL, MAX_TOKENS,
 //      IDEMPOTENCY_KEY (default: a new random key per task),
-//      TOR_AGENT_KEY_FILE (default ~/.config/trulyopenrouter/agent-key, used when TOR_AGENT_KEY is unset).
+//      TOR_AGENT_KEY_ENC (default ~/.config/trulyopenrouter/agent-key.enc) + TOR_AGENT_KEY_RING (default tor/agent):
+//        the key sealed in your Ledger Key Ring, decrypted into memory with `wallet-cli ring decrypt`
+//        (needs WALLET_PASS, e.g. WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w)),
+//      TOR_AGENT_KEY_FILE (default ~/.config/trulyopenrouter/agent-key): a plain key file, used only without a sealed key.
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const base = (process.env.TOR_BASE ?? "https://trulyopenrouter.vercel.app/api/gw").replace(/\/+$/, "");
-const keyFile = process.env.TOR_AGENT_KEY_FILE ?? join(homedir(), ".config", "trulyopenrouter", "agent-key");
-// A key file lets an agent harness run this without the key in its environment or transcript.
-const key = process.env.TOR_AGENT_KEY ?? (() => { try { return readFileSync(keyFile, "utf8").trim(); } catch { return undefined; } })();
+const configDir = join(homedir(), ".config", "trulyopenrouter");
+const sealedFile = process.env.TOR_AGENT_KEY_ENC ?? join(configDir, "agent-key.enc");
+const ringKey = process.env.TOR_AGENT_KEY_RING ?? "tor/agent";
+const keyFile = process.env.TOR_AGENT_KEY_FILE ?? join(configDir, "agent-key");
 const prompt = process.argv.slice(2).join(" ") || "hello";
+
+// The agent key lives in the Ledger Key Ring: only ciphertext is on disk, and the plaintext exists
+// in this process's memory for one task. A sealed key always wins; it never falls back to a file.
+function agentKey() {
+  if (process.env.TOR_AGENT_KEY) return process.env.TOR_AGENT_KEY;
+  if (existsSync(sealedFile)) {
+    if (!process.env.WALLET_PASS) {
+      console.error(`The agent key is sealed in the Ledger Key Ring (${sealedFile}). Run with WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w).`);
+      process.exit(2);
+    }
+    try {
+      return execFileSync("wallet-cli", ["ring", "decrypt", "--key", ringKey], { input: readFileSync(sealedFile), stdio: ["pipe", "pipe", "pipe"] }).toString("utf8").replace(/\n$/, "");
+    } catch (e) {
+      console.error(`Key Ring decrypt failed for ${ringKey}: ${String(e.stderr || e.message).slice(0, 200)}`);
+      process.exit(2);
+    }
+  }
+  try {
+    return readFileSync(keyFile, "utf8").trim();
+  } catch {
+    return undefined;
+  }
+}
+
+const key = agentKey();
 if (!key?.startsWith("tor_sk_agt_")) {
-  console.error(`Set TOR_AGENT_KEY or save an agent key (tor_sk_agt_...) to ${keyFile}.`);
+  console.error(`No agent key. Seal one in the Ledger Key Ring at ${sealedFile} (see the trulyopenrouter-agent skill), or set TOR_AGENT_KEY.`);
   process.exit(2);
 }
+console.error(process.env.TOR_AGENT_KEY ? "Agent key: environment" : existsSync(sealedFile) ? `Agent key: decrypted from the Ledger Key Ring (${ringKey})` : `Agent key: plain file ${keyFile}`);
 
 const idempotencyKey = process.env.IDEMPOTENCY_KEY ?? `task-${randomUUID()}`;
 const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "Idempotency-Key": idempotencyKey };

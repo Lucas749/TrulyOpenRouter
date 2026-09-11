@@ -13,18 +13,25 @@ verifies that decision, and `gateway/scripts/agent-request.mjs` then sends the s
 ## One-time setup (the user, outside this chat)
 
 1. At `/agents`: create the agent, click **Connect Ledger**, and fund its budget.
-2. Copy the key shown once, then in their own terminal:
-   `mkdir -p ~/.config/trulyopenrouter && pbpaste > ~/.config/trulyopenrouter/agent-key && chmod 600 ~/.config/trulyopenrouter/agent-key`
+2. Copy the key shown once, then seal it in the Ledger Key Ring from their own terminal. Only ciphertext reaches disk:
+   ```sh
+   mkdir -p ~/.config/trulyopenrouter && pbpaste | WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w) wallet-cli ring encrypt --key tor/agent > ~/.config/trulyopenrouter/agent-key.enc && chmod 600 ~/.config/trulyopenrouter/agent-key.enc && pbcopy < /dev/null
+   ```
+   This needs `wallet-cli ring init` done once on this machine (one Ledger tap). A plain key file at
+   `~/.config/trulyopenrouter/agent-key` still works, but only when no sealed key exists.
 
-Never ask for the key in the chat. Never print, echo, cat, or log it.
+Never ask for the key or the ring password in the chat. Never print, echo, cat, or log either.
 
 ## Send a request
 
-From the repo root, run in the background, because an approval can take minutes:
+From the repo root, run in the background, because an approval can take minutes. The password comes from the
+keychain by substitution, so it never appears in the command, history, or transcript:
 
 ```sh
-MAX_TOKENS=256 node gateway/scripts/agent-request.mjs "<prompt>"
+WALLET_PASS=$(security find-generic-password -a default -s ledger-wallet-cli -w) MAX_TOKENS=256 node gateway/scripts/agent-request.mjs "<prompt>"
 ```
+
+The first output line says where the key came from: `Agent key: decrypted from the Ledger Key Ring (tor/agent)`.
 
 Read the task output after a few seconds and act on what it shows:
 
@@ -37,7 +44,9 @@ Read the task output after a few seconds and act on what it shows:
 | `Request failed (429)` with "Enroll a Ledger" | The agent has no Ledger. The user enrolls one at `/agents`. |
 | `Request failed (403)` with `request_too_large` | Over the per-request cap. This never gets an approval. Shorten the task or lower `MAX_TOKENS`. |
 | `Request failed (409)` or `(503)` | A payment or service problem. Report it once. Do not loop. |
-| Exit 2, "Set TOR_AGENT_KEY or save an agent key" | Setup step 2 is missing. |
+| Exit 2, "No agent key" | Setup step 2 is missing. |
+| Exit 2, "sealed in the Ledger Key Ring … Run with WALLET_PASS" | The command lacks the keychain substitution. Rerun it exactly as shown above. |
+| Exit 2, "Key Ring decrypt failed" | This machine's ring cannot open the key (no `wallet-cli ring init`, or no network). Tell the user. Do not retry in a loop. |
 
 ## Rules
 
