@@ -71,9 +71,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ orgId:
     }
     const target = await getMember(orgId, targetDid);
     if (!target) return NextResponse.json({ error: "member not found" }, { status: 404 });
-    // Role + wallet changes are owner-only; allowance changes are owner+manager.
-    // Wallet rebinds bind the new wallet into the signed message.
-    const ownerOnly = body.role !== undefined || body.walletAddress !== undefined;
+    // Role + wallet changes and allowance raises are owner-only; managers may lower
+    // allowances. Wallet rebinds bind the new wallet into the signed message.
+    let raisesAllowance = false;
+    if (body.allowanceCredits !== undefined) {
+      const meta = await getOrgMeta(orgId);
+      const limit = (v: number | null | undefined) => (v === null || v === undefined ? Infinity : v);
+      const current = meta ? limit(spendCapFor(meta, targetDid).capCredits) : Infinity;
+      raisesAllowance = limit(body.allowanceCredits ?? meta?.defaultAllowanceCredits) > current;
+    }
+    const ownerOnly = body.role !== undefined || body.walletAddress !== undefined || raisesAllowance;
     const bind: Record<string, string> = { orgId, did: targetDid };
     if (body.walletAddress !== undefined) bind.wallet = body.walletAddress.toLowerCase();
     const authed = ownerOnly

@@ -28,6 +28,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
     if (!decider || roleRank(decider.role) < 1) {
       return NextResponse.json({ error: "signer is not an owner or manager" }, { status: 403 });
     }
+    // Spending increases are granted only by an active owner; managers may deny.
+    if (body.decision === "approve" && roleRank(decider.role) < 2) {
+      return NextResponse.json({ error: "only an active owner can approve a spending increase" }, { status: 403 });
+    }
     const owner = decider;
     // Rebuild the expected message server-side: the signature must bind THIS decision.
     const expected = approvalMessage(r, body.decision, Number((body.message.match(/^expires: (\d+)$/m) ?? [])[1]));

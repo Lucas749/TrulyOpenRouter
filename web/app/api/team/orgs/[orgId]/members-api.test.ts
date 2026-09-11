@@ -204,7 +204,7 @@ describe("members routes", () => {
     expect(((await r.json()) as any).member.did).toBe(did);
   });
 
-  it("enforces prescoped manager powers (invite+allowance+decide, nothing else)", async () => {
+  it("enforces prescoped manager powers (invite+lower allowance+deny, nothing else)", async () => {
     await foundOwner();
     // Owner invites a manager.
     const mgr = await signedAdd("did:mgr", MANAGER.address, "manager");
@@ -220,12 +220,16 @@ describe("members routes", () => {
       return { message, signature: await MANAGER.signMessage({ message }), signerWallet: MANAGER.address };
     };
     const member = { params: Promise.resolve({ orgId: ORG, did: "did:m1" }) };
-    // Manager sets allowance -> 200.
+    // Manager raises an allowance -> 403 (a spending increase is owner-only).
+    const raiseMsg = await mgrSigned("member-set", { orgId: ORG, did: "did:m1" });
+    expect((await patchMember(req("manager", "PATCH", { allowanceCredits: 250, ...raiseMsg }), member)).status).toBe(403);
+    expect((await patchMember(req("manager", "PATCH", { allowanceCredits: null, ...raiseMsg }), member)).status).toBe(403);
+    // Manager lowers an allowance -> 200.
     const setMsg = await mgrSigned("member-set", { orgId: ORG, did: "did:m1" });
-    const patched = await patchMember(req("manager", "PATCH", { allowanceCredits: 250, ...setMsg }), member);
+    const patched = await patchMember(req("manager", "PATCH", { allowanceCredits: 50, ...setMsg }), member);
     expect(patched.status).toBe(200);
-    expect(((await patched.json()) as any).member.allowanceCredits).toBe(250);
-    expect(spendCapCalls.at(-1)).toMatchObject({ address: MEMBER.address, capCredits: 250 });
+    expect(((await patched.json()) as any).member.allowanceCredits).toBe(50);
+    expect(spendCapCalls.at(-1)).toMatchObject({ address: MEMBER.address, capCredits: 50 });
     // Manager invites a member -> 200.
     const invMsg = memberActionMessage("member-add", { orgId: ORG, did: "did:m2", wallet: MEMBER.address, role: "member" }, Date.now() + 300_000);
     const invited = await addMemberRoute(
@@ -253,7 +257,7 @@ describe("members routes", () => {
     const roleMsg = await mgrSigned("member-set", { orgId: ORG, did: "did:m1" });
     const roleCh = await patchMember(req("manager", "PATCH", { role: "manager", ...roleMsg }), member);
     expect(roleCh.status).toBe(403);
-    // Manager decides an increase request -> 200, cap applied.
+    // Manager approves an increase request -> 403; only an owner grants it.
     const reqMsg = memberActionMessage("increase-request", { orgId: ORG, memberDid: "did:m1", amountCredits: "300" }, Date.now() + 300_000);
     const reqSig = await MEMBER.signMessage({ message: reqMsg });
     const created = await createRequestRoute(
@@ -268,8 +272,14 @@ describe("members routes", () => {
       req("manager", "POST", { decision: "approve", signerWallet: MANAGER.address, signature: decSig, message: decMsg }),
       { params: Promise.resolve({ orgId: ORG, id: request.id }) },
     );
-    expect(decided.status).toBe(200);
-    expect(((await decided.json()) as any).request.status).toBe("approved");
+    expect(decided.status).toBe(403);
+    const denyMsg = approvalMessage(request, "deny", Date.now() + 300_000);
+    const denied = await decideRoute(
+      req("manager", "POST", { decision: "deny", signerWallet: MANAGER.address, signature: await MANAGER.signMessage({ message: denyMsg }), message: denyMsg }),
+      { params: Promise.resolve({ orgId: ORG, id: request.id }) },
+    );
+    expect(denied.status).toBe(200);
+    expect(((await denied.json()) as any).request.status).toBe("denied");
   });
 
   it("edits allowance (sync-first) and removes members", async () => {
