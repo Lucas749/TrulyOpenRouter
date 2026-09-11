@@ -30,6 +30,10 @@ import { hostEarnings } from "./host-earnings.js";
 import { applyHostSettings, authorizeHostSettings, HostSettingsError, MemoryHostRuntime, PgHostRuntime, type HostRuntimeStore } from "./host-runtime.js";
 import { normalizeSnapshot, PgTeams, TeamError } from "./teams.js";
 import { approveTreasuryIntent, proposeTreasuryIntent, provisionTeamWallet, reconcileTreasuryIntent, rejectTreasuryIntent, TEST_USDC_ADDRESS, TreasuryError, type TreasuryDeps } from "./treasury.js";
+import { AGENT_KEY_PREFIX, AgentError, normalizePolicy, PgAgents, type Agent, type AgentPolicy } from "./agents.js";
+import { PgAccounting, periods, type CounterLimit, type Violation } from "./accounting.js";
+import { ApprovalError, approvalAuthority, approvalMessage, decideAgentApproval, PgApprovals, type AgentApproval, type ApprovalMethod } from "./approvals.js";
+import type { Identity, TeamMember } from "./teams.js";
 
 /// @notice Thrown when an org rule blocks a call. Caught by the chat handler
 /// into a plain-language 403 (module scope: the catch lives outside try).
@@ -38,6 +42,18 @@ class OrgPolicyDenied extends Error {
     super(`Not allowed in your organization (${why})`);
   }
 }
+
+/// @notice An eligible limit was reached before any payment; a human approval can help.
+class ApprovalRequired extends Error {
+  constructor(public body: Record<string, unknown>) {
+    super(String(body.message));
+  }
+}
+
+const stripDid = (id: string | null | undefined) => String(id ?? "").replace(/^did:privy:/, "");
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const constraintName = (v: Violation) =>
+  v.subject.startsWith("member:") ? "member_allowance" : v.period.startsWith("d:") ? "daily_credits" : v.period.startsWith("m:") ? "monthly_credits" : "lifetime_credits";
 
 export interface GatewayOptions {
   billing?: BillingRequests;
@@ -68,6 +84,10 @@ export interface GatewayOptions {
   teams?: PgTeams; // team finance mirror (Postgres); absent = team endpoints 501
   verifySession?: VerifySession; // Privy subject + linked wallets for team routes
   treasury?: TreasuryDeps; // Privy organization wallets; absent = treasury endpoints 501
+  agents?: PgAgents; // agent identities and credentials (Postgres); absent = agent endpoints 501
+  accounting?: PgAccounting; // durable counters for strict agent and member caps
+  approvals?: PgApprovals; // human approvals for over-limit agent requests
+  appOrigin?: string; // origin bound into approval messages and review links
   taps?: TapStore; // PENDING_TAP queue; absent = tap endpoints 501
   tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
   adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
@@ -219,6 +239,7 @@ export function createApp(opts: GatewayOptions = {}) {
   opts.runtime ??= new MemoryHostRuntime();
   const requireSubscription = opts.requireSubscription !== false;
   const billing = opts.billing ?? new MemoryBillingRequests();
+  const origin = (opts.appOrigin ?? process.env.APP_ORIGIN ?? "https://trulyopenrouter.vercel.app").replace(/\/+$/, "");
   const app = express();
   app.use(express.json({ limit: "10mb" }));
   app.get("/health", (_req, res) => res.json({ ok: true, service: "tor-gateway" }));
@@ -288,6 +309,8 @@ export function createApp(opts: GatewayOptions = {}) {
     let billingPayer: string | null = null;
     let paymentStarted = false;
     let availableCredits = 0n;
+    // Strict caps: the reservation this request holds on durable counters, if any.
+    let strict: { grantId: string | null; maximum: number } | null = null;
     try {
       const model = req.body?.model;
       if (typeof model !== "string" || !model) {
@@ -298,7 +321,39 @@ export function createApp(opts: GatewayOptions = {}) {
       let walletHandle = !requireSubscription && /^0x[0-9a-f]{40}$/.test(claimed) ? `wallet:${claimed}` : null;
       const presented = req.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1];
       let keyPrefix: string | undefined;
-      if (presented?.startsWith("tor_sk_")) {
+      // Team billing: an active member (or their team agent) spends the team wallet's
+      // vault credits. Membership and payer come only from the mirror.
+      let teamBilling: { orgId: string; did: string; wallet: string; allowance: number | null } | null = null;
+      // Agent credentials: a stable agent identity, its payer, and strict limits.
+      let agentCall: { agent: Agent; payer: string } | null = null;
+      if (presented?.startsWith(AGENT_KEY_PREFIX)) {
+        if (!opts.agents || !opts.accounting || !opts.approvals) throw new SubscriberError(503, "billing_unavailable", "Agent access is unavailable. Try again later.");
+        const resolved = await opts.agents.authenticate(presented);
+        if (!resolved) throw new SubscriberError(401, "invalid_api_key", "This agent credential is invalid, expired, or revoked.");
+        const agent = resolved.agent;
+        if (agent.state !== "ready") throw new SubscriberError(403, agent.state === "paused" ? "agent_paused" : "agent_revoked", `This agent is ${agent.state}.`);
+        if (agent.policy.models && !agent.policy.models.includes(model)) throw new SubscriberError(403, "model_not_allowed", `This agent may not use ${model}.`);
+        if (agent.orgId) {
+          if (!opts.teams) throw new SubscriberError(503, "billing_unavailable", "Team billing is unavailable. Try again later.");
+          const [team, sponsor] = await Promise.all([opts.teams.team(agent.orgId), opts.teams.memberFor(agent.orgId, { userId: agent.sponsorDid ?? "", wallets: [] })]);
+          if (!team || team.state !== "active" || !team.walletAddress) throw new SubscriberError(409, "team_wallet_inactive", "The agent's team has no active treasury wallet.");
+          if (!sponsor) throw new SubscriberError(403, "sponsor_inactive", "The member sponsoring this agent is no longer active in the team.");
+          teamBilling = { orgId: agent.orgId, did: sponsor.did, wallet: team.walletAddress, allowance: sponsor.allowanceCredits ?? team.defaultAllowanceCredits };
+          agentCall = { agent, payer: team.walletAddress };
+        } else {
+          const budget = agent.budgetLabel ? budgetAddressFor(agent.budgetLabel) : null;
+          if (!budget) throw new SubscriberError(503, "billing_unavailable", "The agent's budget account is unavailable.");
+          agentCall = { agent, payer: budget.toLowerCase() };
+        }
+        if (agent.policy.requestsPerMinute != null) {
+          const since = Date.now() - 60_000;
+          const recent = ((await opts.receipts?.list(10_000)) ?? []).filter((r) => r.agent === agent.id && r.ts >= since).length;
+          if (recent >= agent.policy.requestsPerMinute) throw new SubscriberError(429, "rate_limited", `This agent allows ${agent.policy.requestsPerMinute} requests per minute. Retry shortly.`);
+        }
+        if (agent.policy.maxConcurrent != null && (await opts.accounting.openReservations(agent.id)) >= agent.policy.maxConcurrent) {
+          throw new SubscriberError(429, "concurrency_limited", "This agent has reached its concurrent request limit.");
+        }
+      } else if (presented?.startsWith("tor_sk_")) {
         if (!opts.keys) throw new SubscriberError(503, "auth_unavailable", "API key verification is unavailable.");
         const record = await opts.keys.find(presented);
         if (!record || !verifyKey(presented, record)) {
@@ -329,11 +384,9 @@ export function createApp(opts: GatewayOptions = {}) {
           }
         }
       }
-      // Team billing: an active member spends the team wallet's vault credits. The
-      // request names the team; membership and payer come only from the mirror.
+      // The request names the team for a browser session; the mirror decides the rest.
       const teamId = typeof req.body?.tor_team === "string" && req.body.tor_team ? req.body.tor_team : null;
-      let teamBilling: { orgId: string; did: string; wallet: string } | null = null;
-      if (teamId && !keyPrefix) {
+      if (teamId && !keyPrefix && !agentCall) {
         if (!opts.teams || !opts.verifySession) throw new SubscriberError(503, "billing_unavailable", "Team billing is unavailable. Try again later.");
         if (!presented) throw new SubscriberError(401, "authentication_required", "Sign in to use team credits.");
         const identity = await opts.verifySession(presented);
@@ -342,12 +395,12 @@ export function createApp(opts: GatewayOptions = {}) {
         if (!team || team.state !== "active" || !team.walletAddress) {
           throw new SubscriberError(409, "team_wallet_inactive", "This team has no active treasury wallet yet.");
         }
-        teamBilling = { orgId: teamId, did: member.did, wallet: team.walletAddress };
+        teamBilling = { orgId: teamId, did: member.did, wallet: team.walletAddress, allowance: member.allowanceCredits ?? team.defaultAllowanceCredits };
       }
-      if (requireSubscription && !keyPrefix && !teamBilling) {
+      if (requireSubscription && !keyPrefix && !teamBilling && !agentCall) {
         walletHandle = `wallet:${await subscriberWallet(presented, req.body?.userHandle, opts.verifySubscriber)}`;
       }
-      const payer = (keyPrefix ? budgetAddressFor(keyPrefix) : teamBilling?.wallet ?? walletHandle?.slice("wallet:".length)) || null;
+      const payer = (agentCall ? agentCall.payer : keyPrefix ? budgetAddressFor(keyPrefix) : teamBilling?.wallet ?? walletHandle?.slice("wallet:".length)) || null;
       if (requireSubscription) {
         if (!payer || !opts.settle || (!opts.subscriptionCredits && (!opts.vaultAddress || !opts.rpcUrl))) {
           throw new SubscriberError(503, "billing_unavailable", "Subscription billing is unavailable. Try again later.");
@@ -481,6 +534,73 @@ export function createApp(opts: GatewayOptions = {}) {
         const maximum = priceForCall(host, bounded.promptCeiling, bounded.completionCeiling);
         if (maximum < 1n) throw new SubscriberError(503, "billing_unavailable", "This host has no billable subscription price.");
         if (availableCredits < maximum) throw new SubscriberError(402, "payment_required", `This request needs up to ${maximum} credits available. Shorten it or add credits; only actual usage is charged.`);
+        // Strict caps: reserve the maximum on agent and member counters before any payment.
+        if (opts.accounting && (agentCall || teamBilling)) {
+          const agent = agentCall?.agent ?? null;
+          const max = Number(maximum);
+          if (agent?.policy.maxRequestCredits != null && max > agent.policy.maxRequestCredits) {
+            throw new SubscriberError(403, "request_too_large", `This request could cost up to ${max} credits; the agent allows ${agent.policy.maxRequestCredits} per request. Lower max_tokens.`);
+          }
+          const p = periods();
+          const counters: CounterLimit[] = [];
+          if (agent) {
+            const approvable = agent.policy.exceptions.credits;
+            counters.push({ subject: `agent:${agent.id}`, period: p.day, limit: agent.policy.dailyCredits, label: "agent daily credits", approvable });
+            counters.push({ subject: `agent:${agent.id}`, period: p.month, limit: agent.policy.monthlyCredits, label: "agent monthly credits", approvable });
+            counters.push({ subject: `agent:${agent.id}`, period: p.all, limit: agent.policy.lifetimeCredits, label: "agent lifetime credits", approvable });
+          }
+          if (teamBilling) {
+            counters.push({ subject: `member:${teamBilling.orgId}:${teamBilling.did}`, period: p.month, limit: teamBilling.allowance, label: "member monthly allowance", approvable: !!agent });
+          }
+          const idempotencyKey = typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].slice(0, 128) : null;
+          const requestHash = sha256hex(JSON.stringify({ idempotencyKey, model, messages: req.body?.messages, max_tokens: bounded.body.max_tokens }));
+          const grant = agent ? await opts.approvals!.claimGrant(agent.id, requestHash, agent.policyRevision, requestId) : null;
+          const admitted = await opts.accounting.reserve({
+            requestId, payer: payer!, agentId: agent?.id ?? null, orgId: teamBilling?.orgId ?? null, memberDid: teamBilling?.did ?? null, maximumCredits: max,
+            counters: counters.map((c) => ({ ...c, extra: grant?.limits.find((l) => l.subject === c.subject && l.period === c.period)?.extra ?? 0 })),
+            approvalId: grant?.id ?? null,
+          });
+          if (!admitted.ok) {
+            if (grant) await opts.approvals!.finishGrant(grant.id, requestId, "approved");
+            const primary = admitted.violations[0];
+            if (!agent || admitted.violations.some((v) => !v.approvable)) {
+              throw new SubscriberError(429, "quota_exceeded", `${capitalize(primary.label)} reached${agent ? "" : " — ask your team owner for an increase"}.`);
+            }
+            const memberLimit = admitted.violations.some((v) => v.subject.startsWith("member:"));
+            const methods: ApprovalMethod[] = agent.orgId ? ["org_owner", ...(agent.ledgerAddress && !memberLimit ? (["ledger"] as const) : [])] : agent.ledgerAddress ? ["ledger"] : [];
+            if (!methods.length) {
+              throw new SubscriberError(429, "quota_exceeded", `${capitalize(primary.label)} reached. Enroll a Ledger to approve exceptions, or raise the limit.`);
+            }
+            const additional = Math.max(...admitted.violations.map((v) => v.needed));
+            const team = agent.orgId ? await opts.teams!.team(agent.orgId) : null;
+            const input = {
+              agentId: agent.id, orgId: agent.orgId, memberDid: teamBilling?.did ?? null, methods, requestHash, idempotencyKey, model,
+              maximumRequestCredits: max, additionalCredits: additional,
+              limits: admitted.violations.map((v) => ({ subject: v.subject, period: v.period, label: v.label, limit: v.limit, extra: v.needed })),
+              policyRevision: agent.policyRevision, membershipRevision: team?.membershipRevision ?? 0, ledgerRevision: agent.ledgerRevision,
+            };
+            let { approval } = await opts.approvals!.requestFor(input);
+            if (approval.state === "approved" && (approval.grantExpiresAt ?? 0) <= Date.now()) {
+              await opts.approvals!.setState(approval.id, ["approved"], "expired");
+              ({ approval } = await opts.approvals!.requestFor(input));
+            }
+            if (approval.state === "reserved") throw new SubscriberError(409, "approval_in_use", "The approved exception is in use by another request. Retry after it settles.");
+            throw new ApprovalRequired({
+              type: "approval_required",
+              message: `This request exceeds the ${primary.label}.`,
+              approval_id: approval.id,
+              approval_state: approval.state,
+              approval_methods: approval.methods,
+              approval_url: `${origin}/approvals/${approval.id}`,
+              constraint: constraintName(primary),
+              remaining_credits: String(Math.max(0, primary.limit - primary.spent - primary.reserved)),
+              maximum_request_credits: String(max),
+              additional_credits_requested: String(additional),
+              poll_after_seconds: 5,
+            });
+          }
+          strict = { grantId: grant?.id ?? null, maximum: max };
+        }
         await billing.submitted(payer!, requestId, host!.address, maximum);
         paymentStarted = true;
       }
@@ -499,6 +619,10 @@ export function createApp(opts: GatewayOptions = {}) {
       const usage = (out as any)?.usage ?? {};
       const tokensIn = Number(usage.prompt_tokens ?? 0);
       const tokensOut = Number(usage.completion_tokens ?? 0);
+      if (strict && Number(priceForCall(host, tokensIn, tokensOut)) > strict.maximum) {
+        // Never silently overrun an admitted bound: withhold and reconcile.
+        throw new SubscriberError(503, "usage_exceeded_bound", "Usage exceeded the admitted bound. The completion is withheld until reconciliation.");
+      }
       const receiptInput = {
         requestId,
         promptHash: sha256hex(JSON.stringify(req.body.messages ?? req.body)),
@@ -510,9 +634,11 @@ export function createApp(opts: GatewayOptions = {}) {
         tokensIn,
         tokensOut,
         modelId: model,
-        user: keyPrefix ? `key:${keyPrefix}` : teamBilling ? `member:${teamBilling.orgId}:${teamBilling.did}` : (walletHandle ?? "dev"),
+        user: agentCall ? `agent:${agentCall.agent.id}` : keyPrefix ? `key:${keyPrefix}` : teamBilling ? `member:${teamBilling.orgId}:${teamBilling.did}` : (walletHandle ?? "dev"),
         ...(payer ? { payer } : {}),
         ...(teamBilling ? { team: teamBilling.orgId, member: teamBilling.did } : {}),
+        ...(agentCall ? { agent: agentCall.agent.id, policyRevision: agentCall.agent.policyRevision } : {}),
+        ...(strict?.grantId ? { grant: strict.grantId } : {}),
         ...(x402Transaction ? { x402Transaction } : {}),
       };
       const builtReceipt = buildReceipt(receiptInput);
@@ -550,6 +676,12 @@ export function createApp(opts: GatewayOptions = {}) {
       if (opts.settle && !settled.settled && payer) {
         console.error(`settle failed user=${payer} host=${host?.address} amount=${settled.amountCredits}: ${settled.error}`);
       }
+      if (strict && settled.settled) {
+        // Confirmed debit: actual usage becomes spent and the grant is used up.
+        await opts.accounting!.settle(requestId, Number(settled.amountCredits));
+        if (strict.grantId) await opts.approvals!.finishGrant(strict.grantId, requestId, "consumed");
+        strict = null;
+      }
       if (requireSubscription && !settled.settled) {
         throw new SubscriberError(503, "settlement_pending", "Payment could not be confirmed. Your completion has not been released.");
       }
@@ -562,13 +694,28 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       res.json({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled });
     } catch (e: any) {
-      if (selectedHost && opts.health && !(e instanceof SubscriberError)) await opts.health.recordFail(selectedHost.address);
+      if (strict) {
+        // Unsettled reservation: free it only when no payment could have started.
+        if (paymentStarted) {
+          await opts.accounting!.markUncertain(requestId).catch(() => {});
+          if (strict.grantId) await opts.approvals!.finishGrant(strict.grantId, requestId, "uncertain").catch(() => {});
+        } else {
+          await opts.accounting!.release(requestId).catch(() => {});
+          if (strict.grantId) await opts.approvals!.finishGrant(strict.grantId, requestId, "approved").catch(() => {});
+        }
+        strict = null;
+      }
+      if (selectedHost && opts.health && !(e instanceof SubscriberError) && !(e instanceof ApprovalRequired)) await opts.health.recordFail(selectedHost.address);
       // Mid-stream failures must not touch headers twice — that crashes the process.
       if (res.headersSent) {
         try {
           res.write(`event: error\ndata: ${JSON.stringify({ message: String(e?.message ?? e).slice(0, 200), ...(e instanceof SubscriberError ? { type: e.type } : {}) })}\n\n`);
           res.end();
         } catch {}
+        return;
+      }
+      if (e instanceof ApprovalRequired) {
+        res.status(403).json({ error: e.body });
         return;
       }
       if (e instanceof SubscriberError) {
@@ -1192,7 +1339,10 @@ export function createApp(opts: GatewayOptions = {}) {
       return;
     }
     try {
-      res.json(await opts.teams.applySnapshot(normalizeSnapshot(req.params.orgId, req.body)));
+      const result = await opts.teams.applySnapshot(normalizeSnapshot(req.params.orgId, req.body));
+      // A removed member's pending approvals and unused grants end with their access.
+      for (const did of result.removed) await opts.approvals?.cancelOpen({ orgId: req.params.orgId, memberDid: did });
+      res.json(result);
     } catch (e) {
       if (e instanceof TeamError) {
         res.status(e.status).json({ error: { message: e.message, type: "invalid_request" } });
@@ -1355,6 +1505,321 @@ export function createApp(opts: GatewayOptions = {}) {
     }
   });
 
+  // --- Agents ------------------------------------------------------------------
+
+  async function sessionActor(req: any, res: any): Promise<{ identity: Identity; jwt: string } | null> {
+    if (!opts.verifySession || !opts.agents) {
+      res.status(501).json({ error: { message: "agents are not configured", type: "unavailable" } });
+      return null;
+    }
+    const jwt = String(req.headers.authorization ?? "").match(/^Bearer (\S+)$/i)?.[1];
+    if (!jwt || jwt.startsWith("tor_sk_")) {
+      res.status(401).json({ error: { message: "Sign in to continue.", type: "authentication_required" } });
+      return null;
+    }
+    try {
+      return { identity: await opts.verifySession(jwt), jwt };
+    } catch (e) {
+      if (e instanceof SubscriberError) res.status(e.status).json({ error: { message: e.message, type: e.type } });
+      else res.status(503).json({ error: { message: "Login verification is unavailable. Try again later.", type: "unavailable" } });
+      return null;
+    }
+  }
+
+  function agentFailure(res: any, e: unknown) {
+    if (e instanceof AgentError || e instanceof ApprovalError) {
+      res.status(e.status).json({ error: { message: e.message, type: e.type } });
+      return;
+    }
+    console.error(`agents: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+    res.status(503).json({ error: { message: "The agent request could not be completed. Try again.", type: "unavailable" } });
+  }
+
+  function agentView(agent: Agent) {
+    return {
+      id: agent.id, name: agent.name, description: agent.description, ownerUserId: agent.ownerUserId, orgId: agent.orgId, sponsorDid: agent.sponsorDid,
+      payerKind: agent.payerKind, state: agent.state, policy: agent.policy, policyRevision: agent.policyRevision,
+      ledgerAddress: agent.ledgerAddress, ledgerRevision: agent.ledgerRevision, createdAt: agent.createdAt, updatedAt: agent.updatedAt,
+      budgetAddress: agent.budgetLabel ? budgetAddressFor(agent.budgetLabel) : null,
+    };
+  }
+
+  /// @notice Personal agents: their owner. Team agents: their owner while still a member, plus team owners and managers.
+  async function agentAccess(agent: Agent, identity: Identity) {
+    if (!agent.orgId) {
+      const owner = stripDid(agent.ownerUserId) === stripDid(identity.userId);
+      return { manage: owner, member: null as TeamMember | null };
+    }
+    const member = opts.teams ? await opts.teams.memberFor(agent.orgId, identity) : null;
+    const owner = !!member && stripDid(agent.ownerUserId) === stripDid(identity.userId);
+    return { manage: owner || member?.role === "owner" || member?.role === "manager", member };
+  }
+
+  /// @notice A team agent never receives broader limits or models than its sponsor and team.
+  async function checkParent(orgId: string, sponsor: TeamMember, policy: AgentPolicy) {
+    const team = await opts.teams!.team(orgId);
+    if (!team || team.state !== "active" || !team.walletAddress) throw new AgentError(409, "team_wallet_inactive", "The team has no active treasury wallet yet.");
+    const allowance = sponsor.allowanceCredits ?? team.defaultAllowanceCredits;
+    for (const [label, value] of [["Daily", policy.dailyCredits], ["Monthly", policy.monthlyCredits], ["Lifetime", policy.lifetimeCredits]] as const) {
+      if (allowance !== null && value !== null && value > allowance) {
+        throw new AgentError(400, "exceeds_parent", `${label} credits cannot exceed the sponsoring member's allowance of ${allowance}.`);
+      }
+    }
+    const rules = await opts.orgRules?.get(orgId);
+    if (rules?.allowedModels && policy.models?.some((m) => !rules.allowedModels!.includes(m))) {
+      throw new AgentError(400, "exceeds_parent", "The team does not allow some of these models.");
+    }
+    return { team, allowance, teamModels: rules?.allowedModels ?? null };
+  }
+
+  const widens = (before: AgentPolicy, after: AgentPolicy) =>
+    (["dailyCredits", "monthlyCredits", "lifetimeCredits", "maxRequestCredits", "requestsPerMinute", "maxConcurrent", "credentialTtlDays"] as const).some(
+      (k) => before[k] !== null && (after[k] === null || (after[k] as number) > (before[k] as number)),
+    ) ||
+    (before.models !== null && (after.models === null || after.models.some((m) => !before.models!.includes(m)))) ||
+    (before.verifiedOnly && !after.verifiedOnly) ||
+    (!before.exceptions.credits && after.exceptions.credits);
+
+  async function agentUsage(agent: Agent) {
+    const p = periods();
+    const rows = opts.accounting
+      ? await opts.accounting.usage([{ subject: `agent:${agent.id}`, period: p.day }, { subject: `agent:${agent.id}`, period: p.month }, { subject: `agent:${agent.id}`, period: p.all }])
+      : [];
+    return rows.map((r) => {
+      const limit = r.period === p.day ? agent.policy.dailyCredits : r.period === p.month ? agent.policy.monthlyCredits : agent.policy.lifetimeCredits;
+      return { ...r, limit, remaining: limit === null ? null : Math.max(0, limit - r.spent - r.reserved) };
+    });
+  }
+
+  app.post("/api/agents", async (req, res) => {
+    const actor = await sessionActor(req, res);
+    if (!actor) return;
+    try {
+      const policy = normalizePolicy(req.body?.policy);
+      let orgId: string | null = null;
+      let sponsorDid: string | null = null;
+      if (typeof req.body?.orgId === "string" && req.body.orgId) {
+        const member = opts.teams ? await opts.teams.memberFor(req.body.orgId, actor.identity) : null;
+        if (!member) throw new AgentError(404, "not_found", "team not found");
+        await checkParent(req.body.orgId, member, policy);
+        orgId = req.body.orgId;
+        sponsorDid = member.did;
+      }
+      const created = await opts.agents!.create({ name: String(req.body?.name ?? ""), description: String(req.body?.description ?? ""), ownerUserId: actor.identity.userId, orgId, sponsorDid, policy });
+      // The secret is shown once; only its salted hash is stored.
+      res.json({ agent: agentView(created.agent), key: created.key, credential: created.credential });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.get("/api/agents", async (req, res) => {
+    const actor = await sessionActor(req, res);
+    if (!actor) return;
+    try {
+      const byId = new Map<string, Agent>();
+      for (const a of await opts.agents!.listForOwner(actor.identity.userId)) byId.set(a.id, a);
+      for (const team of opts.teams ? await opts.teams.teamsFor(actor.identity) : []) {
+        const member = await opts.teams!.memberFor(team.orgId, actor.identity);
+        if (member?.role === "owner" || member?.role === "manager") for (const a of await opts.agents!.listForOrg(team.orgId)) byId.set(a.id, a);
+      }
+      res.json({ data: [...byId.values()].sort((a, b) => b.createdAt - a.createdAt).map(agentView) });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  async function managedAgent(req: any, res: any) {
+    const actor = await sessionActor(req, res);
+    if (!actor) return null;
+    const agent = await opts.agents!.get(req.params.id);
+    const access = agent ? await agentAccess(agent, actor.identity) : null;
+    if (!agent || !access?.manage) {
+      res.status(404).json({ error: { message: "Agent not found.", type: "not_found" } });
+      return null;
+    }
+    return { actor, agent, access };
+  }
+
+  app.get("/api/agents/:id", async (req, res) => {
+    const ctx = await managedAgent(req, res);
+    if (!ctx) return;
+    try {
+      const { agent } = ctx;
+      let effective: Record<string, unknown> = { monthlyCredits: agent.policy.monthlyCredits, models: agent.policy.models };
+      if (agent.orgId && agent.sponsorDid && opts.teams) {
+        const [team, sponsor, rules] = await Promise.all([opts.teams.team(agent.orgId), opts.teams.memberFor(agent.orgId, { userId: agent.sponsorDid, wallets: [] }), opts.orgRules?.get(agent.orgId)]);
+        const allowance = sponsor ? sponsor.allowanceCredits ?? team?.defaultAllowanceCredits ?? null : 0;
+        const monthly = [agent.policy.monthlyCredits, allowance].filter((v): v is number => v !== null);
+        effective = {
+          monthlyCredits: monthly.length ? Math.min(...monthly) : null,
+          memberAllowance: allowance,
+          models: rules?.allowedModels && agent.policy.models ? agent.policy.models.filter((m) => rules.allowedModels!.includes(m)) : agent.policy.models ?? rules?.allowedModels ?? null,
+          sponsorActive: !!sponsor,
+        };
+      }
+      const receipts = ((await opts.receipts?.list(10_000)) ?? []).filter((r) => r.agent === agent.id).slice(0, 20);
+      res.json({
+        agent: agentView(agent),
+        effective,
+        usage: await agentUsage(agent),
+        credentials: await opts.agents!.credentials(agent.id),
+        approvals: opts.approvals ? await opts.approvals.list({ agentIds: [agent.id] }, 20) : [],
+        receipts,
+      });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.post("/api/agents/:id/rotate", async (req, res) => {
+    const ctx = await managedAgent(req, res);
+    if (!ctx) return;
+    try {
+      const issued = await opts.agents!.rotate(ctx.agent.id);
+      res.json({ key: issued.key, credential: issued.credential });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.post("/api/agents/:id/:action(pause|resume|revoke)", async (req, res) => {
+    const ctx = await managedAgent(req, res);
+    if (!ctx) return;
+    try {
+      const to = req.params.action === "pause" ? "paused" : req.params.action === "resume" ? "ready" : "revoked";
+      const agent = await opts.agents!.setState(ctx.agent.id, to);
+      if (to === "revoked") await opts.approvals?.cancelOpen({ agentId: agent.id });
+      res.json({ agent: agentView(agent) });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.patch("/api/agents/:id/policy", async (req, res) => {
+    const ctx = await managedAgent(req, res);
+    if (!ctx) return;
+    try {
+      const policy = normalizePolicy(req.body?.policy);
+      const { agent } = ctx;
+      if (agent.orgId) {
+        const sponsor = await opts.teams!.memberFor(agent.orgId, { userId: agent.sponsorDid ?? "", wallets: [] });
+        if (!sponsor) throw new AgentError(409, "sponsor_inactive", "The sponsoring member is no longer active.");
+        await checkParent(agent.orgId, sponsor, policy);
+      } else if (agent.ledgerAddress && widens(agent.policy, policy)) {
+        throw new AgentError(403, "ledger_required", "Widening a Ledger-protected agent needs approval on its Ledger.");
+      }
+      const updated = await opts.agents!.updatePolicy(agent.id, policy, Number(req.body?.expectedRevision));
+      await opts.approvals?.cancelOpen({ agentId: agent.id });
+      res.json({ agent: agentView(updated) });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  async function agentFromKey(req: any, res: any): Promise<Agent | null> {
+    if (!opts.agents) {
+      res.status(501).json({ error: { message: "agents are not configured", type: "unavailable" } });
+      return null;
+    }
+    const key = String(req.headers.authorization ?? "").match(/^Bearer (\S+)$/i)?.[1] ?? "";
+    const resolved = key.startsWith(AGENT_KEY_PREFIX) ? await opts.agents.authenticate(key) : null;
+    if (!resolved) {
+      res.status(401).json({ error: { message: "This agent credential is invalid, expired, or revoked.", type: "invalid_api_key" } });
+      return null;
+    }
+    return resolved.agent;
+  }
+
+  const effectiveApprovalState = (a: AgentApproval, now = Date.now()) =>
+    a.state === "pending" && now >= a.expiresAt ? "expired" : a.state === "approved" && (a.grantExpiresAt ?? 0) <= now ? "expired" : a.state;
+
+  // Agents read their own identity, constraints, usage, and approval state. They can never approve.
+  app.get("/v1/agent/self", async (req, res) => {
+    const agent = await agentFromKey(req, res);
+    if (!agent) return;
+    const approvals = opts.approvals ? await opts.approvals.list({ agentIds: [agent.id] }, 20) : [];
+    res.json({
+      agent: { id: agent.id, name: agent.name, state: agent.state, payerKind: agent.payerKind, orgId: agent.orgId, policyRevision: agent.policyRevision },
+      policy: agent.policy,
+      usage: await agentUsage(agent),
+      approvals: approvals.map((a) => ({ id: a.id, state: effectiveApprovalState(a), additional_credits: a.additionalCredits, expires_at: a.expiresAt, grant_expires_at: a.grantExpiresAt })),
+    });
+  });
+
+  app.get("/v1/agent/approvals/:id", async (req, res) => {
+    const agent = await agentFromKey(req, res);
+    if (!agent) return;
+    const approval = opts.approvals ? await opts.approvals.get(req.params.id) : null;
+    if (!approval || approval.agentId !== agent.id) {
+      res.status(404).json({ error: { message: "Approval not found.", type: "not_found" } });
+      return;
+    }
+    res.json({
+      id: approval.id, state: effectiveApprovalState(approval), approval_methods: approval.methods, additional_credits: approval.additionalCredits,
+      maximum_request_credits: approval.maximumRequestCredits, grant_expires_at: approval.grantExpiresAt, approval_url: `${origin}/approvals/${approval.id}`, poll_after_seconds: 5,
+    });
+  });
+
+  // Human review: team owners see their organization's approvals; agent owners see their agents'.
+  app.get("/api/agent-approvals", async (req, res) => {
+    const actor = await sessionActor(req, res);
+    if (!actor) return;
+    try {
+      if (!opts.approvals) throw new ApprovalError(501, "unavailable", "approvals are not configured");
+      const orgId = typeof req.query.orgId === "string" ? req.query.orgId : null;
+      let list: AgentApproval[];
+      if (orgId) {
+        const member = opts.teams ? await opts.teams.memberFor(orgId, actor.identity) : null;
+        if (member?.role !== "owner") throw new ApprovalError(404, "not_found", "team not found");
+        list = await opts.approvals.list({ orgId });
+      } else {
+        const mine = await opts.agents!.listForOwner(actor.identity.userId);
+        list = mine.length ? await opts.approvals.list({ agentIds: mine.map((a) => a.id) }) : [];
+      }
+      const agents = new Map<string, Agent | null>();
+      for (const a of list) if (!agents.has(a.agentId)) agents.set(a.agentId, await opts.agents!.get(a.agentId));
+      res.json({ data: list.map((a) => ({ ...a, state: effectiveApprovalState(a), agent: agents.get(a.agentId) ? agentView(agents.get(a.agentId)!) : null })) });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.get("/api/agent-approvals/:id", async (req, res) => {
+    const actor = await sessionActor(req, res);
+    if (!actor) return;
+    try {
+      const approval = opts.approvals ? await opts.approvals.get(req.params.id) : null;
+      const agent = approval ? await opts.agents!.get(approval.agentId) : null;
+      const authority = agent && opts.teams ? await approvalAuthority({ teams: opts.teams }, agent, actor.identity) : null;
+      if (!approval || !agent || !authority?.canView) throw new ApprovalError(404, "not_found", "Approval not found.");
+      res.json({
+        approval: { ...approval, state: effectiveApprovalState(approval) },
+        agent: agentView(agent),
+        message: approvalMessage(approval, { origin, agentName: agent.name }),
+        canApprove: { org_owner: authority.orgOwner && approval.methods.includes("org_owner"), ledger: authority.ledgerHuman && approval.methods.includes("ledger") },
+        evidence: await opts.approvals!.evidence(approval.id),
+      });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
+  app.post("/api/agent-approvals/:id/decide", async (req, res) => {
+    const actor = await sessionActor(req, res);
+    if (!actor) return;
+    try {
+      if (!opts.approvals || !opts.teams) throw new ApprovalError(501, "unavailable", "approvals are not configured");
+      const decision = req.body?.decision === "deny" ? "deny" : req.body?.decision === "approve" ? "approve" : null;
+      const method = req.body?.method === "ledger" ? "ledger" : req.body?.method === "org_owner" ? "org_owner" : null;
+      if (!decision || !method) throw new ApprovalError(400, "invalid_request", "decision (approve|deny) and method (org_owner|ledger) are required.");
+      const approval = await decideAgentApproval({ approvals: opts.approvals, agents: opts.agents!, teams: opts.teams, origin }, req.params.id, { identity: actor.identity }, { decision, method, signature: req.body?.signature });
+      res.json({ approval });
+    } catch (e) {
+      agentFailure(res, e);
+    }
+  });
+
   // PENDING_TAP queue (L4, Hedera-only). Trust chain: web (wallet-signed
   // owner) -> admin token here -> Ledger-signed HBAR self-transfer (exact dust,
   // verified on the mirror node) -> Hedera execution with the ring-held host
@@ -1489,6 +1954,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     orgRules: pg ? new PgOrgRules() : new MemoryOrgRules(),
     teams: pg ? new PgTeams() : undefined,
     verifySession: privySession(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET),
+    agents: pg ? new PgAgents() : undefined,
+    accounting: pg ? new PgAccounting() : undefined,
+    approvals: pg ? new PgApprovals() : undefined,
+    appOrigin: process.env.APP_ORIGIN,
   };
   if (pg && process.env.FAUCET_ACCOUNT_ID && process.env.FAUCET_PRIVATE_KEY) {
     const { HederaFaucetSender } = await import("./faucet-hedera.js");

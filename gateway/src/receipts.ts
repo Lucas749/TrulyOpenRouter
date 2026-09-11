@@ -21,6 +21,9 @@ export interface ReceiptInput {
   payer?: string; // vault account debited (wallet, team wallet, or budget account)
   team?: string; // team org id when a member spends team credits
   member?: string; // sponsoring team member identity
+  agent?: string; // stable agent id for agent credentials
+  policyRevision?: number; // agent policy revision the request was admitted under
+  grant?: string; // approval whose single-use grant covered this request
   debitTx?: string; // vault debit tx hash (the money proof link)
   x402Transaction?: string; // direct host USDC payment, separate from vault settlement
   hcsSeq?: string; // audit topic sequence (the public proof link)
