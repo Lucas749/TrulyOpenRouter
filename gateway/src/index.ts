@@ -1273,6 +1273,27 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json({ prefix: req.params.prefix, removed: await opts.spendCaps.removeCap(req.params.prefix) });
   });
 
+  // Operator view of one API key's issuing login, so the web binds only a member's own key.
+  app.get("/api/admin/keys/:prefix", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const record = opts.keys ? await opts.keys.find(req.params.prefix) : undefined;
+    if (!record || record.prefix !== req.params.prefix) {
+      res.status(404).json({ error: { message: "unknown key", type: "invalid_api_key" } });
+      return;
+    }
+    res.json({ prefix: record.prefix, ownerUserId: record.ownerUserId ?? null, revoked: record.revoked });
+  });
+
+  // Operator revoke, including keys issued before keys belonged to a login.
+  app.delete("/api/admin/keys/:prefix", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    if (!opts.keys || !(await opts.keys.revoke(req.params.prefix))) {
+      res.status(404).json({ error: { message: "unknown key", type: "invalid_api_key" } });
+      return;
+    }
+    res.json({ revoked: true });
+  });
+
   // Onchain allowance mirror: set/clear one account's SpendCap in the vault.
   // Body: { address? 0x…, prefix? key-prefix, capCredits? number|null, periodDays? n }.
   // capCredits null/omitted = uncapped (periodDays 0 clears). capCredits 0 = deny-all.

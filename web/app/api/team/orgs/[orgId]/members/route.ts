@@ -13,7 +13,7 @@ import {
   setOrgDefault,
   verifyActionMessage,
 } from "../../../../../../lib/members";
-import { clearCap, syncCap, syncSpendCap } from "../../../../../../lib/gateway-admin";
+import { clearCap, keyOwner, syncCap, syncSpendCap } from "../../../../../../lib/gateway-admin";
 import { requireSession, requireTeamViewer, sessionOwnsWallet, walletNotLinked } from "../../../../../../lib/session";
 import { syncTeamToGateway } from "../../../../../../lib/team-sync";
 
@@ -222,6 +222,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ orgId: 
       }
       if (roleRank(requested) > roleRank(authed.role)) {
         return NextResponse.json({ error: "cannot grant a role above your own" }, { status: 403 });
+      }
+    }
+    // Key prefixes are public in receipts, and a bound key gets this team's caps.
+    // Bind only an active key issued by the member's own login.
+    if (body.member.keyPrefix !== undefined) {
+      let key;
+      try {
+        key = await keyOwner(String(body.member.keyPrefix));
+      } catch (e) {
+        return NextResponse.json({ error: String((e as Error)?.message ?? e).slice(0, 160) }, { status: 502 });
+      }
+      const login = (id: string) => id.replace(/^did:privy:/, "");
+      if (!key || key.revoked || !key.ownerUserId || login(key.ownerUserId) !== login(did)) {
+        return NextResponse.json({ error: "bind only an active API key issued by this member's own login" }, { status: 403 });
       }
     }
     let m;

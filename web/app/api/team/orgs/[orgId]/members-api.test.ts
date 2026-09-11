@@ -55,6 +55,8 @@ async function foundOwner() {
 }
 
 export const spendCapCalls: any[] = [];
+// API keys the gateway knows, by prefix, with the login that issued each one.
+const keyOwners: Record<string, string> = { prefixm1abcd: "did:m1", tor_sk_VICTM: "did:privy:victim" };
 const teamSnapshots: any[] = [];
 let failTeamSync = false;
 
@@ -78,6 +80,12 @@ beforeEach(async () => {
     "fetch",
     vi.fn(async (url: any, init: any) => {
       const u = String(url);
+      if (u.includes("/api/admin/keys/")) {
+        const owner = keyOwners[decodeURIComponent(u.split("/api/admin/keys/")[1])];
+        return owner
+          ? ({ ok: true, status: 200, json: async () => ({ ownerUserId: owner, revoked: false }) } as any)
+          : ({ ok: false, status: 404, text: async () => "unknown key", json: async () => ({}) } as any);
+      }
       if (u.includes("/api/admin/caps")) return { ok: true, json: async () => ({}) } as any;
       if (u.includes("/api/admin/spend-caps")) {
         spendCapCalls.push(JSON.parse(String(init?.body ?? "{}")));
@@ -280,6 +288,17 @@ describe("members routes", () => {
     );
     expect(denied.status).toBe(200);
     expect(((await denied.json()) as any).request.status).toBe("denied");
+  });
+
+  it("binds a key prefix only to the member whose login issued that key", async () => {
+    await foundOwner();
+    const before = spendCapCalls.length;
+    for (const prefix of ["tor_sk_VICTM", "tor_sk_UNKWN"]) {
+      const add = await signedAdd("did:m1", MEMBER.address, "member", 0);
+      (add.member as any).keyPrefix = prefix;
+      expect((await addMemberRoute(req("owner", "POST", add), org)).status).toBe(403);
+    }
+    expect(spendCapCalls.length).toBe(before);
   });
 
   it("edits allowance (sync-first) and removes members", async () => {

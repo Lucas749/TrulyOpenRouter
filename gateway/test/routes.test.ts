@@ -79,6 +79,7 @@ describe("routes", () => {
       requireSubscription: false,
       keys,
       fallbackUpstream: "http://127.0.0.1:1",
+      adminToken: "admin-token",
       verifySession: async (jwt) => {
         if (!logins[jwt]) throw new SubscriberError(401, "authentication_required", "Invalid session");
         return logins[jwt];
@@ -127,6 +128,14 @@ describe("routes", () => {
       await keys.save(legacy.record);
       expect((await chat(legacy.key)).status).not.toBe(401);
       expect((await call("DELETE", `/api/keys/${legacy.record.prefix}`, "owner-jwt")).status).toBe(404);
+
+      // The operator sees a key's issuing login and can revoke keys that have none.
+      const admin = { Authorization: "Bearer admin-token" };
+      expect((await fetch(`${url}/api/admin/keys/${legacy.record.prefix}`)).status).toBe(401);
+      expect(await (await fetch(`${url}/api/admin/keys/${issued.prefix}`, { headers: admin })).json()).toMatchObject({ ownerUserId: "did:privy:owner", revoked: true });
+      expect(await (await fetch(`${url}/api/admin/keys/${legacy.record.prefix}`, { headers: admin })).json()).toMatchObject({ ownerUserId: null, revoked: false });
+      expect((await fetch(`${url}/api/admin/keys/${legacy.record.prefix}`, { method: "DELETE", headers: admin })).status).toBe(200);
+      expect((await chat(legacy.key)).status).toBe(401);
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }

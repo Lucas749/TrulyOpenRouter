@@ -66,6 +66,17 @@ export async function syncSpendCap(o: {
   return "synced";
 }
 
+/// @notice The login that issued an API key, or null when the gateway does not know the key.
+export async function keyOwner(prefix: string): Promise<{ ownerUserId: string | null; revoked: boolean } | null> {
+  const t = token();
+  if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured, refusing unwatched sync");
+  const res = await fetch(`${base()}/api/admin/keys/${encodeURIComponent(prefix)}`, { headers: { Authorization: `Bearer ${t}` } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`gateway key lookup failed: ${(await res.text()).slice(0, 160)}`);
+  const d = (await res.json()) as { ownerUserId?: string | null; revoked?: boolean };
+  return { ownerUserId: d.ownerUserId ?? null, revoked: !!d.revoked };
+}
+
 export async function clearCap(prefix: string): Promise<void> {
   const t = token();
   if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured, refusing unwatched sync");
