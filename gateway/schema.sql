@@ -298,3 +298,18 @@ CREATE TABLE IF NOT EXISTS approval_evidence (
   actor_role text,
   verified_at bigint NOT NULL
 );
+
+-- Personal agent budget funding. Each leg's signed bytes are stored before
+-- broadcast; retries resume the same operation and never repeat a leg.
+CREATE TABLE IF NOT EXISTS agent_funding_ops (
+  id text PRIMARY KEY,
+  agent_id text NOT NULL REFERENCES agents (id) ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind IN ('buy_credits', 'return_funds')),
+  state text NOT NULL CHECK (state IN ('signed', 'submitted', 'confirmed', 'reverted', 'uncertain', 'failed')),
+  legs jsonb NOT NULL DEFAULT '[]',
+  terms jsonb NOT NULL DEFAULT '{}',
+  error text,
+  created_at bigint NOT NULL,
+  updated_at bigint NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_funding_ops_open_idx ON agent_funding_ops (agent_id) WHERE state IN ('signed', 'submitted', 'uncertain');
