@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import type { PendingCollection } from "./team.js";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -10,6 +11,7 @@ export interface TorConfig {
   hostAddress?: string;
   hostRegistry?: `0x${string}`;
   ledgerApprovalAddress?: `0x${string}`;
+  pendingCollection?: PendingCollection; // unfinished team collection, resumed by tor-host collect
 }
 
 export function configDir(): string {

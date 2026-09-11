@@ -13,6 +13,8 @@ import { flag as flagArg } from "./util.js";
 import { myHostAddress, verifyHost } from "./verify.js";
 import { lifecycleDeps, operateHost, type HostAction } from "./host-lifecycle.js";
 import { withdrawEarnings } from "./withdraw.js";
+import { hostContext } from "./host-runtime.js";
+import { collectEarnings, linkTeam } from "./team.js";
 import { decimalAmount } from "./monitor.js";
 import { createInterface } from "node:readline/promises";
 import { formatEther } from "viem";
@@ -52,6 +54,29 @@ try {
       finally { input.close(); }
     }, message => console.log(message)));
   }
+  else if (cmd === "team" || cmd === "collect") {
+    const confirmed = async (question: string) => {
+      if (rest.includes("--dry-run")) return false;
+      if (rest.includes("--yes")) return true;
+      if (!process.stdin.isTTY) { console.log("Run interactively to confirm, or pass --yes."); return false; }
+      const input = createInterface({ input: process.stdin, output: process.stdout });
+      try { return /^y(es)?$/i.test((await input.question(`${question} [y/N] `)).trim()); }
+      finally { input.close(); }
+    };
+    if (cmd === "team") {
+      if (rest[0] !== "link") throw new Error("usage: tor-host team link <code>");
+      console.log(await linkTeam(rest[1] ?? "", await hostContext(gateway()), async terms => {
+        console.log(`Link this host to ${terms.teamName}\nDestination wallet: ${terms.destination}\nRegistry: ${terms.registry}\nLink expires: ${new Date(terms.expiresAt).toISOString()}`);
+        return confirmed("Sign these link terms with the host key?");
+      }));
+    } else {
+      const asset = rest.includes("--usdc") ? "usdc" : "hbar";
+      console.log(await collectEarnings(await hostContext(gateway()), asset, async review => {
+        console.log(`Collect ${review.amount} into ${review.teamName}\nDestination wallet: ${review.destination}\nMaximum fees: ${review.maxFeeHbar} HBAR${asset === "hbar" ? "\nThe vault pays the host first; the host then sends the earnings to the team wallet." : ""}`);
+        return confirmed("Collect with the host key?");
+      }, message => console.log(message)));
+    }
+  }
   else if (cmd === "leave") {
     const cfg = await (await fetch(`${gateway()}/api/config`)).json().catch(() => ({}));
     await leave({
@@ -79,7 +104,7 @@ try {
     });
     if (!flag("status-file") && !rest.includes("--no-dashboard") && process.stdin.isTTY && process.stdout.isTTY) await dashboard(dashboardOptions());
   } else {
-    console.log("tor-host — serve open models on TrulyOpenRouter\n\n  tor-host                            open the host console\n  tor-host dashboard                  live status, activity, models, network, logs\n  tor-host status [--json|--watch]     snapshot or live console\n  tor-host login [--gateway=URL]       link this machine to your web account\n  tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N]\n  tor-host link                       claim this host for your account\n  tor-host ledger [status|init|taps]    device + key-ring state, guided setup, tap queue\n  tor-host verify [--address 0x…]      fingerprint spot-check my host\n  tor-host start | stop | restart      manage services, tunnel, and routing\n  tor-host model <tag>                 change the serving model\n  tor-host withdraw [--ledger]         withdraw earnings (review first)\n  tor-host leave [--dry-run]           deregister and begin unstaking\n\n  Dashboard: --once, --gateway URL, --guard-url URL, --ollama-url URL\n  Run: --no-dashboard keeps sequential output after setup");
+    console.log("tor-host — serve open models on TrulyOpenRouter\n\n  tor-host                            open the host console\n  tor-host dashboard                  live status, activity, models, network, logs\n  tor-host status [--json|--watch]     snapshot or live console\n  tor-host login [--gateway=URL]       link this machine to your web account\n  tor-host run --model <id> [--price-req N] [--price-1k N] [--region slug] [--stake-hbar N]\n  tor-host link                       claim this host for your account\n  tor-host ledger [status|init|taps]    device + key-ring state, guided setup, tap queue\n  tor-host verify [--address 0x…]      fingerprint spot-check my host\n  tor-host start | stop | restart      manage services, tunnel, and routing\n  tor-host model <tag>                 change the serving model\n  tor-host withdraw [--ledger]         withdraw earnings (review first)\n  tor-host team link <code>            send collected earnings to a team wallet\n  tor-host collect [--usdc]            collect earnings into the linked team wallet\n  tor-host leave [--dry-run]           deregister and begin unstaking\n\n  Dashboard: --once, --gateway URL, --guard-url URL, --ollama-url URL\n  Run: --no-dashboard keeps sequential output after setup");
     if (cmd && !["help", "--help", "-h"].includes(cmd)) process.exitCode = 1;
   }
 } catch (e) {
