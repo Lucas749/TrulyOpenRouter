@@ -20,8 +20,6 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
   const [wallet, setWallet] = useState<{ hbar: string; usdc: string } | null>(null);
   const [flagMsg, setFlagMsg] = useState<string | null>(null);
   const [flagBusy, setFlagBusy] = useState(false);
-  const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
-  const [verifyBusy, setVerifyBusy] = useState(false);
   const { authenticated } = usePrivy();
   const { wallets } = useWallets();
 
@@ -61,26 +59,6 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mock, address]);
 
-  // On-demand model-identity spot check. Probes are paid calls like any other traffic.
-  async function verifyNow() {
-    if (!d) return;
-    setVerifyBusy(true);
-    setVerifyMsg(null);
-    try {
-      const r = await fetch(`${GATEWAY}/api/verify/${address}`, { method: "POST" });
-      const report: any = await r.json();
-      if (!r.ok) throw new Error(report.error?.message ?? r.status);
-      setVerifyMsg(
-        report.inconclusive
-          ? "inconclusive, host unreachable, not counted against it"
-          : `${report.passed}/${report.total} probes match${report.verification?.failing ? ", FAILING, out of rotation" : ""}`,
-      );
-      await load();
-    } catch (e: any) {
-      setVerifyMsg(`verify failed: ${String(e?.message ?? e).slice(0, 160)}`);
-    }
-    setVerifyBusy(false);
-  }
   // Anyone with a wallet can challenge, review (not auto-slash) is the v1 semantic.
   // Flag a host with its latest failed receipt (or zero hash for general review).
   // Anyone with a wallet can challenge, review (not auto-slash) is the v1 semantic.
@@ -159,19 +137,13 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
                     {d.verification.failing ? "failing" : "✓"} {(d.verification.avgScore * 100).toFixed(0)}% · {d.verification.checks} check{d.verification.checks === 1 ? "" : "s"}
                   </span>
                 ) : (
-                  <span className="font-mono text-sm text-[#8F8F8F]">unchecked, anyone can run the probes</span>
+                  <span className="font-mono text-sm text-[#8F8F8F]">Not checked yet</span>
                 )}
-                {!mock && (
-                  <button onClick={verifyNow} disabled={verifyBusy} className="ml-auto rounded-full border border-black/10 px-2.5 py-0.5 text-xs disabled:opacity-40">
-                    {verifyBusy ? "probing…" : "Verify now"}
-                  </button>
-                )}
+
               </div>
               <p className="m-0 text-xs leading-relaxed text-[#6E6E73]">
-                Deterministic fingerprint probes (temperature 0, fixed seed) vs. reference outputs
-                captured from the pinned serving stack. Probes are paid calls, the host earns for them.
+                Model checks are run by the network. Hosts receive payment for each check.
               </p>
-              {verifyMsg && <p className="m-0 font-mono text-xs text-[#6E6E73]">{verifyMsg}</p>}
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               {[
