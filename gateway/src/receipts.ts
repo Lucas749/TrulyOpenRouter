@@ -18,6 +18,9 @@ export interface ReceiptInput {
   amountCredits?: string; // metered settle amount; "0" when unsettled
   modelId?: string; // for per-model aggregates
   user?: string; // payer handle: key:<prefix> or "dev" — pseudonymous, for usage history
+  payer?: string; // vault account debited (wallet, team wallet, or budget account)
+  team?: string; // team org id when a member spends team credits
+  member?: string; // sponsoring team member identity
   debitTx?: string; // vault debit tx hash (the money proof link)
   x402Transaction?: string; // direct host USDC payment, separate from vault settlement
   hcsSeq?: string; // audit topic sequence (the public proof link)
@@ -103,7 +106,7 @@ export class PgReceiptLog implements ReceiptLog {
       `INSERT INTO receipts (id, ts, model, host, payer, "user", price_wei, amount_credits, debit_tx, hcs_seq, data)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (id) DO NOTHING`,
       [
-        r.id, r.ts, (r as any).modelId ?? "", r.host ?? "", (r as any).user ?? "",
+        r.id, r.ts, (r as any).modelId ?? "", r.host ?? "", r.payer ?? (r as any).user ?? "",
         (r as any).user ?? "", String((r as any).priceWei ?? "0"), String((r as any).amountCredits ?? "0"),
         (r as any).debitTx ?? null, (r as any).hcsSeq != null ? Number((r as any).hcsSeq) : null,
         JSON.stringify(r),

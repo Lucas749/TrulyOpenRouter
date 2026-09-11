@@ -329,10 +329,25 @@ export function createApp(opts: GatewayOptions = {}) {
           }
         }
       }
-      if (requireSubscription && !keyPrefix) {
+      // Team billing: an active member spends the team wallet's vault credits. The
+      // request names the team; membership and payer come only from the mirror.
+      const teamId = typeof req.body?.tor_team === "string" && req.body.tor_team ? req.body.tor_team : null;
+      let teamBilling: { orgId: string; did: string; wallet: string } | null = null;
+      if (teamId && !keyPrefix) {
+        if (!opts.teams || !opts.verifySession) throw new SubscriberError(503, "billing_unavailable", "Team billing is unavailable. Try again later.");
+        if (!presented) throw new SubscriberError(401, "authentication_required", "Sign in to use team credits.");
+        const identity = await opts.verifySession(presented);
+        const [member, team] = await Promise.all([opts.teams.memberFor(teamId, identity), opts.teams.team(teamId)]);
+        if (!member) throw new SubscriberError(403, "team_access_denied", "You are not an active member of this team.");
+        if (!team || team.state !== "active" || !team.walletAddress) {
+          throw new SubscriberError(409, "team_wallet_inactive", "This team has no active treasury wallet yet.");
+        }
+        teamBilling = { orgId: teamId, did: member.did, wallet: team.walletAddress };
+      }
+      if (requireSubscription && !keyPrefix && !teamBilling) {
         walletHandle = `wallet:${await subscriberWallet(presented, req.body?.userHandle, opts.verifySubscriber)}`;
       }
-      const payer = (keyPrefix ? budgetAddressFor(keyPrefix) : walletHandle?.slice("wallet:".length)) || null;
+      const payer = (keyPrefix ? budgetAddressFor(keyPrefix) : teamBilling?.wallet ?? walletHandle?.slice("wallet:".length)) || null;
       if (requireSubscription) {
         if (!payer || !opts.settle || (!opts.subscriptionCredits && (!opts.vaultAddress || !opts.rpcUrl))) {
           throw new SubscriberError(503, "billing_unavailable", "Subscription billing is unavailable. Try again later.");
@@ -356,10 +371,14 @@ export function createApp(opts: GatewayOptions = {}) {
       let orgPinnedHosts: string[] | null = null; // union: any pinned host serves
       let orgRateLimit: number | null = null; // strictest (min) across caller orgs
       let orgRateHandles: string[] = [];
+      const orgRateTeams: string[] = [];
       if (opts.orgRules) {
         const handle = keyPrefix ? `key:${keyPrefix}` : walletHandle;
-        if (handle) {
-          const orgs = await opts.orgRules.orgsForHandle(handle);
+        if (handle || teamBilling) {
+          // Team-billed calls follow the billed team's rules; others follow every org of the handle.
+          const orgs = teamBilling
+            ? [await opts.orgRules.get(teamBilling.orgId)].filter((o): o is NonNullable<typeof o> => !!o)
+            : await opts.orgRules.orgsForHandle(handle!);
           for (const o of orgs) {
             if (o.allowedModels && !o.allowedModels.includes(model)) {
               throw new OrgPolicyDenied(`model ${model} not allowed`);
@@ -374,11 +393,13 @@ export function createApp(opts: GatewayOptions = {}) {
             if (o.rateLimitPerMin != null) {
               orgRateLimit = orgRateLimit == null ? o.rateLimitPerMin : Math.min(orgRateLimit, o.rateLimitPerMin);
               for (const h of o.handles) if (!orgRateHandles.includes(h)) orgRateHandles.push(h);
+              if (!orgRateTeams.includes(o.orgId)) orgRateTeams.push(o.orgId);
             }
             if (o.dailyCapCredits != null) {
               const dayStart = new Date().setUTCHours(0, 0, 0, 0);
               const receipts = (await opts.receipts?.list(10_000)) ?? [];
-              const spent = o.handles.reduce((a, h) => a + sumSpent(receipts, h, dayStart), 0);
+              const spent = o.handles.reduce((a, h) => a + sumSpent(receipts, h, dayStart), 0) +
+                receipts.filter((r) => r.team === o.orgId && r.ts >= dayStart).reduce((a, r) => a + (Number(r.amountCredits ?? 0) || 0), 0);
               if (spent >= o.dailyCapCredits) {
                 res.status(429).json({
                   error: { message: "org daily ceiling reached — resets at UTC midnight", type: "quota_exceeded" },
@@ -396,7 +417,7 @@ export function createApp(opts: GatewayOptions = {}) {
         const recent = orgRateHandles.reduce(
           (a, h) => a + receipts.filter((r) => r.user === h && r.ts >= since).length,
           0,
-        );
+        ) + receipts.filter((r) => !!r.team && orgRateTeams.includes(r.team) && r.ts >= since).length;
         if (recent >= orgRateLimit) {
           res.status(429).json({
             error: { message: `org rate limit reached (${orgRateLimit}/min) — retry in a few seconds`, type: "quota_exceeded" },
@@ -489,7 +510,9 @@ export function createApp(opts: GatewayOptions = {}) {
         tokensIn,
         tokensOut,
         modelId: model,
-        user: keyPrefix ? `key:${keyPrefix}` : (walletHandle ?? "dev"),
+        user: keyPrefix ? `key:${keyPrefix}` : teamBilling ? `member:${teamBilling.orgId}:${teamBilling.did}` : (walletHandle ?? "dev"),
+        ...(payer ? { payer } : {}),
+        ...(teamBilling ? { team: teamBilling.orgId, member: teamBilling.did } : {}),
         ...(x402Transaction ? { x402Transaction } : {}),
       };
       const builtReceipt = buildReceipt(receiptInput);
