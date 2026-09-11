@@ -7,7 +7,7 @@ const writes: any[] = [];
 
 async function boot() {
   process.env.BUDGET_MASTER ??= "0x0000000000000000000000000000000000000000000000000000000000000001";
-  const app = createApp({
+  const app = createApp({ requireSubscription: false,
     adminToken: "test-token",
     spendCapWriter: vi.fn(async (...args: any[]) => {
       writes.push(args);
@@ -75,7 +75,7 @@ describe("admin spend-caps (onchain allowance mirror)", () => {
   });
 
   it("501s without a chain writer (dev / old vault)", async () => {
-    const plain = createApp({ adminToken: "t2" });
+    const plain = createApp({ requireSubscription: false, adminToken: "t2" });
     const p2 = await new Promise<number>((r) => {
       const s2 = plain.listen(0, () => r((s2.address() as any).port));
       (global as any).__s2 = s2;

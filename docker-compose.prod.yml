@@ -51,6 +51,8 @@ services:
       # Ring on a fresh VPS has no trustchain member (no USB), so production
       # runs env-fallback: secrets below. The ring path is demoed from the
       # laptop (see LEDGER-WALKTHROUGH.md) — same code, different backend.
+      - PRIVY_APP_ID=${NEXT_PUBLIC_PRIVY_APP_ID:?set in .env.prod}
+      - PRIVY_APP_SECRET=${PRIVY_APP_SECRET:?set in .env.prod}
       - BUDGET_MASTER=${BUDGET_MASTER:?set in .env.prod}
       - OPERATOR_KEY=${OPERATOR_KEY:-}
       - FAUCET_ACCOUNT_ID=${FAUCET_ACCOUNT_ID:-}

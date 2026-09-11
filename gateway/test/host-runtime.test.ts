@@ -26,7 +26,7 @@ describe("host runtime settings", () => {
     const runtime = new MemoryHostRuntime();
     let active = true;
     const opts = { registry, runtime, knownModels: [base.modelId], fetchHosts: async (model: string) => model === base.modelId ? [{ ...base, active }] : [] };
-    const server = createApp(opts).listen(0);
+    const server = createApp({ ...opts, requireSubscription: false }).listen(0);
     const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const post = async (s: HostSettings) => fetch(`${url}/api/hosts/${account.address}/runtime`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings: s, signature: await signature(s) }) });
     try {
@@ -58,7 +58,7 @@ describe("host runtime settings", () => {
     const service = upstream.listen(0);
     const runtime = new MemoryHostRuntime();
     const opts = { registry, runtime, knownModels: [base.modelId], fetchHosts: async (model: string) => model === base.modelId ? [base] : [] };
-    const server = createApp(opts).listen(0);
+    const server = createApp({ ...opts, requireSubscription: false }).listen(0);
     const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const s = { ...settings(), endpoint: `http://127.0.0.1:${(service.address() as { port: number }).port}` };
     const chat = () => fetch(`${url}/v1/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: s.modelId, messages: [{ role: "user", content: "test" }] }) });

@@ -1,4 +1,5 @@
 import express from "express";
+import { privySubscriber, subscriberWallet, SubscriberError, type VerifySubscriber } from "./subscriber.js";
 import { createPublicClient, createWalletClient, http, parseAbi, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
@@ -35,6 +36,9 @@ class OrgPolicyDenied extends Error {
 }
 
 export interface GatewayOptions {
+  requireSubscription?: boolean; // secure by default; false only in isolated development/tests
+  verifySubscriber?: VerifySubscriber;
+  subscriptionCredits?: (payer: Address) => Promise<bigint | null>;
   availability?: Pick<EndpointAvailability, "check">;
   faucet?: HostFaucet;
   payTo?: string; // Hedera service account; empty = dev mode (x402 gate off)
@@ -205,6 +209,7 @@ export async function resolveHosts(opts: GatewayOptions, modelId: string): Promi
 
 export function createApp(opts: GatewayOptions = {}) {
   opts.runtime ??= new MemoryHostRuntime();
+  const requireSubscription = opts.requireSubscription !== false;
   const app = express();
   app.use(express.json({ limit: "10mb" }));
   app.get("/health", (_req, res) => res.json({ ok: true, service: "tor-gateway" }));
@@ -276,16 +281,12 @@ export function createApp(opts: GatewayOptions = {}) {
         res.status(400).json({ error: { message: "missing model", type: "invalid_request" } });
         return;
       }
-      // Attribution (observability only, never authorization): a keyed call is
-      // `key:<prefix>`; a logged-in browser call may claim `wallet:<0x…>`; else "dev".
-      // Caps still enforce exclusively via keys — a wallet handle grants nothing.
       const claimed = typeof req.body?.userHandle === "string" ? req.body.userHandle.toLowerCase() : "";
-      const walletHandle = /^0x[0-9a-f]{40}$/.test(claimed) ? `wallet:${claimed}` : null;
-      // Bearer key (harness path): verify + enforce model allowlist. Absent = web/dev path.
-      const auth = req.headers.authorization ?? "";
+      let walletHandle = !requireSubscription && /^0x[0-9a-f]{40}$/.test(claimed) ? `wallet:${claimed}` : null;
+      const presented = req.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1];
       let keyPrefix: string | undefined;
-      if (auth.startsWith("Bearer ") && opts.keys) {
-        const presented = auth.slice("Bearer ".length);
+      if (presented?.startsWith("tor_sk_")) {
+        if (!opts.keys) throw new SubscriberError(503, "auth_unavailable", "API key verification is unavailable.");
         const record = await opts.keys.find(presented);
         if (!record || !verifyKey(presented, record)) {
           res.status(401).json({ error: { message: "invalid api key", type: "invalid_api_key" } });
@@ -314,6 +315,20 @@ export function createApp(opts: GatewayOptions = {}) {
             }
           }
         }
+      }
+      if (requireSubscription && !keyPrefix) {
+        walletHandle = `wallet:${await subscriberWallet(presented, req.body?.userHandle, opts.verifySubscriber)}`;
+      }
+      const payer = (keyPrefix ? budgetAddressFor(keyPrefix) : walletHandle?.slice("wallet:".length)) || null;
+      if (requireSubscription) {
+        if (!payer || !opts.settle || (!opts.subscriptionCredits && (!opts.vaultAddress || !opts.rpcUrl))) {
+          throw new SubscriberError(503, "billing_unavailable", "Subscription billing is unavailable. Try again later.");
+        }
+        const credits = await (opts.subscriptionCredits
+          ? opts.subscriptionCredits(payer as Address)
+          : readVaultCredits(opts.rpcUrl!, opts.vaultAddress!, payer as Address));
+        if (credits === null) throw new SubscriberError(503, "billing_unavailable", "Your credit balance could not be verified. Try again later.");
+        if (credits <= 0n) throw new SubscriberError(402, "payment_required", "Out of credits — subscribe to continue.");
       }
       // Org rules gate (firm policy). Handle = key:<prefix> for keyed calls,
       // wallet:<addr> for browser calls. Blocks speak plainly: the caller asked
@@ -382,22 +397,9 @@ export function createApp(opts: GatewayOptions = {}) {
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
       }
-      // Wallet callers prepay via subscription: 0 vault credits = 402 before
-      // any inference is spent. Key callers enforce via caps (429); anonymous
-      // dev calls stay a free demo tier (can't identify them to charge).
-      // Unreadable vault (unconfigured/down) never blocks — fail open, settle decides.
-      if (walletHandle && !keyPrefix && opts.vaultAddress && opts.rpcUrl) {
-        const walletAddr = walletHandle.slice("wallet:".length) as Address;
-        const credits = await readVaultCredits(opts.rpcUrl, opts.vaultAddress, walletAddr);
-        if (credits !== null && credits <= 0n) {
-          res.status(402).json({
-            error: {
-              message: "out of credits — subscribe to continue",
-              type: "payment_required",
-            },
-          });
-          return;
-        }
+      if (!requireSubscription && walletHandle && !keyPrefix && opts.vaultAddress && opts.rpcUrl) {
+        const credits = await readVaultCredits(opts.rpcUrl, opts.vaultAddress, walletHandle.slice(7) as Address);
+        if (credits !== null && credits <= 0n) throw new SubscriberError(402, "payment_required", "Out of credits — subscribe to continue.");
       }
       emit("routed", { model });
       const { endpoint, host } = await selectUpstream(model, async () => {
@@ -465,19 +467,10 @@ export function createApp(opts: GatewayOptions = {}) {
       };
       if (opts.receipts) await opts.receipts.append(buildReceipt(receiptInput));
       const receipt = (await opts.receipts?.list(1))?.[0]?.id;
-      // Vault needs a real account, not a handle. Order: key budget account,
-      // then the logged-in wallet itself (subscribed users debit their own
-      // credits; broke/empty wallets revert inside settleCall and transparently
-      // fall back to unsettled demo), then DEFAULT_PAYER, then "dev" (never debited).
-      const payer =
-        (keyPrefix && budgetAddressFor(keyPrefix)) ||
-        walletHandle?.slice("wallet:".length) ||
-        process.env.DEFAULT_PAYER ||
-        "dev";
       const settled = opts.settle
         ? await settleCall(
             {
-              user: payer,
+              user: payer ?? "dev",
               host,
               promptTokens: tokensIn,
               completionTokens: tokensOut,
@@ -503,9 +496,11 @@ export function createApp(opts: GatewayOptions = {}) {
           }
         });
       }
-      if (opts.settle && !settled.settled && payer !== "dev") {
-        // "dev" = anonymous demo call with no wallet to debit: expected, not an error.
+      if (opts.settle && !settled.settled && payer) {
         console.error(`settle failed user=${payer} host=${host?.address} amount=${settled.amountCredits}: ${settled.error}`);
+      }
+      if (requireSubscription && !settled.settled) {
+        throw new SubscriberError(503, "settlement_pending", "Payment could not be confirmed. Your completion has not been released.");
       }
       emit("settled", { receipt });
       if (sse) {
@@ -522,6 +517,10 @@ export function createApp(opts: GatewayOptions = {}) {
           res.write(`event: error\ndata: ${JSON.stringify({ message: String(e?.message ?? e).slice(0, 200) })}\n\n`);
           res.end();
         } catch {}
+        return;
+      }
+      if (e instanceof SubscriberError) {
+        res.status(e.status).json({ error: { message: e.message, type: e.type } });
         return;
       }
       if (e instanceof OrgPolicyDenied) {
@@ -608,6 +607,8 @@ export function createApp(opts: GatewayOptions = {}) {
 
   // On-demand spot check (demo + explorer "verify now"). Probes are paid calls like any other.
   app.post("/api/verify/:address", async (req, res) => {
+    // Operator-funded probes must not expose another public spending path.
+    if (requireSubscription && !requireAdmin(req, res)) return;
     if (!opts.verifier) {
       res.status(501).json({ error: { message: "verifier not configured", type: "unavailable" } });
       return;
@@ -1247,6 +1248,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const pg = dbEnabled();
   const opts: GatewayOptions = {
+    verifySubscriber: privySubscriber(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET),
     availability: new EndpointAvailability(),
     runtime: pg ? new PgHostRuntime() : new MemoryHostRuntime(),
     keys: pg ? new PgKeyStore() : new MemoryKeyStore(),

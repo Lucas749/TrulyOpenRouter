@@ -15,7 +15,7 @@ export interface VaultConfig {
 
 /// @notice Read-only credit check (no key needed). Used to gate wallet calls
 /// BEFORE serving: 0 credits = 402 subscribe-first. Null when unreadable
-/// (vault unconfigured) — never blocks on infra failure.
+/// (vault unconfigured/down). Subscription routes reject an unknown balance.
 export async function readVaultCredits(rpcUrl: string, vault: Address, user: Address): Promise<bigint | null> {
   try {
     const publicClient = createPublicClient({ transport: http(rpcUrl) });
@@ -48,7 +48,8 @@ export function createVaultSpendCapWriter(cfg: VaultConfig): SpendCapWriter {
       args: [user, cap, periodDays],
       chain: undefined,
     });
-    await publicClient.waitForTransactionReceipt({ hash });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") throw new Error("Vault transaction reverted");
     return hash;
   };
 }
@@ -66,7 +67,8 @@ export function createVaultDebit(cfg: VaultConfig): DebitFn {
       args: [user as Address, host as Address, amount, receiptHash as Hex],
       chain: undefined,
     });
-    await publicClient.waitForTransactionReceipt({ hash });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") throw new Error("Vault transaction reverted");
     return hash;
   };
 }

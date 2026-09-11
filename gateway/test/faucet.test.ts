@@ -6,7 +6,7 @@ import { FaucetError, PgHostFaucet, type FaucetSender } from "../src/faucet.js";
 describe("host funding API", () => {
   it("requires the private admin hop and preserves pending and empty-pool responses", async () => {
     const claim = vi.fn().mockResolvedValue({ status: "pending", amountHbar: 5, transactionId: "0.0.12@1.2" });
-    const server = createApp({ adminToken: "private-admin", faucet: { claim } }).listen(0);
+    const server = createApp({ requireSubscription: false, adminToken: "private-admin", faucet: { claim } }).listen(0);
     const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/admin/host-faucet`;
     const post = (auth = "") => fetch(url, { method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify({ address: "host", userId: "verified-user" }) });
     try {

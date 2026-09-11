@@ -83,7 +83,7 @@ describe("allowance enforcement in chat flow", () => {
     await keys.save(issued.record);
     await spendCaps.setCap(prefix, 20, 0);
     for (let i = 0; i < 2; i++) await receipts.append(spentReceipt(`key:${prefix}`, "10", Date.now()));
-    const app = createApp({ keys, receipts, spendCaps, adminToken: "t", fallbackUpstream: "http://127.0.0.1:1" });
+    const app = createApp({ requireSubscription: false, keys, receipts, spendCaps, adminToken: "t", fallbackUpstream: "http://127.0.0.1:1" });
     const srv = app.listen(0);
     const port = (srv.address() as any).port;
     try {
@@ -112,7 +112,7 @@ describe("allowance enforcement in chat flow", () => {
   });
 
   it("drip validates, refuses existing accounts, needs backend keys", async () => {
-    const app = createApp({ adminToken: "t" });
+    const app = createApp({ requireSubscription: false, adminToken: "t" });
     const srv = app.listen(0);
     const port = (srv.address() as any).port;
     const post = (body: unknown) =>
@@ -140,7 +140,7 @@ describe("allowance enforcement in chat flow", () => {
 
   it("admin surface fails closed without a token and rejects bad tokens", async () => {
     delete process.env.GATEWAY_ADMIN_TOKEN;
-    const app = createApp({ keys: new MemoryKeyStore(), spendCaps: new SpendCapStore() });
+    const app = createApp({ requireSubscription: false, keys: new MemoryKeyStore(), spendCaps: new SpendCapStore() });
     const srv = app.listen(0);
     const port = (srv.address() as any).port;
     try {

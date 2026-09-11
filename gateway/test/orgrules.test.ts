@@ -32,7 +32,7 @@ describe("org rules", () => {
     const receipts = new MemoryReceiptLog();
     const orgRules = new MemoryOrgRules();
     await orgRules.set({ orgId: "o1", dailyCapCredits: 15, allowedModels: ["llama-3.1-8b"], handles: ["wallet:0x0000000000000000000000000000000000000abc"] });
-    const app = createApp({ receipts, orgRules, fallbackUpstream: `http://127.0.0.1:${stubPort}` });
+    const app = createApp({ requireSubscription: false, receipts, orgRules, fallbackUpstream: `http://127.0.0.1:${stubPort}` });
     const srv: Server = app.listen(0);
     const port = (srv.address() as any).port;
     const chat = (model: string, handle?: string, text = "hi") =>
@@ -76,7 +76,7 @@ describe("org rules", () => {
     const member = "0x0000000000000000000000000000000000000bbb";
     await orgRules.set({ orgId: "o2", dailyCapCredits: null, allowedModels: null, allowedRegions: ["us-oregon"], requireVerified: false, handles: [`wallet:${member}`] });
     process.env.HOSTS_JSON = JSON.stringify([{ address: "0xhost1", endpoint: `http://127.0.0.1:${stubPort}`, modelId: "m", pricePerReq: 1 }]);
-    const app = createApp({ meta, orgRules });
+    const app = createApp({ requireSubscription: false, meta, orgRules });
     const srv: Server = app.listen(0);
     const port = (srv.address() as any).port;
     const chat = () =>
@@ -115,7 +115,7 @@ describe("org rules", () => {
       { address: host, endpoint: `http://127.0.0.1:${stubPort}`, modelId: "m", pricePerReq: 1 },
       { address: "0x0000000000000000000000000000000000000eee", endpoint: `http://127.0.0.1:${stubPort}`, modelId: "m", pricePerReq: 1 },
     ]);
-    const app = createApp({ receipts, orgRules });
+    const app = createApp({ requireSubscription: false, receipts, orgRules });
     const srv: Server = app.listen(0);
     const port = (srv.address() as any).port;
     const chat = (text: string) =>
@@ -143,7 +143,7 @@ describe("org rules", () => {
   });
 
   it("admin org-rules endpoint validates", async () => {
-    const app = createApp({ orgRules: new MemoryOrgRules(), adminToken: "t" });
+    const app = createApp({ requireSubscription: false, orgRules: new MemoryOrgRules(), adminToken: "t" });
     const srv: Server = app.listen(0);
     const port = (srv.address() as any).port;
     const auth = { Authorization: "Bearer t", "Content-Type": "application/json" };

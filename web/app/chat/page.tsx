@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { useWallets } from "@privy-io/react-auth";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
 import LoginButton from "../components/login-button";
 
 const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What can you run on a laptop GPU?", "How do host payouts work?"];
@@ -35,13 +35,20 @@ function loadThreads(): Thread[] {
   }
 }
 
+function emptyThread(): Thread {
+  const now = Date.now();
+  return { id: `t_${now.toString(36)}`, title: "New chat", updatedAt: now, msgs: [] };
+}
+
 export default function ChatPage() {
   const { wallets } = useWallets();
+  const { getAccessToken, login, authenticated } = usePrivy();
   // Logged-in identity = first wallet. Server threads follow the login
   // (any browser); logged-out keeps localStorage threads (this browser only).
   const handle = wallets[0]?.address ?? null;
   const handleRef = useRef<string | null>(null);
-  handleRef.current = handle;
+  useEffect(() => { handleRef.current = handle; }, [handle]);
+  const [viewTime] = useState(() => Date.now());
   const [models, setModels] = useState<{ id: string }[]>([]);
   const [model, setModel] = useState("qwen2.5:0.5b");
   const [input, setInput] = useState("");
@@ -50,7 +57,7 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const msgs = threads.find((t) => t.id === currentId)?.msgs ?? [];
+  const msgs = useMemo(() => threads.find((t) => t.id === currentId)?.msgs ?? [], [threads, currentId]);
 
   function persist(next: Thread[]) {
     setThreads(next);
@@ -70,7 +77,7 @@ export default function ChatPage() {
   }
 
   function newChat() {
-    const t: Thread = { id: `t_${Date.now().toString(36)}`, title: "New chat", updatedAt: Date.now(), msgs: [] };
+    const t = emptyThread();
     persist([t, ...threads]);
     setCurrentId(t.id);
     setInput("");
@@ -83,12 +90,11 @@ export default function ChatPage() {
   useEffect(() => {
     (async () => {
       const existing = handle
-        ? ((await (await fetch(`/api/chat/threads?user=${encodeURIComponent(handle)}`)).json().catch(() => ({}))) as any).threads ?? []
+        ? ((await (await fetch(`/api/chat/threads?user=${encodeURIComponent(handle)}`)).json().catch(() => ({}))) as { threads?: Thread[] }).threads ?? []
         : loadThreads();
       setThreads(existing);
       setCurrentId(existing.length ? existing[0].id : null);
     })().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle]);
 
   useEffect(() => {
@@ -106,10 +112,11 @@ export default function ChatPage() {
   async function send(prefill?: string) {
     const text = (prefill ?? input).trim();
     if (!text || busy) return;
+    if (!authenticated) { login(); return; }
     let id = currentId;
     let snapshot = threads;
     if (!id) {
-      const t: Thread = { id: `t_${Date.now().toString(36)}`, title: "New chat", updatedAt: Date.now(), msgs: [] };
+      const t = emptyThread();
       snapshot = [t, ...threads];
       id = t.id;
       setCurrentId(id);
@@ -126,11 +133,17 @@ export default function ChatPage() {
     apply({ role: "user", content: text }, isFirst ? text.slice(0, 42) : undefined);
     setInput("");
     try {
+      const token = await getAccessToken();
+      if (!token) {
+        apply({ role: "assistant", content: "Sign in again to continue." });
+        setBusy(false);
+        login();
+        return;
+      }
       const r = await fetch(`${GATEWAY}/v1/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Attribution only (receipts link back to this wallet on /account).
-        // Grants nothing: spend caps stay key-based.
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        // The gateway verifies that the selected wallet belongs to this login.
         body: JSON.stringify({ model, messages: [{ role: "user", content: text }], ...(handle ? { userHandle: handle } : {}) }),
       });
       const d = await r.json();
@@ -139,13 +152,13 @@ export default function ChatPage() {
         content: r.ok
           ? String(d.choices?.[0]?.message?.content ?? "…")
           : r.status === 402
-            ? "Out of credits — subscribe to keep chatting settled."
-            : `Error: ${d.error?.message}`,
+            ? "Out of credits — subscribe to continue."
+            : r.status === 401 ? "Sign in again to continue." : `Error: ${d.error?.message ?? "Request failed. Try again."}`,
         receipt: d.tor_receipt,
         settled: d.tor_settled,
         subscribeCta: r.status === 402,
       });
-    } catch (e) {
+    } catch {
       apply({ role: "assistant", content: `Gateway unreachable (${GATEWAY}). Is it running?` });
     }
     setBusy(false);
@@ -171,8 +184,8 @@ export default function ChatPage() {
         </button>
         <div className="flex flex-col gap-4 overflow-y-auto">
           {[
-            { label: "Today", items: threads.filter((t) => Date.now() - t.updatedAt < 86_400_000) },
-            { label: "Previous", items: threads.filter((t) => Date.now() - t.updatedAt >= 86_400_000) },
+            { label: "Today", items: threads.filter((t) => viewTime - t.updatedAt < 86_400_000) },
+            { label: "Previous", items: threads.filter((t) => viewTime - t.updatedAt >= 86_400_000) },
           ].map(
             (g) =>
               g.items.length > 0 && (

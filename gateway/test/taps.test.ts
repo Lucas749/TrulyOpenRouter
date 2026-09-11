@@ -107,7 +107,7 @@ describe("mirror-node approval verification", () => {
 describe("tap admin routes", () => {
   it("queue -> verify -> execute, with 409 before approval", async () => {
     const store = new FileTapStore(mkdtempSync(join(tmpdir(), "tor-taps-")));
-    const app = createApp({ taps: store, adminToken: "tok", tapExecutor: async () => "0xexec" });
+    const app = createApp({ requireSubscription: false, taps: store, adminToken: "tok", tapExecutor: async () => "0xexec" });
     const srv: Server = app.listen(0);
     const base = `http://127.0.0.1:${(srv.address() as any).port}`;
     const auth = { Authorization: "Bearer tok", "Content-Type": "application/json" };

@@ -22,7 +22,7 @@ async function boot() {
   const stubPort = await new Promise<number>((r) => {
     const listener = stub.listen(0, () => r((listener.address() as any).port));
   });
-  const app = createApp({
+  const app = createApp({ requireSubscription: false,
     fallbackUpstream: `http://127.0.0.1:${stubPort}`,
     receipts: new MemoryReceiptLog(),
     settle: async (...args) => {
@@ -70,7 +70,7 @@ describe("routes", () => {
 
   it("issues, enforces, and revokes api keys", async () => {
     const keys = new MemoryKeyStore();
-    const app = createApp({ keys, fallbackUpstream: "http://127.0.0.1:1" });
+    const app = createApp({ requireSubscription: false, keys, fallbackUpstream: "http://127.0.0.1:1" });
     const srv = app.listen(0);
     const port = (srv.address() as any).port;
     const url = `http://127.0.0.1:${port}`;
@@ -173,7 +173,7 @@ describe("routes", () => {
     stub.post("/v1/chat/completions", (_req, res) => res.json({ choices: [{ message: { content: "ok" } }] }));
     const stubSrv: Server = stub.listen(0);
     const stubPort = (stubSrv.address() as any).port;
-    const app = createApp({
+    const app = createApp({ requireSubscription: false,
       vaultAddress: "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576" as any,
       rpcUrl: "http://127.0.0.1:1",
       fallbackUpstream: `http://127.0.0.1:${stubPort}`,
@@ -245,7 +245,7 @@ describe("routes", () => {
     receipts.append(
       buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", host: "h", priceWei: "1", latencyMs: 1, user: "dev" }),
     );
-    const app = createApp({ receipts });
+    const app = createApp({ requireSubscription: false, receipts });
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
@@ -305,7 +305,7 @@ describe("routes", () => {
     });
     const ks: Server = killer.listen(0);
     const kport = (ks.address() as any).port;
-    const app = createApp({ fallbackUpstream: `http://127.0.0.1:${kport}`, receipts: new MemoryReceiptLog() });
+    const app = createApp({ requireSubscription: false, fallbackUpstream: `http://127.0.0.1:${kport}`, receipts: new MemoryReceiptLog() });
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
@@ -338,7 +338,7 @@ describe("routes", () => {
     });
     const ss: Server = stub.listen(0);
     const sport = (ss.address() as any).port;
-    const app = createApp({ fallbackUpstream: `http://127.0.0.1:${sport}`, receipts: new MemoryReceiptLog() });
+    const app = createApp({ requireSubscription: false, fallbackUpstream: `http://127.0.0.1:${sport}`, receipts: new MemoryReceiptLog() });
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
@@ -375,7 +375,7 @@ describe("routes", () => {
       { endpoint: `http://127.0.0.1:${cheap.port}`, modelId: "demo-model", pricePerReq: 5 },
       { endpoint: "http://127.0.0.1:1", modelId: "other-model", pricePerReq: 1 },
     ]);
-    const app = createApp({});
+    const app = createApp({ requireSubscription: false,});
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
@@ -405,7 +405,7 @@ describe("routes", () => {
     receipts.append(
       buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", host: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", priceWei: "5", latencyMs: 1 }, Date.now()),
     );
-    const app = createApp({ knownModels: ["demo-model"], receipts });
+    const app = createApp({ requireSubscription: false, knownModels: ["demo-model"], receipts });
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
@@ -434,7 +434,7 @@ describe("routes", () => {
       buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", host: "h", priceWei: price, latencyMs: 1, tokensIn: 400, tokensOut: 600, amountCredits: "2" }, ts);
     receipts.append(mk(now - 1000, "1000"));
     receipts.append(mk(now - 100_000_000, "2000")); // >24h ago
-    const app = createApp({
+    const app = createApp({ requireSubscription: false,
       knownModels: ["demo-model"],
       fetchHosts: async () => [],
       receipts,
@@ -462,7 +462,7 @@ describe("routes", () => {
   it("collects self-reported regions and counts them in stats", async () => {
     const { MemoryHostMeta } = await import("../src/hostmeta.js");
     const meta = new MemoryHostMeta();
-    const app = createApp({ knownModels: [], meta });
+    const app = createApp({ requireSubscription: false, knownModels: [], meta });
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
@@ -505,7 +505,7 @@ describe("routes", () => {
       latencyMs: 200,
       reliability: 1,
     };
-    const app = createApp({ knownModels: ["demo-model"], fetchHosts: async () => [host], health });
+    const app = createApp({ requireSubscription: false, knownModels: ["demo-model"], fetchHosts: async () => [host], health });
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
@@ -544,7 +544,7 @@ describe("routes", () => {
     receipts.append(
       buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "0xabc", modelId: "demo-model", host: addr, priceWei: "5", latencyMs: 1 }),
     );
-    const app = createApp({ knownModels: ["demo-model"], fetchHosts: async () => [host], receipts });
+    const app = createApp({ requireSubscription: false, knownModels: ["demo-model"], fetchHosts: async () => [host], receipts });
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
@@ -569,7 +569,7 @@ describe("routes", () => {
     receipts.append(
       buildReceipt({ promptHash: "p", completionHash: "c", modelDigest: "m", modelId: "demo-model", host: "h", priceWei: "5", latencyMs: 1, tokensIn: 400, tokensOut: 600, amountCredits: "4" }),
     );
-    const app = createApp({ knownModels: ["demo-model", "idle-model"], fetchHosts: async () => [], receipts });
+    const app = createApp({ requireSubscription: false, knownModels: ["demo-model", "idle-model"], fetchHosts: async () => [], receipts });
     const srv: Server = app.listen(0);
     try {
       const port = (srv.address() as any).port;
@@ -591,7 +591,7 @@ describe("routes", () => {
     const stubSrv: Server = stub.listen(0);
     const keys = new MemoryKeyStore();
     const debits: unknown[][] = [];
-    const app = createApp({
+    const app = createApp({ requireSubscription: false,
       keys,
       fetchHosts: async () => [],
       fallbackUpstream: `http://127.0.0.1:${(stubSrv.address() as any).port}`,
@@ -676,7 +676,7 @@ describe("verification routes", () => {
 
   it("reports null verification until checked, then summarizes", async () => {
     const { badSrv, goodSrv, hosts } = await twoHosts();
-    const app = createApp({
+    const app = createApp({ requireSubscription: false,
       knownModels: [MODEL],
       fetchHosts: async () => hosts,
       verifier: new MemoryVerifier(),
@@ -707,7 +707,7 @@ describe("verification routes", () => {
 
   it("routes around failing hosts but still lists them", async () => {
     const { badSrv, goodSrv, hosts } = await twoHosts();
-    const app = createApp({
+    const app = createApp({ requireSubscription: false,
       knownModels: [MODEL],
       fetchHosts: async () => hosts,
       verifier: new MemoryVerifier(),
@@ -739,7 +739,7 @@ describe("verification routes", () => {
   });
 
   it("501s without a verifier, 404s unknown hosts, 400s models without references", async () => {
-    const app = createApp({ knownModels: [MODEL], fetchHosts: async () => [] });
+    const app = createApp({ requireSubscription: false, knownModels: [MODEL], fetchHosts: async () => [] });
     const srv = app.listen(0);
     const url = `http://127.0.0.1:${(srv.address() as any).port}`;
     try {
@@ -748,7 +748,7 @@ describe("verification routes", () => {
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }
-    const app2 = createApp({ knownModels: ["nope-model"], fetchHosts: async () => [], verifier: new MemoryVerifier() });
+    const app2 = createApp({ requireSubscription: false, knownModels: ["nope-model"], fetchHosts: async () => [], verifier: new MemoryVerifier() });
     const srv2 = app2.listen(0);
     const url2 = `http://127.0.0.1:${(srv2.address() as any).port}`;
     try {
