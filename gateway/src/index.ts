@@ -19,9 +19,9 @@ import { type HostMeta, MemoryHostMeta, PgHostMeta, validRegion } from "./hostme
 import { logReceiptHcs, type HcsConfig } from "./hcs.js";
 import { budgetAddressFor } from "./budget.js";
 import { type DeviceFlow, MemoryDeviceFlow, PgDeviceFlow } from "./device.js";
-import { proxyWithFallback, selectUpstream, type X402Creds } from "./upstream.js";
+import { proxyWithFallback, selectUpstream, X402PaymentRefused, type X402Creds } from "./upstream.js";
 import { loadReferences, MemoryVerifier, PgVerifier, PROBES, spotCheck, type CheckReport, type Verifier } from "./verify.js";
-import { createPaidFetch } from "./payer.js";
+import { createPaidFetch, PgX402Ceiling, type HederaAccounts, type PaymentCeiling } from "./payer.js";
 import { priceForCall, settleCall, type DebitFn } from "./settle.js";
 import { FileTapStore, PgTapStore, tapInstruction, type TapKind, type TapStatus, type TapStore, verifyTapTransfer } from "./taps.js";
 import { cachedGeo } from "./geo.js";
@@ -76,6 +76,8 @@ export interface GatewayOptions {
   keys?: KeyStore;
   receipts?: ReceiptLog;
   x402?: X402Creds; // gateway payer for gated hosts (Key Ring in prod, env in dev)
+  x402Ceiling?: PaymentCeiling; // global daily host payment ceilings; absent = per-payment bound only
+  hederaAccounts?: HederaAccounts; // payee and treasury balance lookups; absent = mirror node
   meta?: HostMeta; // self-reported regions; absent = collection off
   hcs?: HcsConfig; // audit topic; absent = no onchain log (receipts still served)
   devices?: DeviceFlow; // CLI device-code login; absent = endpoint 501
@@ -100,10 +102,10 @@ export interface GatewayOptions {
 
 /// @notice Paid sender for verification probes: probes travel the SAME path as user
 /// traffic (x402 when gated), so hosts earn for them and receipts stay complete.
-function verificationSender(opts: GatewayOptions, endpoint: string) {
+function verificationSender(opts: GatewayOptions, endpoint: string, payee: string) {
   return async (body: unknown) => {
     const paidFetch = opts.x402
-      ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey })
+      ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }, { payee, ceiling: opts.x402Ceiling, accounts: opts.hederaAccounts })
       : undefined;
     const { out } = await proxyWithFallback(endpoint, body, opts.x402, paidFetch);
     return out;
@@ -126,7 +128,7 @@ export async function verifyOnce(opts: GatewayOptions): Promise<CheckReport[]> {
   const target = candidates[Math.floor(Math.random() * candidates.length)];
   const report = await spotCheck(
     target,
-    verificationSender(opts, target.endpoint),
+    verificationSender(opts, target.endpoint, target.address),
     PROBES,
     refs[target.modelId].refs,
     { model: target.modelId },
@@ -610,7 +612,9 @@ export function createApp(opts: GatewayOptions = {}) {
       selectedHost = host;
       emit("routed", { model });
       emit("submitted", { endpoint });
-      const paidFetch = opts.x402 ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }) : undefined;
+      const paidFetch = opts.x402
+        ? createPaidFetch({ accountId: opts.x402.accountId, privateKey: opts.x402.privateKey }, { payee: host?.address, ceiling: opts.x402Ceiling, accounts: opts.hederaAccounts })
+        : undefined;
       // The gateway buffers the completion and replays its own SSE envelope —
       // upstream always gets a plain request, never a stream (its SSE frames
       // are not JSON and would die in res.json()).
@@ -697,6 +701,8 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       res.json({ ...(out as object), tor_receipt: receipt, tor_settled: settled.settled });
     } catch (e: any) {
+      // Refused before signing: no host was paid, so nothing is pending.
+      if (e instanceof X402PaymentRefused && !e.signed) paymentStarted = false;
       if (strict) {
         // Unsettled reservation: free it only when no payment could have started.
         if (paymentStarted) {
@@ -708,11 +714,11 @@ export function createApp(opts: GatewayOptions = {}) {
         }
         strict = null;
       }
-      if (selectedHost && opts.health && !(e instanceof SubscriberError) && !(e instanceof ApprovalRequired)) await opts.health.recordFail(selectedHost.address);
+      if (selectedHost && opts.health && !(e instanceof SubscriberError) && !(e instanceof ApprovalRequired) && !(e instanceof X402PaymentRefused && !e.hostFault)) await opts.health.recordFail(selectedHost.address);
       // Mid-stream failures must not touch headers twice — that crashes the process.
       if (res.headersSent) {
         try {
-          res.write(`event: error\ndata: ${JSON.stringify({ message: String(e?.message ?? e).slice(0, 200), ...(e instanceof SubscriberError ? { type: e.type } : {}) })}\n\n`);
+          res.write(`event: error\ndata: ${JSON.stringify({ message: String(e?.message ?? e).slice(0, 200), ...(e instanceof SubscriberError || e instanceof X402PaymentRefused ? { type: e.type } : {}) })}\n\n`);
           res.end();
         } catch {}
         return;
@@ -727,6 +733,10 @@ export function createApp(opts: GatewayOptions = {}) {
       }
       if (e instanceof OrgPolicyDenied) {
         res.status(403).json({ error: { message: e.message, type: "org_policy" } });
+        return;
+      }
+      if (e instanceof X402PaymentRefused) {
+        res.status(e.status).json({ error: { message: e.message, type: e.type } });
         return;
       }
       const code = String(e?.message ?? "").startsWith("no hosts") ? 404 : 502;
@@ -837,7 +847,7 @@ export function createApp(opts: GatewayOptions = {}) {
     try {
       const report = await spotCheck(
         found,
-        verificationSender(opts, found.endpoint),
+        verificationSender(opts, found.endpoint, found.address),
         PROBES,
         refs.refs,
         { model: found.modelId },
@@ -2174,6 +2184,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (process.env.VAULT_ADDRESS) opts.vaultAddress = process.env.VAULT_ADDRESS as Address;
   if (process.env.X402_PAYER_ID && process.env.X402_PAYER_KEY) {
     opts.x402 = { accountId: process.env.X402_PAYER_ID, privateKey: process.env.X402_PAYER_KEY };
+    if (pg) opts.x402Ceiling = new PgX402Ceiling({ dailyUnits: BigInt(process.env.X402_DAILY_CAP_UNITS ?? 2_000_000), dailyPayments: Number(process.env.X402_DAILY_PAYMENTS ?? 2000) });
   }
   if (process.env.HCS_TOPIC_ID && process.env.HCS_OPERATOR_ID && process.env.HCS_OPERATOR_KEY) {
     opts.hcs = {

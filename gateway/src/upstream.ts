@@ -60,6 +60,14 @@ export interface X402Creds {
   privateKey: string;
 }
 
+/// @notice A host payment that was refused or not accepted. `signed` = a payment left the
+/// gateway and its outcome must be reconciled; `hostFault` = the host's terms were wrong.
+export class X402PaymentRefused extends Error {
+  constructor(public status: number, public type: string, message: string, public signed = false, public hostFault = false) {
+    super(message);
+  }
+}
+
 /// @notice Direct first; paid x402 retry only when the host gates (402) and creds exist.
 /// paidFetch is injected (createPaidFetch in prod, stub in tests).
 export async function proxyWithFallback(
@@ -80,6 +88,9 @@ export async function proxyWithFallback(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    if (res.status === 402) {
+      throw new X402PaymentRefused(503, "host_payment_failed", "The host did not accept the network's payment. No completion was delivered; try again later.", true);
+    }
     if (!res.ok) throw new UpstreamError(res.status, chatUrl(endpoint));
     let x402Transaction: string | undefined;
     try {
