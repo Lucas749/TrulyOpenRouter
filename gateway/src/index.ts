@@ -2,7 +2,7 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import { boundedCompletion, MemoryBillingRequests, PgBillingRequests, type BillingRequests } from "./billing.js";
 import { privySession, privySubscriber, subscriberWallet, SubscriberError, type VerifySession, type VerifySubscriber } from "./subscriber.js";
-import { createPublicClient, createWalletClient, http, parseAbi, type Address } from "viem";
+import { createPublicClient, createWalletClient, http, parseAbi, recoverMessageAddress, type Address } from "viem";
 import { paymentMiddleware } from "@x402/express";
 import { createResourceServer } from "./x402.js";
 import { fetchEligibleHosts, fileChallenge, REGISTRY_ABI, type HostInfo } from "./registry.js";
@@ -27,6 +27,7 @@ import { FileTapStore, PgTapStore, tapInstruction, type TapKind, type TapStatus,
 import { cachedGeo } from "./geo.js";
 import { createTapExecutor } from "./tap-exec.js";
 import { hostEarnings } from "./host-earnings.js";
+import { hederaCollectionChain, hostLinkMessage, PgTeamHosts, recordCollection, TeamHostError, type TeamHostDeps } from "./team-hosts.js";
 import { applyHostSettings, authorizeHostSettings, HostSettingsError, MemoryHostRuntime, PgHostRuntime, type HostRuntimeStore } from "./host-runtime.js";
 import { normalizeSnapshot, PgTeams, TeamError } from "./teams.js";
 import { approveTreasuryIntent, proposeTreasuryIntent, provisionTeamWallet, reconcileTreasuryIntent, rejectTreasuryIntent, TEST_USDC_ADDRESS, TreasuryError, type TreasuryDeps } from "./treasury.js";
@@ -93,6 +94,8 @@ export interface GatewayOptions {
   approvals?: PgApprovals; // human approvals for over-limit agent requests
   appOrigin?: string; // origin bound into approval messages and review links
   funding?: FundingDeps; // personal agent budget purchases and returns; absent = funding endpoints 501
+  teamHosts?: TeamHostDeps & { store: PgTeamHosts; earnings(host: string): Promise<bigint>; usdcBalance(host: string): Promise<bigint> }; // host links + collections; absent = 501
+  hostRegistration?: (host: string) => Promise<string | null>; // test override; default = registry getHost
   taps?: TapStore; // PENDING_TAP queue; absent = tap endpoints 501
   tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
   adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
@@ -1457,6 +1460,168 @@ export function createApp(opts: GatewayOptions = {}) {
     }
   });
 
+  // --- Team hosts ---------------------------------------------------------------
+  // An owner opens a one-time link; the registered host key signs its exact terms.
+  // Collection legs are recorded only after their receipts are verified on chain.
+
+  function requireTeamHosts(res: any) {
+    if (opts.teamHosts) return opts.teamHosts;
+    res.status(501).json({ error: { message: "team host links are not configured", type: "unavailable" } });
+    return null;
+  }
+
+  function teamHostFailure(res: any, e: unknown) {
+    if (e instanceof TeamHostError) {
+      res.status(e.status).json({ error: { message: e.message, type: e.type } });
+      return;
+    }
+    console.error(`team hosts: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+    res.status(503).json({ error: { message: "The host request could not be completed. Try again.", type: "unavailable" } });
+  }
+
+  /// @notice The network registry holding this host's active, staked registration, or null.
+  async function activeRegistration(host: string): Promise<string | null> {
+    if (opts.hostRegistration) return opts.hostRegistration(host);
+    const client = createPublicClient({ transport: http(opts.rpcUrl) });
+    for (const registry of [opts.registry, ...(opts.legacyRegistries ?? [])].filter(Boolean) as Address[]) {
+      const found = await client.readContract({ address: registry, abi: REGISTRY_ABI, functionName: "getHost", args: [host as Address] }).catch(() => null);
+      if (found?.active && found.stake > 0n) return registry.toLowerCase();
+    }
+    return null;
+  }
+
+  const hostParam = (value: unknown) => {
+    const host = String(value ?? "").toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(host)) throw new TeamHostError(400, "invalid_request", "A host address is required.");
+    return host;
+  };
+
+  async function linkTerms(code: string, host: string) {
+    const link = await opts.teamHosts!.store.link(code);
+    if (!link || link.state !== "pending" || link.expiresAt <= Date.now()) {
+      throw new TeamHostError(404, "not_found", "This link code is unknown, used, or expired. Ask a team owner for a new one.");
+    }
+    const registry = await activeRegistration(host);
+    if (!registry) throw new TeamHostError(403, "not_registered", "Only an actively registered, staked host can be linked.");
+    return { link, registry, message: hostLinkMessage(link, host, registry, origin) };
+  }
+
+  app.post("/api/team/orgs/:orgId/hosts/links", async (req, res) => {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return;
+    const hosts = requireTeamHosts(res);
+    if (!hosts) return;
+    try {
+      if (actor.member.role !== "owner") throw new TeamHostError(403, "forbidden", "Only a team owner can link a host.");
+      const team = await opts.teams!.team(req.params.orgId);
+      if (!team?.walletAddress || team.state !== "active") throw new TeamHostError(409, "no_treasury", "Create the team wallet before linking hosts.");
+      const link = await hosts.store.createLink({ orgId: team.orgId, teamName: team.name, destination: team.walletAddress, createdBy: actor.member.did });
+      res.json({ code: link.code, expiresAt: link.expiresAt, destination: link.destination, command: `tor-host team link ${link.code}` });
+    } catch (e) {
+      teamHostFailure(res, e);
+    }
+  });
+
+  app.get("/api/team/orgs/:orgId/hosts", async (req, res) => {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return;
+    const hosts = requireTeamHosts(res);
+    if (!hosts) return;
+    try {
+      const [links, collections, sums] = await Promise.all([hosts.store.forOrg(req.params.orgId), hosts.store.collections(req.params.orgId, 50), hosts.store.totals(req.params.orgId)]);
+      const linked = await Promise.all(
+        links.filter((l) => l.state === "active").map(async (l) => ({
+          host: l.hostAddress!,
+          registry: l.registry,
+          linkedAt: l.linkedAt,
+          vaultTinybar: await hosts.earnings(l.hostAddress!).then(String, () => null),
+          usdcUnits: await hosts.usdcBalance(l.hostAddress!).then(String, () => null),
+        })),
+      );
+      // Unknown balances stay unknown rather than counting as zero.
+      const total = (values: Array<string | null>) => (values.includes(null) ? null : String(values.reduce((sum, v) => sum + BigInt(v!), 0n)));
+      res.json({
+        network: "hedera-testnet",
+        me: { role: actor.member.role },
+        hosts: linked,
+        pendingLinks: actor.member.role === "owner" ? links.filter((l) => l.state === "pending").map((l) => ({ code: l.code, expiresAt: l.expiresAt })) : [],
+        collections,
+        totals: {
+          atHosts: { hbarTinybar: total(linked.map((h) => h.vaultTinybar)), usdcUnits: total(linked.map((h) => h.usdcUnits)) },
+          collectionPending: { hbarTinybar: sums.pendingTinybar },
+          received: { hbarWei: sums.receivedWei, usdcUnits: sums.receivedUsdcUnits },
+        },
+      });
+    } catch (e) {
+      teamHostFailure(res, e);
+    }
+  });
+
+  app.post("/api/team/orgs/:orgId/hosts/:address/revoke", async (req, res) => {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return;
+    const hosts = requireTeamHosts(res);
+    if (!hosts) return;
+    try {
+      if (actor.member.role !== "owner") throw new TeamHostError(403, "forbidden", "Only a team owner can unlink a host.");
+      if (!(await hosts.store.revoke(req.params.orgId, hostParam(req.params.address)))) throw new TeamHostError(404, "not_found", "That host is not linked to this team.");
+      res.json({ revoked: true });
+    } catch (e) {
+      teamHostFailure(res, e);
+    }
+  });
+
+  app.get("/api/host-links/:code", async (req, res) => {
+    if (!requireTeamHosts(res)) return;
+    try {
+      const host = hostParam(req.query.host);
+      const { link, registry, message } = await linkTerms(req.params.code, host);
+      res.json({ orgId: link.orgId, teamName: link.teamName, destination: link.destination, registry, expiresAt: link.expiresAt, message });
+    } catch (e) {
+      teamHostFailure(res, e);
+    }
+  });
+
+  app.post("/api/host-links/:code", async (req, res) => {
+    const hosts = requireTeamHosts(res);
+    if (!hosts) return;
+    try {
+      const host = hostParam(req.body?.host);
+      const { link, registry, message } = await linkTerms(req.params.code, host);
+      const signature = String(req.body?.signature ?? "");
+      if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) throw new TeamHostError(400, "invalid_request", "A host-key signature is required.");
+      const signer = await recoverMessageAddress({ message, signature: signature as `0x${string}` }).catch(() => null);
+      if (signer?.toLowerCase() !== host) throw new TeamHostError(401, "bad_signature", "The registered host key did not sign these link terms.");
+      const active = await hosts.store.activate(link.code, host, registry, signature);
+      if (!active) throw new TeamHostError(409, "link_used", "This link was already used or has expired.");
+      res.json({ orgId: active.orgId, teamName: active.teamName, destination: active.destination, registry: active.registry, linkedAt: active.linkedAt });
+    } catch (e) {
+      teamHostFailure(res, e);
+    }
+  });
+
+  app.get("/api/hosts/:address/team-link", async (req, res) => {
+    const hosts = requireTeamHosts(res);
+    if (!hosts) return;
+    try {
+      const link = await hosts.store.activeForHost(hostParam(req.params.address));
+      if (!link) throw new TeamHostError(404, "not_linked", "This host is not linked to a team.");
+      res.json({ orgId: link.orgId, teamName: link.teamName, destination: link.destination, registry: link.registry, linkedAt: link.linkedAt });
+    } catch (e) {
+      teamHostFailure(res, e);
+    }
+  });
+
+  app.post("/api/hosts/:address/collections", async (req, res) => {
+    const hosts = requireTeamHosts(res);
+    if (!hosts) return;
+    try {
+      res.json({ collection: await recordCollection(hosts, hostParam(req.params.address), req.body ?? {}) });
+    } catch (e) {
+      teamHostFailure(res, e);
+    }
+  });
+
   app.post("/api/team/orgs/:orgId/intents", async (req, res) => {
     const actor = await teamActor(req, res, req.params.orgId);
     if (!actor) return;
@@ -2231,6 +2396,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       budgetMaster: () => process.env.BUDGET_MASTER,
       store: new PgFundingStore(),
       paymentPending: async (payer) => (await db().query(`SELECT 1 FROM billing_requests WHERE payer = $1`, [payer.toLowerCase()])).rows.length > 0,
+    };
+  }
+  // Team host links and earnings collections, verified against Hedera receipts.
+  if (pg && opts.teams && process.env.VAULT_ADDRESS && rpcUrl) {
+    const { hederaTreasuryChain } = await import("./treasury.js");
+    const vault = process.env.VAULT_ADDRESS as Address;
+    const chain = opts.treasury?.chain ?? hederaTreasuryChain(rpcUrl, vault);
+    const reader = createPublicClient({ transport: http(rpcUrl) });
+    opts.teamHosts = {
+      store: new PgTeamHosts(),
+      chain: hederaCollectionChain(rpcUrl),
+      vault,
+      earnings: async (host) => BigInt((await hostEarnings(reader, vault, host as Address)).tinybar),
+      usdcBalance: (host) => chain.tokenBalance(TEST_USDC_ADDRESS, host as Address),
     };
   }
   startVerifyLoop(opts); // VERIFY_INTERVAL_MS=0/unset = off; VERIFY_AUTO_CHALLENGE=1 + OPERATOR_KEY files challenges

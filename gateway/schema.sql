@@ -313,3 +313,39 @@ CREATE TABLE IF NOT EXISTS agent_funding_ops (
   updated_at bigint NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS agent_funding_ops_open_idx ON agent_funding_ops (agent_id) WHERE state IN ('signed', 'submitted', 'uncertain');
+
+-- Team host links: a host key signature binds a registered host to one team wallet.
+CREATE TABLE IF NOT EXISTS team_host_links (
+  code text PRIMARY KEY,
+  org_id text NOT NULL,
+  team_name text NOT NULL,
+  destination text NOT NULL,
+  host_address text,
+  registry text,
+  state text NOT NULL CHECK (state IN ('pending', 'active', 'revoked')),
+  signature text,
+  created_by text NOT NULL,
+  created_at bigint NOT NULL,
+  expires_at bigint NOT NULL,
+  linked_at bigint
+);
+CREATE UNIQUE INDEX IF NOT EXISTS team_host_links_active_idx ON team_host_links (host_address) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS team_host_links_org_idx ON team_host_links (org_id);
+
+-- Host earnings collections, recorded leg by leg after on-chain verification.
+CREATE TABLE IF NOT EXISTS host_collections (
+  id text PRIMARY KEY,
+  org_id text NOT NULL,
+  host_address text NOT NULL,
+  asset text NOT NULL CHECK (asset IN ('hbar', 'usdc')),
+  state text NOT NULL CHECK (state IN ('pending', 'received')),
+  withdraw_tx text,
+  withdrawn_tinybar text,
+  transfer_tx text,
+  received_amount text,
+  created_at bigint NOT NULL,
+  updated_at bigint NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS host_collections_withdraw_idx ON host_collections (withdraw_tx) WHERE withdraw_tx IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS host_collections_transfer_idx ON host_collections (transfer_tx) WHERE transfer_tx IS NOT NULL;
+CREATE INDEX IF NOT EXISTS host_collections_org_idx ON host_collections (org_id);
