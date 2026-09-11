@@ -43,6 +43,48 @@ gates run in the gateway per request.
 - Repo: `https://github.com/Lucas749/TrulyOpenRouter`, small commits on `main`.
 
 ## What is built (this session worked newest-first)
+- **Authenticated subscriptions and payment evidence (2026-09-11)**: the
+  anonymous inference gap below is closed in production. Browser chat sends
+  its Privy access token; the gateway verifies the subject and retrieves
+  linked wallets server-side. Body addresses cannot impersonate subscribers.
+  API keys use their own funded budget accounts. Anonymous/invalid credentials
+  receive 401, unowned wallets 403, insufficient credits 402, unknown balances
+  503. No `DEFAULT_PAYER` fallback. Paid traffic needs a registered host.
+  Postgres `billing_requests` serializes each payer and retains uncertain
+  payments across restarts. Bounded text/output ceilings protect credit checks;
+  only actual usage is debited. Unconfirmed debits withhold the completion.
+  See `docs/PAYMENTS.md` for operator recovery: do not expire pending rows on a
+  timer. Receipt IDs now include request identity and use the local receipt
+  directly, removing the latest-row race. Operator-funded verification is
+  admin-only; the public explorer displays results without a spending button.
+  Gateway commits `36ef68b`, `527e13c`, `608c49f` are deployed; final web
+  deployment `dpl_3nqz7kKAex7G3W6eMWQ6NHPgCAL7` includes `38e44fb`. No contract
+  changes. Production compose passes `PRIVY_APP_ID` / `PRIVY_APP_SECRET`.
+  Keep lockfile generation compatible with the container's npm 10; npm 12
+  omitted an optional peer dependency, fixed in `608c49f`.
+- **New paid proof**: Dubai returned `Ready!` through a funded API key.
+  Subscriber credits fell 10,000 → 9,998. Receipt
+  `1db8f56f4c7462efe8464c2e181013e5f24afd8ec5cb4b34a95fd68ff29ae5fe` links
+  x402 `0.0.7162784@1789115327.964979579`, successful vault debit
+  `0xbac600c13326adc49b74e6eebfe506fbdb9f0e94f5a07fc7ba0494791e536198`, and
+  HCS sequence 17. Mirror confirms 1000 units of token `0.0.429274` from payer
+  `0.0.10375331` to host `0.0.10472685`. Host now has 2 completed gateway
+  requests and 0.004 HBAR in vault earnings. The API test budget
+  `0x6A86EebE4F033C2EAE48d6DFbF491008db1576F3` received 12 test HBAR from the
+  existing test payer, subscribed with 10, and retains 9998 credits; its key is
+  revoked and its temporary routing rule is removed. No pending billing rows.
+  Gateway: 127 tests pass, 9 unrelated database/chain tests skip; new durable
+  billing and funding tests run against a disposable Postgres instance, now
+  removed. Web typecheck, chat lint, production build, logged-out login gate,
+  and host-page browser checks pass. Server-side Privy owner lookup also passes.
+- **Token and prize verification**: `0.0.429274` is Circle's official testnet
+  USDC, with no financial value. The payer received 20 units from `0.0.11920`
+  in transaction `0.0.11920-1788603611-312002297`; 19.980 remain after this test.
+  Subscriptions fund HBAR vault credits; USDC is a separately funded operator
+  pool with no automatic conversion. Current hosts receive both direct USDC
+  and HBAR vault earnings. Hedera's prize permits testnet and requires
+  Blocky402, a public repository, and a video of at most five minutes.
+  The repository is still private; no submission video was verified.
 - **Unpaid access checks (2026-09-11)**: the public Dubai guard returns 402
   with x402 USDC requirements. Raw local Ollama returns 200 because enforcement
   lives in the guard. The hosted gateway returns 402 for a wallet with no
@@ -234,9 +276,8 @@ web 51, contracts 36, shell/terminal 13 pass (11 database-dependent skips).
 approval and a real registration transaction. No transaction was sent from
 the user's host wallet during this rollout.
 **Known sharp edges**:
-- Receipt IDs currently hash content and latency but omit payer/request identity.
-  Identical completions at equal latency can collide; the wallet route fixture
-  now uses a distinct prompt. Receipt uniqueness needs a separate fix.
+- Payment uncertainty retains a per-payer billing row. Reconcile onchain results
+  and the receipt's request identity before removing that exact reservation.
 - Quickstart now refreshes `npm link` after each build. If linking fails,
   the current install session uses its freshly built CLI directly and prints
   a launcher recovery command. Rebuild `host-runner/cli` after source edits.

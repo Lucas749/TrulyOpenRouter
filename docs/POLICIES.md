@@ -32,7 +32,16 @@ interaction happens.
 
 ## 2. What our gateway enforces (offchain, per request)
 
-Every chat/completion request passes two gates in `gateway/src/index.ts`:
+Before routing, every production chat request requires a verified Privy
+session with a linked wallet, or a valid API key with its own funded budget.
+Unverified body addresses cannot authorize spending. Anonymous requests return
+401; insufficient credits return 402; unavailable balances return 503.
+A persistent per-payer reservation prevents concurrent reuse of credits and
+blocks retries after uncertain settlement. Only confirmed vault debits release
+completions. Operator-funded verification probes require admin authentication.
+See [payment flow and recovery](PAYMENTS.md).
+
+Authenticated requests then pass two policy gates in `gateway/src/index.ts`:
 
 1. **Member allowance gate** — looks up the caller's key prefix in the cap
    store (synced from /team via `syncCap`). Spent ≥ cap → `429`. Note the
@@ -152,8 +161,9 @@ deliberate.
 
 ## 7. Who pays? (team money vs individual money)
 
-Today: **every member pays individually.** The browser sends the member's own
-wallet as `userHandle`; the gateway settles by debiting that wallet's own
+Today: **every member pays individually.** The browser sends a verified access
+token and selects its wallet with `userHandle`; the gateway checks server-side
+wallet ownership and settles by debiting that wallet's own
 vault credits — the subscription *they* funded (e.g. 10 HBAR → 10k credits).
 Zero personal balance → `402 payment_required`.
 

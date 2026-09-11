@@ -2,8 +2,8 @@
 
 One subscription. Every open model. Hosts get paid per call.
 
-Users pay a flat HBAR subscription. Each chat call pays the serving host $0.001
-USDC over x402 and meters the user's credits. Hosts register permissionlessly,
+Users pay a flat HBAR subscription. Each chat request pays the serving host 0.001
+test USDC over x402 and meters the user's credits. Hosts register permissionlessly,
 serve through a payment-gated guard, and withdraw anytime. Every settled call
 leaves a receipt mirrored to an HCS audit topic.
 
@@ -17,9 +17,14 @@ Live on Hedera testnet (296). Built for ETHOnline 2026.
 3. **Stake** — hosts lock HBAR in `HostRegistry` to serve. Released via
    `release()` after deregister + timelock, gated by a Ledger tap.
 
-Contracts: Registry `0xa45461bdefef422a81b22f36ebfd0995c7642dc3`, Vault
+Contracts: Registry `0x5f83c19413fc15181e2e79512947e374c7b8dc56`
+(legacy `0xa45461bdefef422a81b22f36ebfd0995c7642dc3`), Vault
 `0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576`, USDC `0.0.429274`,
 HCS topic `0.0.10379640`.
+
+The gateway spends separately funded test USDC from account `0.0.10375331`.
+HBAR subscriptions do not convert into USDC. Testnet tokens have no financial
+value. See [funding, authentication, and payment evidence](docs/PAYMENTS.md).
 
 ## Run it
 
@@ -36,10 +41,11 @@ cd gateway && SECRETS_BACKEND=ring PORT=4121 \
 npm run dev --prefix web                                            # :3002
 ```
 
+Configure the subscription and identity variables below before serving requests.
 Then open `/onboarding`: login → subscribe → chat. Full operator guide in
 `SELF-HOST.md`.
 
-## Operator env (all optional in dev, fail-closed when needed)
+## Operator configuration
 
 | Var | What | Default |
 |---|---|---|
@@ -47,8 +53,11 @@ Then open `/onboarding`: login → subscribe → chat. Full operator guide in
 | `TAP_HEDERA_ACCOUNT` | Recorded Ledger Hedera account tap approvals must come from | unset = taps 501 |
 | `TAPS_DIR` / `MIRROR_URL` | Tap store dir / mirror node for approval checks | `./.data`, testnet mirror |
 | `GATEWAY_ADMIN_TOKEN` | Authorizes `/api/admin/*` (web is the only caller) | unset = 501 |
-| `HEDERA_SERVICE_ACCOUNT_ID` | Gateway's own x402 payee (gateway charging for its endpoint) | unset = open endpoint |
-| `DEFAULT_PAYER` | Fallback payer when a key has no budget account | unset = fail closed |
+| `PRIVY_APP_ID` / `PRIVY_APP_SECRET` | Server verification of browser sessions and linked wallets | missing = browser inference unavailable |
+| `RPC_URL` / `VAULT_ADDRESS` / `OPERATOR_KEY` | Subscription balance reads and confirmed debits | missing = inference unavailable |
+| `BUDGET_MASTER` | Derives a separate subscription payer for each API key | missing = keyed inference unavailable |
+| `X402_PAYER_ID` / `X402_PAYER_KEY` | Separately funded test USDC payer for hosts | required for paid host requests |
+| `HEDERA_SERVICE_ACCOUNT_ID` | Optional additional x402 charge at the gateway entrance | unset = subscription gate only |
 | `HOSTS_JSON` | Static hosts, no chain (`[{endpoint,modelId,…}]`) | onchain registry |
 | `GATEWAY_CREDIT_UNITS` | Units per credit (money rule: 1e5) | `100000` |
 
