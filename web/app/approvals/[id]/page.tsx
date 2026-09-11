@@ -98,7 +98,7 @@ export default function ApprovalPage() {
       if (decision === "approve" && method === "ledger") {
         // The device shows and signs the exact message; disconnecting leaves the request pending.
         setDeviceStep("Select your Ledger and open the Ethereum app");
-        const ledger = await connectLedger((step) => setDeviceStep(`Ledger: ${step}`));
+        const ledger = await connectLedger(setDeviceStep);
         try {
           signature = await ledger.signMessage(view.message);
         } finally {

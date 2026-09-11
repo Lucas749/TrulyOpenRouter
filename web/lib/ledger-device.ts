@@ -24,20 +24,38 @@ export function webHidSupported(): boolean {
 type ActionState<T> = { status: string; output?: T; error?: unknown; intermediateValue?: { requiredUserInteraction?: string } };
 type Action<T> = { observable: { subscribe(o: { next(s: ActionState<T>): void; error(e: unknown): void }): { unsubscribe(): void } }; cancel(): void };
 
+// What the person has to do for each interaction the Ledger kit reports while an action waits.
+const STEP_TEXT: Record<string, string> = {
+  none: "Talking to the Ledger…",
+  "unlock-device": "Unlock your Ledger",
+  "confirm-open-app": "Approve opening the Ethereum app on the Ledger",
+  "verify-address": "Check the address on the Ledger and approve it",
+  "sign-personal-message": "Read the message on the Ledger and sign it",
+};
+const DEVICE_ACTION_TIMEOUT_MS = 180_000;
+const STUCK = "Unplug the Ledger, plug it back in, unlock it, open the Ethereum app, reload this page, and try again.";
+
 /// @notice Resolve a device action with its completed output, or reject with its error.
 function complete<T>(action: Action<T>, onInteraction?: (step: string) => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
+    // A device that stops answering ends in an error the person can act on, not a silent wait.
+    const timer = setTimeout(() => {
+      action.cancel();
+      settle(() => reject(new LedgerUnavailableError(`The Ledger stopped answering. ${STUCK}`)));
+    }, DEVICE_ACTION_TIMEOUT_MS);
     // Emissions can arrive before subscribe() returns, so release on the next tick.
     const settle = (finish: () => void) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       finish();
       queueMicrotask(() => subscription.unsubscribe());
     };
     const subscription = action.observable.subscribe({
       next(state) {
-        if (state.status === "pending" && state.intermediateValue?.requiredUserInteraction) onInteraction?.(state.intermediateValue.requiredUserInteraction);
+        const step = state.status === "pending" ? state.intermediateValue?.requiredUserInteraction : undefined;
+        if (step) onInteraction?.(STEP_TEXT[step] ?? `Continue on the Ledger (${step})`);
         if (state.status === "completed") settle(() => resolve(state.output as T));
         if (state.status === "error" || state.status === "stopped") {
           const reason = state.error as { message?: string; _tag?: string } | undefined;
@@ -87,8 +105,10 @@ export async function connectLedger(onInteraction?: (step: string) => void): Pro
   if (!webHidSupported()) {
     throw new LedgerUnavailableError("This browser cannot reach a Ledger. Use desktop Chrome, Edge, or Brave; the request stays pending until then.");
   }
-  const [{ DeviceManagementKitBuilder }, { webHidTransportFactory, webHidIdentifier }, { SignerEthBuilder }] = await preloadLedgerKit();
-  const dmk = new DeviceManagementKitBuilder().addTransport(webHidTransportFactory).build();
+  const [{ ConsoleLogger, DeviceManagementKitBuilder }, { webHidTransportFactory, webHidIdentifier }, { SignerEthBuilder }] = await preloadLedgerKit();
+  // Kit logs go to the browser console, so a step that stalls can be read there.
+  const dmk = new DeviceManagementKitBuilder().addLogger(new ConsoleLogger()).addTransport(webHidTransportFactory).build();
+  onInteraction?.("Pick your Ledger in the browser pop-up and click Connect");
   const device = await new Promise<Parameters<typeof dmk.connect>[0]["device"]>((resolve, reject) => {
     const subscription = dmk.startDiscovering({ transport: webHidIdentifier }).subscribe({
       next(found) {
@@ -100,13 +120,21 @@ export async function connectLedger(onInteraction?: (step: string) => void): Pro
       },
     });
   });
+  onInteraction?.("Opening the Ledger…");
   let sessionId: Awaited<ReturnType<typeof dmk.connect>>;
   try {
-    sessionId = await dmk.connect({ device });
+    sessionId = await new Promise<Awaited<ReturnType<typeof dmk.connect>>>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no answer from the device")), 20_000);
+      dmk.connect({ device }).then(
+        (id) => (clearTimeout(timer), resolve(id)),
+        (e) => (clearTimeout(timer), reject(e)),
+      );
+    });
   } catch (e) {
     dmk.close();
-    throw new LedgerUnavailableError(`The Ledger could not be opened: ${describe(e)}. Quit Ledger Live, unlock the device, and try again.`);
+    throw new LedgerUnavailableError(`The Ledger could not be opened: ${describe(e)}. Quit Ledger Live, then: ${STUCK}`);
   }
+  onInteraction?.("Connected. If the Ledger asks to open the Ethereum app, approve it");
   const signer = new SignerEthBuilder({ dmk, sessionId }).build();
   return {
     async verifiedAddress() {

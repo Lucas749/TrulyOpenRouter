@@ -194,7 +194,7 @@ export default function AgentsPage() {
   /// @notice Sign a gateway challenge on a connected Ledger, returning its verified address and signature.
   async function withLedger<T>(prompt: string, work: (ledger: Awaited<ReturnType<typeof connectLedger>>) => Promise<T>): Promise<T> {
     setDeviceStep(prompt);
-    const ledger = await connectLedger((step) => setDeviceStep(`Ledger: ${step}`));
+    const ledger = await connectLedger(setDeviceStep);
     try {
       return await work(ledger);
     } finally {
