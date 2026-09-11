@@ -443,8 +443,8 @@ export function createApp(opts: GatewayOptions = {}) {
       // upstream always gets a plain request, never a stream (its SSE frames
       // are not JSON and would die in res.json()).
       const upstreamBody = { ...((req.body ?? {}) as object), stream: false };
-      const { out, paid } = await proxyWithFallback(endpoint, upstreamBody, opts.x402, paidFetch, () => emit("paying", {}));
-      if (paid) emit("paid-host", {});
+      const { out, paid, x402Transaction } = await proxyWithFallback(endpoint, upstreamBody, opts.x402, paidFetch, () => emit("paying", {}));
+      if (paid) emit("paid-host", { transaction: x402Transaction ?? null });
       if (host && opts.health) await opts.health.recordLatency(host.address, Date.now() - t0);
       emit("running", {});
       const usage = (out as any)?.usage ?? {};
@@ -461,6 +461,7 @@ export function createApp(opts: GatewayOptions = {}) {
         tokensOut,
         modelId: model,
         user: keyPrefix ? `key:${keyPrefix}` : (walletHandle ?? "dev"),
+        ...(x402Transaction ? { x402Transaction } : {}),
       };
       if (opts.receipts) await opts.receipts.append(buildReceipt(receiptInput));
       const receipt = (await opts.receipts?.list(1))?.[0]?.id;

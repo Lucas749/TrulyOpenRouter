@@ -18,6 +18,7 @@ export interface ReceiptInput {
   modelId?: string; // for per-model aggregates
   user?: string; // payer handle: key:<prefix> or "dev" — pseudonymous, for usage history
   debitTx?: string; // vault debit tx hash (the money proof link)
+  x402Transaction?: string; // direct host USDC payment, separate from vault settlement
   hcsSeq?: string; // audit topic sequence (the public proof link)
 }
 

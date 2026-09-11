@@ -64,6 +64,15 @@ describe("proxyChat", () => {
     expect(shouldPayRetry(new Error("x"), true)).toBe(false);
   });
 
+  it("retains the confirmed host payment transaction separately from the response body", async () => {
+    const gated = vi.fn(async () => new Response(null, { status: 402 }));
+    const payment = { success: true, network: "hedera:testnet", transaction: "0.0.123@1789000000.123456789" };
+    const paid = vi.fn(async () => Response.json({ choices: [] }, { headers: { "payment-response": Buffer.from(JSON.stringify(payment)).toString("base64") } }));
+    const result = await proxyWithFallback("https://host.test", {}, { accountId: "a", privateKey: "k" }, paid, undefined, gated);
+    expect(result.x402Transaction).toBe(payment.transaction);
+    expect(result.paid).toBe(true);
+  });
+
   it("throws on upstream error", async () => {
     const fetchFn = vi.fn(async () => ({ ok: false, status: 500 }));
     await expect(proxyChat("http://h1:11434", {}, fetchFn as any)).rejects.toThrow("upstream 500");

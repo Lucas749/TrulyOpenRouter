@@ -69,7 +69,7 @@ export async function proxyWithFallback(
   paidFetch: typeof fetch | undefined,
   onPaying?: () => void,
   fetchFn: typeof fetch = fetch,
-): Promise<{ out: unknown; paid: boolean }> {
+): Promise<{ out: unknown; paid: boolean; x402Transaction?: string }> {
   try {
     return { out: await proxyChat(endpoint, body, fetchFn), paid: false };
   } catch (e) {
@@ -81,6 +81,14 @@ export async function proxyWithFallback(
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new UpstreamError(res.status, chatUrl(endpoint));
-    return { out: await res.json(), paid: true };
+    let x402Transaction: string | undefined;
+    try {
+      const header = res.headers?.get("payment-response");
+      const payment = header && header.length < 8192 ? JSON.parse(Buffer.from(header, "base64").toString("utf8")) : null;
+      if (payment?.success === true && payment.network === "hedera:testnet" && typeof payment.transaction === "string" && payment.transaction.length < 200) {
+        x402Transaction = payment.transaction;
+      }
+    } catch { /* Missing payment metadata must not discard a completed response. */ }
+    return { out: await res.json(), paid: true, ...(x402Transaction ? { x402Transaction } : {}) };
   }
 }
