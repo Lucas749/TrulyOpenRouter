@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { newAuthKeypair, privyApi } from "../../../../lib/privy-server";
-import { saveQuorumKey } from "../../../../lib/quorum-keys";
-import { visibleOrgIds } from "../../../../lib/members";
+import { privyApi } from "../../../../lib/privy-server";
+import { addMember, setOrgCreator, visibleOrgIds } from "../../../../lib/members";
+import { provisionTeam } from "../../../../lib/gateway-admin";
 import { requireSession } from "../../../../lib/session";
+import { syncTeamToGateway } from "../../../../lib/team-sync";
 
 export async function GET(req: Request) {
   const session = await requireSession(req);
@@ -30,81 +31,42 @@ export async function GET(req: Request) {
   }
 }
 
-/// @notice Full team setup in one call: quorum (server key, threshold 1) -> org -> wallet.
-/// Optional capUsd attaches a spending-cap policy AT CREATION in USD terms,
-/// converted to native (HBAR) wei at the indicative rate in lib/fx.ts — our
-/// chain's native token IS HBAR, so the policy covers HBAR sends by construction.
-/// (Legacy capWei passthrough kept for compat.) The verified login becomes the
-/// founding owner; later policy changes need quorum authorization signatures.
+/// @notice Create a team: the gateway provisions a Privy organization wallet owned
+/// by a 2-of-2 quorum of this verified login (financial approver) and the broker
+/// key, with the treasury policy attached. The login becomes the founding owner.
 export async function POST(req: Request) {
   const session = await requireSession(req);
   if (session instanceof Response) return session;
   try {
-    const { name, capWei, capUsd } = (await req.json().catch(() => ({}))) as {
-      name?: string;
-      capWei?: string;
-      capUsd?: number;
-    };
-    if (!name || typeof name !== "string" || name.length > 64) {
+    const { name } = (await req.json().catch(() => ({}))) as { name?: string };
+    if (!name || typeof name !== "string" || name.trim().length > 64) {
       return NextResponse.json({ error: "name required (<=64 chars)" }, { status: 400 });
     }
     const creatorWallet = session.wallets[0];
     if (!creatorWallet) {
       return NextResponse.json({ error: "Link a wallet to your login before creating a team." }, { status: 400 });
     }
-    let cap = capWei;
-    if (capUsd !== undefined) {
-      const { usdToHbarWei } = await import("../../../../lib/fx");
-      try {
-        cap = usdToHbarWei(Number(capUsd));
-      } catch {
-        return NextResponse.json({ error: "capUsd must be a positive number" }, { status: 400 });
-      }
+    let team;
+    try {
+      team = await provisionTeam({ name: name.trim(), approverUserId: session.userId, recipients: [creatorWallet] });
+    } catch (e: any) {
+      return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
     }
-    const { publicKey, privateKey } = newAuthKeypair();
-    const quorum: any = await privyApi("POST", "/key_quorums", {
-      public_keys: [publicKey],
-      authorization_threshold: 1,
-      display_name: `${name}-admins`,
-    });
-    // Server holds this key -> one-click approvals below. Pre-store orgs lack it (see quorum-keys.ts).
-    await saveQuorumKey(quorum.id, privateKey);
-    const org: any = await privyApi("POST", "/organizations", {
-      display_name: name,
-      default_key_quorum_id: quorum.id,
-    });
-    let policy: any = null;
-    const walletBody: any = { entity: { id: org.id, type: "organization" }, chain_type: "ethereum" };
-    if (cap) {
-      policy = await privyApi("POST", "/policies", {
-        version: "1.0",
-        name: `${name}-cap`,
-        chain_type: "ethereum",
-        owner_id: quorum.id,
-        rules: [
-          {
-            name: "cap-send",
-            method: "eth_sendTransaction",
-            action: "ALLOW",
-            conditions: [{ field_source: "ethereum_transaction", field: "value", operator: "lte", value: String(cap) }],
-          },
-        ],
-      });
-      walletBody.policy_ids = [policy.id];
-    }
-    const wallet: any = await privyApi("POST", "/wallets", walletBody);
     // The creator becomes founding owner immediately — otherwise they create
     // a team they can't act on (no membership = no invite/propose UI).
-    const { addMember, setOrgCreator } = await import("../../../../lib/members");
-    await setOrgCreator(org.id, creatorWallet);
+    await setOrgCreator(team.orgId, creatorWallet);
     try {
-      await addMember(org.id, { did: session.userId, walletAddress: creatorWallet, role: "owner" });
+      await addMember(team.orgId, { did: session.userId, walletAddress: creatorWallet, role: "owner" });
     } catch {
       // already a member (retry path) — membership is what matters, not this write
     }
-    const { syncTeamToGateway } = await import("../../../../lib/team-sync");
-    const team = await syncTeamToGateway(org.id);
-    return NextResponse.json({ org, quorumId: quorum.id, policy, wallet, teamSynced: team.synced });
+    const synced = await syncTeamToGateway(team.orgId);
+    return NextResponse.json({
+      org: { id: team.orgId, display_name: team.name },
+      team,
+      wallet: { id: team.walletId, address: team.walletAddress, policy_ids: [team.policyId] },
+      teamSynced: synced.synced,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });
   }

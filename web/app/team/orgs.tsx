@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { apiError } from "../../lib/api-error";
-import { hbarWeiToHbar, hbarWeiToUsd, usdToHbarWei } from "../../lib/fx";
 import { useAuthFetch } from "../components/use-auth-fetch";
 import OrgMembers from "./members";
 import OrgRules from "./rules";
@@ -14,8 +13,9 @@ export interface TeamOrg {
   wallets?: { id: string; address: string; policy_ids: string[] }[];
 }
 
-// Full team stack in one component: create (quorum → org → wallet + policy),
-// Privy wallets with policy counts, and the member / allowance / inbox manager.
+// Full team stack in one component: create (the gateway provisions a Privy
+// organization wallet owned by you and the broker key, with the treasury
+// policy), wallet policy summary, and the member / allowance / inbox manager.
 // Rendered on /team and inside account → Team. Every call carries the login token.
 export default function TeamOrgs({
   me,
@@ -27,19 +27,10 @@ export default function TeamOrgs({
   const authFetch = useAuthFetch();
   const [orgs, setOrgs] = useState<TeamOrg[] | null>(null);
   const [name, setName] = useState("");
-  const [capUsd, setCapUsd] = useState("25");
-  const capPreview = (() => {
-    try {
-      const hbar = hbarWeiToHbar(usdToHbarWei(Number(capUsd)));
-      return `≈ ${hbar.toLocaleString("en-US", { maximumFractionDigits: 2 })} HBAR/tx`;
-    } catch {
-      return null;
-    }
-  })();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [created, setCreated] = useState<any | null>(null);
-  const [caps, setCaps] = useState<Record<string, string>>({});
+  const [created, setCreated] = useState<{ org: { id: string }; wallet: { address: string } } | null>(null);
+  const [policies, setPolicies] = useState<Record<string, string>>({});
 
   async function load() {
     if (mock) {
@@ -63,25 +54,21 @@ export default function TeamOrgs({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mock, me?.did]);
 
-  // Spending-cap policies in plain dollars (parsed from the Privy rule wei).
-  async function capFor(walletId: string): Promise<string | null> {
-    if (caps[walletId] !== undefined) return caps[walletId] || null;
+  // Policy summary: the rule names Privy enforces on the team wallet.
+  async function policyFor(walletId: string) {
+    if (policies[walletId] !== undefined) return;
     try {
       const d: any = await (await authFetch(`/api/team/wallets/${walletId}/policies`)).json();
-      const rule = (d.policies ?? []).flatMap((p: any) => p.rules ?? []).find((r: any) => r?.conditions?.[0]?.value);
-      const usd = rule ? hbarWeiToUsd(rule.conditions[0].value) : NaN;
-      const label = Number.isFinite(usd) ? `spending cap $${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}/tx` : "";
-      setCaps((m) => ({ ...m, [walletId]: label }));
-      return label || null;
+      const names = (d.policies ?? []).flatMap((p: any) => (p.rules ?? []).map((r: any) => r.name));
+      setPolicies((m) => ({ ...m, [walletId]: names.join(", ") }));
     } catch {
-      setCaps((m) => ({ ...m, [walletId]: "" }));
-      return null;
+      setPolicies((m) => ({ ...m, [walletId]: "" }));
     }
   }
 
   useEffect(() => {
     if (mock) return;
-    for (const o of orgs ?? []) for (const w of o.wallets ?? []) void capFor(w.id);
+    for (const o of orgs ?? []) for (const w of o.wallets ?? []) void policyFor(w.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgs, mock]);
 
@@ -91,14 +78,10 @@ export default function TeamOrgs({
     setMsg(null);
     setCreated(null);
     try {
-      // USD-termed cap → HBAR wei policy (native on our chain). Empty = no cap.
       const r = await authFetch("/api/team/orgs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          ...(capUsd.trim() ? { capUsd: Number(capUsd) } : {}),
-        }),
+        body: JSON.stringify({ name: name.trim() }),
       });
       const d: any = await r.json();
       if (!r.ok) throw new Error(apiError(d, r.status));
@@ -118,15 +101,14 @@ export default function TeamOrgs({
           <div className="flex flex-col gap-1">
             <div className="flex gap-2">
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" className="h-10 flex-[2] rounded-lg border border-black/10 px-3 text-sm" />
-              <input value={capUsd} onChange={(e) => setCapUsd(e.target.value)} placeholder="spending cap (USD)" title="Per-transaction spending-cap policy in USD, enforced in HBAR" className="h-10 flex-1 rounded-lg border border-black/10 px-3 font-mono text-sm" inputMode="decimal" />
               <button onClick={create} disabled={busy || !name.trim()} className="h-10 rounded-full bg-black px-5 text-sm text-white disabled:opacity-40">{busy ? "creating…" : "Create team"}</button>
             </div>
-            {capPreview && <span className="font-mono text-[11px] text-[#6E6E73]">cap {capPreview}, enforced onchain per transaction</span>}
+            <span className="font-mono text-[11px] text-[#6E6E73]">You become the owner and financial approver. Treasury transactions need your approval plus the broker key.</span>
           </div>
           {msg && <p className="m-0 font-mono text-xs text-[#B3261E]">{msg}</p>}
           {created && (
             <div className="flex flex-col gap-1.5 rounded-[14px] border border-[#10A37F] p-4 font-mono text-xs">
-              <span className="text-[#0B7A5D]">✓ team live, quorum → org → wallet</span>
+              <span className="text-[#0B7A5D]">✓ team wallet active, policy attached</span>
               <span>org {created.org.id}</span>
               <span>wallet {created.wallet.address}</span>
             </div>
@@ -148,11 +130,9 @@ export default function TeamOrgs({
             <OrgMembers orgId={o.id} me={me} mock={mock} />
             <OrgRules orgId={o.id} me={me} mock={mock} />
             {(o.wallets ?? []).map((w) => (
-              <div key={w.id} className="flex flex-col gap-2 rounded-lg bg-[#F7F7F5] p-3">
-                <div className="flex flex-wrap items-center gap-x-2 font-mono text-xs">
-                  <span>{w.address.slice(0, 12)}…</span>
-                  <span className="text-[#0B7A5D]">{caps[w.id] ? `✓ ${caps[w.id]}` : w.policy_ids.length ? "policy attached" : "no policy"}</span>
-                </div>
+              <div key={w.id} className="flex flex-col gap-1 rounded-lg bg-[#F7F7F5] p-3 font-mono text-xs">
+                <span>{w.address}</span>
+                <span className="text-[#6E6E73]">{policies[w.id] ? `policy: ${policies[w.id]}` : w.policy_ids.length ? "policy attached" : "no policy"}</span>
               </div>
             ))}
           </div>

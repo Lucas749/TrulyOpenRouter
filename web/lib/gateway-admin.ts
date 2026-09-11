@@ -76,6 +76,34 @@ export async function clearCap(prefix: string): Promise<void> {
   if (!res.ok) throw new Error(`gateway clear failed: ${(await res.text()).slice(0, 160)}`);
 }
 
+export interface ProvisionedTeam {
+  orgId: string;
+  name: string;
+  walletId: string;
+  walletAddress: string;
+  quorumId: string;
+  policyId: string;
+  approverUserId: string;
+  payoutRecipients: string[];
+  state: string;
+}
+
+/// @notice Ask the gateway (which holds the broker authorization key) to create
+/// the team's Privy organization wallet. The caller verified the login that
+/// becomes the financial approver. Throws with the gateway's message on failure.
+export async function provisionTeam(input: { name: string; approverUserId: string; recipients: string[] }): Promise<ProvisionedTeam> {
+  const t = token();
+  if (!t) throw new Error("GATEWAY_ADMIN_TOKEN not configured, refusing unwatched provisioning");
+  const res = await fetch(`${base()}/api/admin/teams`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+    body: JSON.stringify(input),
+  });
+  const body = (await res.json().catch(() => ({}))) as { team?: ProvisionedTeam; error?: { message?: string } };
+  if (!res.ok || !body.team) throw new Error(body.error?.message ?? `team wallet setup failed (${res.status})`);
+  return body.team;
+}
+
 export interface TeamSnapshotInput {
   orgId: string;
   defaultAllowanceCredits?: number;
