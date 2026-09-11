@@ -7,6 +7,7 @@ import { loadConfig, saveConfig } from "../src/config.js";
 import { api, sh } from "../src/util.js";
 import { currentHostSettings, publishHostSettings } from "../src/host-runtime.js";
 import { healthyGuard } from "../src/host-tunnel.js";
+import { enableGuardPayments } from "../src/guard-payment.js";
 
 const chain = vi.hoisted(() => ({
   getBalance: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("viem", async (importOriginal) => ({
 vi.mock("../src/util.js", () => ({ api: vi.fn(), sh: vi.fn() }));
 vi.mock("../src/host-runtime.js", () => ({ currentHostSettings: vi.fn(), publishHostSettings: vi.fn() }));
 vi.mock("../src/host-tunnel.js", () => ({ healthyGuard: vi.fn(), rememberTunnel: vi.fn() }));
+vi.mock("../src/guard-payment.js", () => ({ enableGuardPayments: vi.fn() }));
 
 describe("run registration funding", () => {
   const HBAR = 10n ** 18n;
@@ -52,6 +54,7 @@ describe("run registration funding", () => {
     vi.mocked(currentHostSettings).mockResolvedValue({ endpoint: "https://previous.example", revision: 2 } as any);
     vi.mocked(publishHostSettings).mockImplementation(async settings => settings);
     vi.mocked(healthyGuard).mockResolvedValue(true);
+    vi.mocked(enableGuardPayments).mockResolvedValue("0.0.123");
   });
 
   afterEach(() => {
@@ -69,7 +72,7 @@ describe("run registration funding", () => {
 
     expect(chain.writeContract.mock.calls).toHaveLength(0);
     expect(vi.mocked(publishHostSettings).mock.calls[0][0]).toMatchObject({ endpoint: "https://replacement.example", modelId: options.model, paused: false, revision: 2 });
-    expect(vi.mocked(sh).mock.calls.some(([, args]) => args.slice(-3).join(" ") === "up -d guard")).toBe(true);
+    expect(vi.mocked(enableGuardPayments).mock.calls[0][0]).toBe(address);
     expect(vi.mocked(api).mock.calls).toContainEqual([
       options.gateway, `/api/hosts/${address}/owner`,
       { method: "POST", body: JSON.stringify({ userId: "test-owner" }) },
@@ -111,7 +114,7 @@ describe("run registration funding", () => {
   it("does not report a reverted transaction as a successful registration", async () => {
     chain.waitForTransactionReceipt.mockResolvedValue({ status: "reverted" });
     await expect(run(options)).rejects.toThrow("Registration transaction reverted");
-    expect(vi.mocked(sh).mock.calls.some(([, args]) => args.slice(-3).join(" ") === "up -d guard")).toBe(false);
+    expect(vi.mocked(enableGuardPayments).mock.calls).toHaveLength(0);
   });
 
   it("registers with exactly 5 HBAR overall and leaves gas reserve", async () => {
@@ -119,5 +122,11 @@ describe("run registration funding", () => {
 
     expect(chain.writeContract.mock.calls).toHaveLength(1);
     expect(chain.writeContract.mock.calls[0][0]).toMatchObject({ functionName: "register", value: 4n * HBAR });
+  });
+
+  it("does not enable routing when the payment guard fails", async () => {
+    vi.mocked(enableGuardPayments).mockRejectedValue(new Error("Payment guard unavailable"));
+    await expect(run(options)).rejects.toThrow("Payment guard unavailable");
+    expect(vi.mocked(publishHostSettings).mock.calls).toHaveLength(0);
   });
 });
