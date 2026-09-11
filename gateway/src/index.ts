@@ -28,6 +28,7 @@ import { cachedGeo } from "./geo.js";
 import { createTapExecutor } from "./tap-exec.js";
 import { hostEarnings } from "./host-earnings.js";
 import { applyHostSettings, authorizeHostSettings, HostSettingsError, MemoryHostRuntime, PgHostRuntime, type HostRuntimeStore } from "./host-runtime.js";
+import { normalizeSnapshot, PgTeams, TeamError } from "./teams.js";
 
 /// @notice Thrown when an org rule blocks a call. Caught by the chat handler
 /// into a plain-language 403 (module scope: the catch lives outside try).
@@ -63,6 +64,7 @@ export interface GatewayOptions {
   verifier?: Verifier; // model-identity spot checks; absent = collection off
   spendCaps?: CapStore; // member allowances; absent = no cap enforcement
   orgRules?: OrgRuleStore; // firm rules mirror; absent = no org enforcement
+  teams?: PgTeams; // team finance mirror (Postgres); absent = team endpoints 501
   taps?: TapStore; // PENDING_TAP queue; absent = tap endpoints 501
   tapExecutor?: (kind: TapKind) => Promise<string>; // test override; default = Hedera via ring-held host key
   adminToken?: string; // authorizes /api/admin/* (env GATEWAY_ADMIN_TOKEN fallback)
@@ -1155,6 +1157,25 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json({ rule: await opts.orgRules.get(req.params.orgId) });
   });
 
+  // Team membership mirror. The web server pushes the full snapshot after each
+  // signed membership change; team payers and approvals resolve only from it.
+  app.post("/api/admin/teams/:orgId/snapshot", async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    if (!opts.teams) {
+      res.status(501).json({ error: { message: "team finance not configured", type: "unavailable" } });
+      return;
+    }
+    try {
+      res.json(await opts.teams.applySnapshot(normalizeSnapshot(req.params.orgId, req.body)));
+    } catch (e) {
+      if (e instanceof TeamError) {
+        res.status(e.status).json({ error: { message: e.message, type: "invalid_request" } });
+        return;
+      }
+      res.status(503).json({ error: { message: "Team membership could not be saved. Try again.", type: "unavailable" } });
+    }
+  });
+
   // PENDING_TAP queue (L4, Hedera-only). Trust chain: web (wallet-signed
   // owner) -> admin token here -> Ledger-signed HBAR self-transfer (exact dust,
   // verified on the mirror node) -> Hedera execution with the ring-held host
@@ -1287,6 +1308,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     spendCaps: pg ? new PgCapStore() : new SpendCapStore(),
     taps: pg ? new PgTapStore() : new FileTapStore(),
     orgRules: pg ? new PgOrgRules() : new MemoryOrgRules(),
+    teams: pg ? new PgTeams() : undefined,
   };
   if (pg && process.env.FAUCET_ACCOUNT_ID && process.env.FAUCET_PRIVATE_KEY) {
     const { HederaFaucetSender } = await import("./faucet-hedera.js");

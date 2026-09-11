@@ -141,3 +141,33 @@ CREATE TABLE IF NOT EXISTS taps (
   exec_tx text,
   exec_error text
 );
+
+-- Team finance: organization wallet mapping plus the web membership mirror.
+-- The web app owns invites and roles and pushes the full team snapshot after
+-- each change. Team payers and approval authority resolve only from these rows.
+CREATE TABLE IF NOT EXISTS team_finance (
+  org_id text PRIMARY KEY,
+  name text NOT NULL DEFAULT '',
+  wallet_id text,
+  wallet_address text,
+  quorum_id text,
+  policy_id text,
+  approver_user_id text,
+  state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'active', 'disabled')),
+  default_allowance_credits bigint,
+  membership_revision integer NOT NULL DEFAULT 0,
+  created_at bigint NOT NULL,
+  updated_at bigint NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS team_finance_wallet_idx ON team_finance (wallet_address) WHERE wallet_address IS NOT NULL;
+CREATE TABLE IF NOT EXISTS team_finance_members (
+  org_id text NOT NULL REFERENCES team_finance (org_id) ON DELETE CASCADE,
+  did text NOT NULL,
+  wallet text,
+  email text,
+  role text NOT NULL CHECK (role IN ('owner', 'manager', 'member')),
+  status text NOT NULL CHECK (status IN ('active', 'invited', 'removed')),
+  allowance_credits bigint,
+  PRIMARY KEY (org_id, did)
+);
+CREATE INDEX IF NOT EXISTS team_finance_members_wallet_idx ON team_finance_members (wallet);
