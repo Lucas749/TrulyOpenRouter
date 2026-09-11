@@ -106,7 +106,7 @@ export default function TeamOrgs({
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" className="h-10 flex-[2] rounded-lg border border-black/10 px-3 text-sm" />
               <button onClick={create} disabled={busy || !name.trim()} className="h-10 rounded-full bg-black px-5 text-sm text-white disabled:opacity-40">{busy ? "creating…" : "Create team"}</button>
             </div>
-            <span className="font-mono text-[11px] text-[#6E6E73]">You become the owner and financial approver. Treasury transactions need your approval plus the broker key.</span>
+            <span className="font-mono text-[11px] text-[#6E6E73]">You become the owner and approve every Compute Treasury transaction.</span>
           </div>
           {msg && <p className="m-0 font-mono text-xs text-[#B3261E]">{msg}</p>}
           {created && (
@@ -127,7 +127,8 @@ export default function TeamOrgs({
               <span className="font-mono text-xs text-[#6E6E73]">{o.id}</span>
               <details className="ml-auto font-mono text-[11px] text-[#8F8F8F]">
                 <summary className="cursor-pointer underline">technical details</summary>
-                quorum {o.default_key_quorum_id} · {(o.wallets ?? []).map((w) => w.id).join(", ")}
+                quorum {o.default_key_quorum_id} ·{" "}
+                {(o.wallets ?? []).map((w) => `${w.id} ${w.address} ${policies[w.id] ? `policy: ${policies[w.id]}` : w.policy_ids.length ? "policy attached" : "no policy"}`).join(", ")}
               </details>
             </div>
             <OrgMembers orgId={o.id} me={me} mock={mock} />
@@ -135,12 +136,6 @@ export default function TeamOrgs({
             <TeamTreasury orgId={o.id} mock={mock} />
             <TeamHosts orgId={o.id} mock={mock} />
             <TeamApprovals orgId={o.id} mock={mock} />
-            {(o.wallets ?? []).map((w) => (
-              <div key={w.id} className="flex flex-col gap-1 rounded-lg bg-[#F7F7F5] p-3 font-mono text-xs">
-                <span>{w.address}</span>
-                <span className="text-[#6E6E73]">{policies[w.id] ? `policy: ${policies[w.id]}` : w.policy_ids.length ? "policy attached" : "no policy"}</span>
-              </div>
-            ))}
           </div>
         ))}
         {orgs && !orgs.length && <p className="m-0 text-sm text-[#8F8F8F]">no teams yet, create the first above</p>}
