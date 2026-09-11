@@ -16,6 +16,11 @@ Live on Hedera testnet (296). Built for ETHOnline 2026.
    wallet via x402; vault credits metered down. Receipt ties both together.
 3. **Stake** — hosts lock HBAR in `HostRegistry` to serve. Released via
    `release()` after deregister + timelock, gated by a Ledger tap.
+4. **Teams** — a Privy team wallet buys credits through approved intents;
+   members and team agents spend them within allowances, and linked hosts
+   collect earnings into it.
+5. **Agents** — `tor_sk_agt_` keys with strict limits; an over-limit request
+   waits for a team owner or Ledger approval instead of spending more.
 
 Contracts: Registry `0x5f83c19413fc15181e2e79512947e374c7b8dc56`
 (legacy `0xa45461bdefef422a81b22f36ebfd0995c7642dc3`), Vault
@@ -86,16 +91,29 @@ One quirk that cost us an afternoon: the hashio relay delivers contract
 ## Sponsors
 
 - **Hedera**: x402 micropayments + HTS + HCS audit + budget agents (above).
-- **Privy**: email login → embedded wallet; org wallets with policies +
-  quorum→org→policy in one call; team spend authorized by wallet signatures.
-  Privy can't touch the Hedera chain, so it signs offchain messages and
-  ring-held keys execute. Authorization ≠ execution, by tool constraint.
-- **Ledger**: gateway secrets live in `wallet-cli ring` (headless decrypt
-  proven, device unplugged); stake releases need a physical tap (Ledger Live
-  HBAR transfer, mirror-verified). DX notes in `docs/DX-FEEDBACK-ledger.md`.
+- **Privy**: email login → embedded wallet. Each team gets a Privy
+  organization wallet owned by a two-signature quorum (the team's financial
+  approver and the gateway broker key) with a deny-by-default policy:
+  exact-price vault purchases, refunds, and capped payouts to approved
+  recipients. Treasury actions run as Privy intents, and the gateway checks the
+  signed bytes against the reviewed terms before broadcasting to Hedera. Team
+  owners approve spending increases for members and agents with their Privy
+  wallet signature.
+- **Ledger**: agents can enroll a Ledger through the Device Management Kit over
+  WebHID. Over-limit requests pause for an exact on-device approval and resume
+  once; widening or draining a protected agent needs the same device. Broker
+  secrets (budget master, x402 payer, Privy broker key) live in `wallet-cli
+  ring` with no environment fallback, and stake releases need a physical tap.
+  DX notes in `docs/DX-FEEDBACK-ledger.md`.
 
 ## Honest staging
 
 Stakes are not yet slashable (stub). No TEE hosts (roadmap). Verification is
 behavioral probing, not attestation. Everything above is exactly what runs —
 mock mode (`?mock=1`) is fixtures-only and bannered.
+
+Team finance and agents run on testnet with live checks for Privy policy
+enforcement, agent budgets, collections, and Key Ring decryption. A human
+Privy intent approval in the browser and a physical Ledger approval still need
+a live run, and the deployed gateway reads environment secrets until its
+server joins the Key Ring.

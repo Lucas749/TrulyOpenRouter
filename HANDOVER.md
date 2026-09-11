@@ -43,6 +43,23 @@ gates run in the gateway per request.
 - Repo: `https://github.com/Lucas749/TrulyOpenRouter`, small commits on `main`.
 
 ## What is built (this session worked newest-first)
+- **Team finance, agents, and Ledger approvals (2026-09-11)**: spec in
+  `.local/TEAM-FINANCE-AND-AGENTS.md`; policy detail in `docs/POLICIES.md`.
+  On `main`, not yet deployed: Privy team treasury (approver + broker quorum,
+  deny-by-default policy, intents with signed-byte checks), team billing
+  (`tor_team`), agents with durable counters and `403 approval_required`,
+  owner and Ledger (DMK/WebHID) approvals, personal agent budgets, owner-only
+  spending increases, x402 payment bounds with daily ceilings, Key Ring
+  protected secrets without env fallback, and host-to-team links with verified
+  collections (`tor-host team link`, `tor-host collect`). Live testnet checks
+  pass: `gateway/scripts/treasury-policy-live.mts`, `agent-funding-live.mts`,
+  `team-collection-live.mts`, and `ring-runtime-check.mts`. Suites: gateway
+  204, host CLI 160, web members API 9 pass, with the web build green. Not yet
+  verified: a human Privy intent approval in the browser, a physical Ledger
+  approval, a real vault withdrawal collected to a team, and ring decryption
+  on the deployed server. Deploy needs `PRIVY_BROKER_AUTH_KEY` (P-256 PKCS8,
+  base64) plus the `TEAM_*` and `X402_*` bounds in `.env.prod`, then the web
+  deployment.
 - **Authenticated subscriptions and payment evidence (2026-09-11)**: the
   anonymous inference gap below is closed in production. Browser chat sends
   its Privy access token; the gateway verifies the subject and retrieves
