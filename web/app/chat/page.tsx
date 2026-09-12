@@ -279,7 +279,19 @@ export default function ChatPage() {
               {m.receipt && (
                 <p className="m-0 font-mono text-[11px] text-emerald-700">
                   {m.settled ? (
-                    <>✓ {m.receipt.slice(0, 12)}… · settled</>
+                    <>
+                      ✓{" "}
+                      <a
+                        href={`/api/gw/api/receipts/${m.receipt}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open the receipt: both payment legs and the HCS sequence"
+                        className="underline decoration-emerald-700/40 underline-offset-2 hover:decoration-emerald-700"
+                      >
+                        {m.receipt.slice(0, 12)}…
+                      </a>{" "}
+                      · settled ↗
+                    </>
                   ) : (
                     <Link href="/onboarding" className="underline">demo reply — subscribe to settle onchain</Link>
                   )}
