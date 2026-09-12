@@ -81,7 +81,7 @@ export default function DocsPage() {
       <main className="mx-auto flex max-w-[920px] flex-col gap-6 px-6 py-10">
         <div>
           <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">API docs</h1>
-          <p className="mb-0 mt-2 text-[#5D5D5D]">OpenAI-compatible. Two env vars and any harness works — opencode, Cursor, Cline, or plain curl. Testnet gateway: <span className="font-mono text-sm text-black">http://127.0.0.1:4121</span> (local) · contracts on Hedera testnet.</p>
+          <p className="mb-0 mt-2 text-[#5D5D5D]">OpenAI-compatible. Two env vars and any harness works — opencode, Cursor, Cline, or plain curl. Base URL: <span className="font-mono text-sm text-black">https://trulyopenrouter.vercel.app/api/gw/v1</span> · contracts on Hedera testnet. Running the stack yourself? Swap the base for <span className="font-mono text-sm text-black">http://localhost:4121/v1</span>.</p>
           <nav className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
             {["architecture", "quickstart", "chat", "models", "receipts", "keys", "hosts", "errors"].map((a) => (
               <a key={a} href={`#${a}`} className="font-mono text-xs text-[#2563EB] underline">{a}</a>
@@ -183,7 +183,7 @@ sh quickstart.sh   # ~15 min, testnet only, nothing costs money`} />
         <Snippet title="Python (openai SDK)" code={`from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://127.0.0.1:4121/v1",
+    base_url="https://trulyopenrouter.vercel.app/api/gw/v1",
     api_key="tor_sk_…",  # create at /api
 )
 
@@ -198,46 +198,46 @@ print(response.choices[0].message.content)`} />
   "model": "trulyopenrouter/qwen2.5-7b",
   "provider": {
     "trulyopenrouter": {
-      "options": { "baseURL": "http://127.0.0.1:4121/v1", "apiKey": "tor_sk_…" }
+      "options": { "baseURL": "https://trulyopenrouter.vercel.app/api/gw/v1", "apiKey": "tor_sk_…" }
     }
   }
 }`} />
         <Snippet title="Keys + receipts (curl)" code={`# issue a scoped key for your login (shown once; easiest at /api)
-curl -X POST http://127.0.0.1:4121/api/keys \\
+curl -X POST https://trulyopenrouter.vercel.app/api/gw/api/keys \\
   -H 'Content-Type: application/json' \\
   -H "Authorization: Bearer $PRIVY_ACCESS_TOKEN" \\
   -d '{"scopes":{"models":["qwen2.5:0.5b"]}}'
 
 # chat, response carries tor_receipt + tor_settled
-curl -X POST http://127.0.0.1:4121/v1/chat/completions \\
+curl -X POST https://trulyopenrouter.vercel.app/api/gw/v1/chat/completions \\
   -H 'Content-Type: application/json' \\
   -H "Authorization: Bearer tor_sk_…" \\
   -d '{"model":"qwen2.5:0.5b","messages":[{"role":"user","content":"hi"}]}'
 
 # verify the receipt (hashes only, bodies never leave the hosts)
-curl http://127.0.0.1:4121/api/receipts/<id>
+curl https://trulyopenrouter.vercel.app/api/gw/api/receipts/<id>
 
 # network truth
-curl http://127.0.0.1:4121/api/hosts
-curl http://127.0.0.1:4121/api/stats`} />
+curl https://trulyopenrouter.vercel.app/api/gw/api/hosts
+curl https://trulyopenrouter.vercel.app/api/gw/api/stats`} />
         <div id="models"></div>
-        <Snippet title="Models (live directory)" code={`curl http://127.0.0.1:4121/v1/models
+        <Snippet title="Models (live directory)" code={`curl https://trulyopenrouter.vercel.app/api/gw/v1/models
 # -> [{ id, hosts, minPricePerReq, calls24h }] — cheapest healthy host wins per call`} />
         <div id="receipts"></div>
-        <Snippet title="Receipts (hashes only, bodies never leave hosts)" code={`curl http://127.0.0.1:4121/api/receipts/<id>
+        <Snippet title="Receipts (hashes only, bodies never leave hosts)" code={`curl https://trulyopenrouter.vercel.app/api/gw/api/receipts/<id>
 # -> { id (sha256), modelDigest, host, priceWei, debitTx, hcsSeq }
 # debitTx: vault debit on HashScan · hcsSeq: same id on topic 0.0.10379640`} />
         <div id="keys"></div>
         <Snippet title="Keys, caps and quota" code={`# scoped key for your login (models allowlist, expiry) — shown once
-curl -X POST http://127.0.0.1:4121/api/keys -H 'Content-Type: application/json' -H "Authorization: Bearer $PRIVY_ACCESS_TOKEN" -d '{"scopes":{"models":["qwen2.5:0.5b"]}}'
+curl -X POST https://trulyopenrouter.vercel.app/api/gw/api/keys -H 'Content-Type: application/json' -H "Authorization: Bearer $PRIVY_ACCESS_TOKEN" -d '{"scopes":{"models":["qwen2.5:0.5b"]}}'
 # member allowance: 429 quota_exceeded past cap · vault debit is the backstop
 # key budget accounts derive per prefix (HKDF) — fund explicitly, never auto`} />
         <div id="hosts"></div>
         <Snippet title="Host API (serve + earn)" code={`# register (4 HBAR stake + 1 HBAR gas reserve; key stays on your machine)
 sh host-runner/setup.sh
 # directory + detail + verify
-curl http://127.0.0.1:4121/api/hosts
-curl http://127.0.0.1:4121/api/hosts/<address>
+curl https://trulyopenrouter.vercel.app/api/gw/api/hosts
+curl https://trulyopenrouter.vercel.app/api/gw/api/hosts/<address>
 # heartbeat (cron every 10 min keeps you in rotation) · leave: tor-host leave`} />
         <div id="errors"></div>
         <Snippet title="Errors (honest codes, no fake 200s)" code={`401 invalid_api_key  — unknown/revoked key or bad wallet signature
