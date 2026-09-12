@@ -4,6 +4,9 @@
 # `next dev` rewrites web/AGENTS.md on every run; keep it out of the tree.
 web/AGENTS.md
 web/CLAUDE.md
+# Assistant and editor instructions — local tooling, not project documentation.
+.claude/
+.cursor/
 # A second checkout that the globally linked tor-host runs from, not part of the repo.
 temp/
 node_modules/
