@@ -1,11 +1,18 @@
+<div align="center">
+
 <img src="web/app/icon.svg" width="72" alt="TrulyOpenRouter" />
 
 # TrulyOpenRouter
 
-**[trulyopenrouter.vercel.app](https://trulyopenrouter.vercel.app)** · Hedera testnet (296) · built for ETHOnline 2026
+**One subscription. Every open model. Hosts get paid per call.**
 
-One subscription. Every open model. Hosts get paid per call — and an agent that wants
-to spend more has to ask a human holding a Ledger.
+An open router for AI inference, where an agent that wants to spend more
+has to ask a human holding a Ledger.
+
+**[trulyopenrouter.vercel.app](https://trulyopenrouter.vercel.app)** ·
+**[github.com/Lucas749/TrulyOpenRouter](https://github.com/Lucas749/TrulyOpenRouter)**
+
+</div>
 
 Users pay a flat HBAR subscription. Each request pays the serving host 0.001 test USDC
 over x402 and meters the user's credits. Hosts register permissionlessly, serve through
@@ -56,7 +63,7 @@ tor-agent run "<task>"              # one task; stops for a human when over its 
 tor-agent approve [<id>]            # sign what's waiting, from the machine with the Ledger
 tor-agent enroll --docker <name>    # give a host with no USB port its own membership
 tor-agent status                    # limits, usage, and anything waiting
-node agent-cli/demo.mjs             # the guided 10-step demo, pauses before each step
+node agent-cli/demo.mjs             # the guided 10-step demo (--start N to resume, --wait to step)
 ```
 
 ## Where it runs
@@ -276,19 +283,3 @@ the enrolled device. One press buys **one request**, not a new budget: single-us
 
 Run it: `node agent-cli/demo.mjs` walks the whole thing — sealed key, a container with no USB
 port, the agent stopped by its own limit, the press, the answer, then the host cut off.
-
-## Honest staging
-
-Stakes are not yet slashable (stub). No TEE hosts (roadmap). Verification is behavioural
-probing, not attestation. Everything above is exactly what runs — mock mode (`?mock=1`) is
-fixtures-only and bannered.
-
-Live on testnet, with real runs recorded: Privy policy enforcement, a browser-approved
-treasury payout, agent budgets, collections, Key Ring decryption with the device unplugged,
-and **over-limit agent approvals signed on a physical Ledger — twice, once from a container
-with no USB port** (receipts `4e143783…` and `ab0f7b13…`, HCS sequences 18 and 19).
-
-Still unproven on a device: the treasury payout Ledger gate (code and tests only). The
-deployed gateway reads environment secrets, because `ring init` needs the device on the
-machine it enrols and the server has no USB port; Key Ring custody of the agent key and of
-the gateway secrets runs on the operator's Mac.

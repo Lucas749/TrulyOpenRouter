@@ -63,7 +63,8 @@ container, the host opening the Key Ring, and a request from the container reach
 
 ## Demo (about 3 minutes)
 
-`node agent-cli/demo.mjs` walks all of it, pausing before every step. `TOR_DEMO_AUTO=1` skips the pauses;
+`node agent-cli/demo.mjs` walks all of it, running straight through so it can be talked over. `--wait`
+steps it a press at a time, `--start N` resumes when the earlier steps already hold, and
 `TOR_DEMO_STOP_AFTER=request` rehearses everything up to the Ledger press without the device. By hand:
 
 1. **A secret it cannot leak.** `cat` the sealed key file (ciphertext), `wallet-cli ring keys`, then
