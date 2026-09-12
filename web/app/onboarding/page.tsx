@@ -107,12 +107,12 @@ export default function OnboardingPage() {
       const d = (await r.json().catch(() => ({}))) as { error?: string };
       if (r.status === 409) {
         setDrip("used");
-        setMsg({ tone: "info", text: "This address already received its 0.5 HBAR. Use the faucet for the rest." });
+        setMsg({ tone: "info", text: "This address already received its test HBAR. The faucet is there if you need more." });
       } else if (!r.ok) {
         throw new Error(d.error ?? String(r.status));
       } else {
         setDrip("done");
-        setMsg({ tone: "success", text: "0.5 HBAR is on its way. Your balance updates here on its own." });
+        setMsg({ tone: "success", text: `${NEEDED_HBAR} HBAR is on its way — enough to subscribe. Your balance updates here on its own.` });
       }
     } catch (e) {
       setDrip("idle");
@@ -249,19 +249,25 @@ export default function OnboardingPage() {
                     {!funded && (
                       <>
                         <div className="flex flex-wrap items-center gap-2">
+                          {drip === "idle" || drip === "sending" ? (
+                            <button
+                              onClick={dripFunds}
+                              disabled={drip === "sending"}
+                              className="flex h-9 items-center rounded-full bg-[#0D0D0D] px-4 text-[13px] font-medium text-white transition-colors hover:bg-[#2F2F2F] disabled:bg-[#D4D4CF]"
+                            >
+                              {drip === "sending" ? "Sending…" : `Get ${NEEDED_HBAR} HBAR`}
+                            </button>
+                          ) : null}
                           <button onClick={copy} className={secondary}>
                             {copied ? "Copied" : "Copy address"}
                           </button>
-                          <a href="https://faucet.hedera.com" target="_blank" rel="noreferrer" className={secondary}>
+                          <a href="https://portal.hedera.com/faucet" target="_blank" rel="noreferrer" className={secondary}>
                             Open faucet ↗
                           </a>
-                          {drip === "idle" || drip === "sending" ? (
-                            <button onClick={dripFunds} disabled={drip === "sending"} className={secondary}>
-                              {drip === "sending" ? "Sending…" : "Get 0.5 HBAR"}
-                            </button>
-                          ) : null}
                         </div>
-                        <p className="m-0 text-xs text-[#8F8F8F]">Paste your address into the faucet. The balance updates here on its own.</p>
+                        <p className="m-0 text-xs text-[#8F8F8F]">
+                          One click funds this address with enough to subscribe. The faucet is only a fallback.
+                        </p>
                       </>
                     )}
                   </div>

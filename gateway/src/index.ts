@@ -1222,24 +1222,41 @@ export function createApp(opts: GatewayOptions = {}) {
   });
 
   // One-click Hedera account creation: sends 0.5 HBAR from the operator to a
-  // fresh EVM address, which auto-creates its 0.0.x account (HIP-583 hollow
-  // account). Only-if-nonexistent (mirror-checked) so each address drips once —
-  // self-limiting against drain. The 10 HBAR subscribe still needs the faucet;
-  // this just guarantees every user HAS a pasteable account id first.
+  // Drip enough test HBAR to actually subscribe, so nobody has to leave for the
+  // portal faucet mid-flow. An unknown address is auto-created by the transfer
+  // (HIP-583 hollow account); an existing one is simply topped up. The limit is a
+  // recorded grant per address plus a daily ceiling, not "only if you don't exist".
+  const DRIP_TINYBAR = BigInt(Math.round(Number(process.env.DRIP_HBAR ?? 10.5) * 1e8));
+  const DRIP_DAILY_GRANTS = Math.max(1, Number(process.env.DRIP_DAILY_GRANTS ?? 20));
+  const TINYBAR_TO_WEI = 10_000_000_000n;
+
   app.post("/api/admin/drip", async (req, res) => {
     if (!requireAdmin(req, res)) return;
     try {
       const address = String(req.body?.address ?? "").toLowerCase();
-      if (!/^0x[0-9a-f]{40}$/.test(address)) {
+      if (!/^0x[0-9a-f]{40}$/.test(address) || /^0x0{40}$/.test(address)) {
         return res.status(400).json({ error: { message: "address must be 0x + 40 hex", type: "invalid_request" } });
       }
       const mirror = process.env.MIRROR_URL ?? "https://testnet.mirrornode.hedera.com";
-      const exists = await fetch(`${mirror}/api/v1/accounts/${address}`).then((r) => r.ok).catch(() => true);
-      if (exists) return res.status(409).json({ error: { message: "account already exists — use the faucet", type: "already_created" } });
       const rpcUrl = process.env.RPC_URL ?? "";
       const operatorKey = process.env.OPERATOR_KEY ?? "";
       if (!rpcUrl || !operatorKey) {
         return res.status(501).json({ error: { message: "RPC_URL + OPERATOR_KEY required", type: "unavailable" } });
+      }
+      if (dbEnabled()) {
+        await ensureSchema();
+        const claimed = await db().query(`SELECT 1 FROM drip_grants WHERE address = $1`, [address]);
+        if (claimed.rows.length) {
+          return res.status(409).json({ error: { message: "This address already received its test HBAR.", type: "already_created" } });
+        }
+        const { rows } = await db().query(`SELECT count(*)::int AS n FROM drip_grants WHERE created_at > $1`, [Date.now() - 86_400_000]);
+        if (Number(rows[0]?.n ?? 0) >= DRIP_DAILY_GRANTS) {
+          return res.status(429).json({ error: { message: "Today's funding allowance is used up. Try again tomorrow, or use the Hedera faucet.", type: "daily_limit" } });
+        }
+      } else {
+        // No database: fall back to the old rule so local dev still self-limits.
+        const exists = await fetch(`${mirror}/api/v1/accounts/${address}`).then((r) => r.ok).catch(() => true);
+        if (exists) return res.status(409).json({ error: { message: "account already exists — use the faucet", type: "already_created" } });
       }
       const { privateKeyToAccount } = await import("viem/accounts");
       const { defineChain } = await import("viem");
@@ -1252,11 +1269,25 @@ export function createApp(opts: GatewayOptions = {}) {
         testnet: true,
       });
       const account = privateKeyToAccount(operatorKey as `0x${string}`);
+      // Refuse rather than half-send: a drained pool should say so, not strand a
+      // half-funded account. One grant of headroom is kept for network fees.
+      const funding = await fetch(`${mirror}/api/v1/accounts/${account.address.toLowerCase()}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+      const available = BigInt(funding?.balance?.balance ?? 0);
+      if (funding && available < DRIP_TINYBAR * 2n) {
+        return res.status(503).json({ error: { message: "Our test HBAR pool needs a refill. Please use the Hedera faucet for now.", type: "faucet_empty" } });
+      }
       const wallet = createWalletClient({ account, chain, transport: http(rpcUrl) });
-      // 0.5 HBAR in wei (1 HBAR = 1e8 tinybar = 1e18 wei). Enough to create
-      // the account with room for a few contract calls afterwards.
-      const hash = await wallet.sendTransaction({ to: address as `0x${string}`, value: 500000000000000000n, chain });
-      res.json({ tx: hash, account: null, note: "account creates on confirmation — refresh in ~10s" });
+      // Value is wei on the relay: 1 HBAR = 1e8 tinybar = 1e18 wei.
+      const hash = await wallet.sendTransaction({ to: address as `0x${string}`, value: DRIP_TINYBAR * TINYBAR_TO_WEI, chain });
+      if (dbEnabled()) {
+        await db().query(
+          `INSERT INTO drip_grants (address, created_at, amount_tinybar, tx_hash) VALUES ($1,$2,$3,$4) ON CONFLICT (address) DO NOTHING`,
+          [address, Date.now(), DRIP_TINYBAR.toString(), hash],
+        );
+      }
+      res.json({ tx: hash, amountHbar: Number(DRIP_TINYBAR) / 1e8, note: "arrives in ~10s — the balance updates on its own" });
     } catch (e: any) {
       res.status(502).json({ error: { message: String(e?.message ?? e).slice(0, 160), type: "upstream_error" } });
     }

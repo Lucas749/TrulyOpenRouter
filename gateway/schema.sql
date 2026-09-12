@@ -71,6 +71,18 @@ CREATE TABLE IF NOT EXISTS host_faucet_grants (
   status text NOT NULL CHECK (status IN ('pending', 'sent', 'failed'))
 );
 CREATE INDEX IF NOT EXISTS host_faucet_grants_created_idx ON host_faucet_grants (created_at);
+
+-- Subscribe drip: enough test HBAR to actually subscribe, so nobody has to leave
+-- for the portal faucet. One grant per address ever, plus a daily ceiling — this
+-- replaces the old only-if-nonexistent rule, which refused anyone who already
+-- had an account and so could never top up a real user.
+CREATE TABLE IF NOT EXISTS drip_grants (
+  address text PRIMARY KEY,
+  created_at bigint NOT NULL,
+  amount_tinybar bigint NOT NULL,
+  tx_hash text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS drip_grants_created_idx ON drip_grants (created_at);
 ALTER TABLE host_meta ADD COLUMN IF NOT EXISTS geo text;
 ALTER TABLE host_meta ADD COLUMN IF NOT EXISTS geo_at bigint;
 
