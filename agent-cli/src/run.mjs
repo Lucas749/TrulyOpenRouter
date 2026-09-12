@@ -39,16 +39,20 @@ export async function approveOnLedger(key, approvalId) {
   spin.stop(sent.ok ? ok("approved on the enrolled Ledger") : warn(`the gateway refused the signature (${sent.status}): ${sent.data?.error?.message ?? "unknown error"}`));
 }
 
-/// @notice Sign whatever is waiting, from the machine that has the Ledger.
-export async function approvePending() {
+/// @notice Sign what is waiting, from the machine that has the Ledger. Name an approval when more than
+/// one is waiting, so an older one cannot be signed in place of the one you meant.
+export async function approvePending(approvalId) {
   say(banner());
   const key = await unsealAgentKey();
   const self = await api(key, "/v1/agent/self");
   if (!self.ok) return fail(`Could not read the agent (${self.status}): ${self.data?.error?.message ?? "unknown error"}`);
   const pending = (self.data.approvals ?? []).filter((a) => a.state === "pending");
   if (!pending.length) return say(ok("nothing is waiting for a human"));
-  say(box("Waiting for you", [`approval: ${pending[0].id}`, `extra:    ${pending[0].additional_credits} credits`]));
-  await approveOnLedger(key, pending[0].id);
+  const chosen = approvalId ? pending.find((a) => a.id === approvalId) : pending[0];
+  if (!chosen) return fail(`${approvalId} is not waiting for a human. Waiting: ${pending.map((a) => a.id).join(", ")}`);
+  if (!approvalId && pending.length > 1) say(warn(`${pending.length} approvals are waiting; signing the oldest. Name one to choose: tor-agent approve <id>`));
+  say(box("Waiting for you", [`approval: ${chosen.id}`, `extra:    ${chosen.additional_credits} credits`]));
+  await approveOnLedger(key, chosen.id);
 }
 
 export async function run(prompt, { approve = "wait" } = {}) {
@@ -67,7 +71,9 @@ export async function run(prompt, { approve = "wait" } = {}) {
   if (status === 403 && data?.error?.type === "approval_required") {
     const approval = data.error;
     spin.stop(warn("over the agent's limit — nothing was sent and no host was paid"));
-    say(box("Approval needed", [`limit:   ${approval.constraint}`, `extra:   ${approval.additional_credits_requested} credits`, `review:  ${approval.approval_url}`]));
+    say(box("Approval needed", [`limit:   ${approval.constraint}`, `extra:   ${approval.additional_credits_requested} credits`, `id:      ${approval.approval_id}`]));
+    // Outside the box: the review link is longer than a box row, and a clipped URL is not clickable.
+    say(`  ${approval.approval_url}`);
 
     let state = approval.approval_state;
     if (approve === "ledger" && state === "pending") await approveOnLedger(key, approval.approval_id);

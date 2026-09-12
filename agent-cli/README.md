@@ -9,7 +9,7 @@ gives that host its own Key Ring membership, provisioned from the Mac where the 
 tor-agent seal                      seal an agent key (stdin, or the clipboard) into the Key Ring
 tor-agent run "<task>"              one task; stops for a human when it is over its limit
     --approve ledger                sign that approval on the Ledger attached to this machine
-tor-agent approve                   sign whatever is waiting, from the machine holding the Ledger
+tor-agent approve [<id>]            sign what is waiting, from the machine holding the Ledger
 tor-agent enroll --docker <name>    give a host with no USB port its own Key Ring membership
 tor-agent status                    limits, usage, and anything waiting for a human
 ```
@@ -62,6 +62,9 @@ container, the host opening the Key Ring, and a request from the container reach
 401 for a throwaway key, which is the correct answer).
 
 ## Demo (about 3 minutes)
+
+`node agent-cli/demo.mjs` walks all of it, pausing before every step. `TOR_DEMO_AUTO=1` skips the pauses;
+`TOR_DEMO_STOP_AFTER=request` rehearses everything up to the Ledger press without the device. By hand:
 
 1. **A secret it cannot leak.** `cat` the sealed key file (ciphertext), `wallet-cli ring keys`, then
    `tor-agent run "…"` with the Ledger unplugged. Normal work needs no device.

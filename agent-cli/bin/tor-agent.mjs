@@ -5,7 +5,7 @@ import { banner, bold, dim } from "../src/ui.mjs";
 const COMMANDS = [
   ["seal", "seal an agent key (stdin, or the clipboard on macOS) into the Key Ring"],
   ['run "<task>"', "do one task; it stops for a human when it is over its limit"],
-  ["approve", "sign whatever is waiting, from the machine holding the Ledger"],
+  ["approve [<id>]", "sign what is waiting, from the machine holding the Ledger"],
   ["enroll --docker <name>", "give a host with no USB port its own Key Ring membership"],
   ["status", "limits, usage, and anything waiting for a human"],
 ];
@@ -43,7 +43,7 @@ switch (command) {
   }
   case "approve": {
     const { approvePending } = await import("../src/run.mjs");
-    await approvePending();
+    await approvePending(words() || flag("id"));
     break;
   }
   case "enroll": {
