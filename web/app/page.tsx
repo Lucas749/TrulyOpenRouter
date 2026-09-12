@@ -518,7 +518,7 @@ export default function Landing() {
             <div className="flex flex-col gap-2.5">
               <div className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Build</div>
               <a href="https://github.com/Lucas749/TrulyOpenRouter" className="text-[13px] text-[#2563EB]">Repository ↗</a>
-              <a href="https://github.com/Lucas749/TrulyOpenRouter/blob/main/host-runner/README.md" className="text-[13px] text-[#2563EB]">SELF-HOST.md ↗</a>
+              <a href="https://github.com/Lucas749/TrulyOpenRouter/blob/main/host-runner/README.md" className="text-[13px] text-[#2563EB]">Operator guide ↗</a>
               <Link href="/docs" className="text-[13px] text-[#2563EB]">API docs</Link>
             </div>
             <div className="flex flex-col gap-2.5">

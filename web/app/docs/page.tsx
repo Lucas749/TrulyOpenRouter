@@ -178,7 +178,7 @@ export default function DocsPage() {
         <Snippet title="Run everything locally (CLI, stack, Ledger, Privy)" code={`git clone https://github.com/Lucas749/TrulyOpenRouter && cd TrulyOpenRouter
 sh quickstart.sh   # ~15 min, testnet only, nothing costs money`} />
         <Snippet title="Serve a model (one command, key stays on your machine)" code={`sh host-runner/setup.sh   # pull → stack → digest → register → heartbeat cron
-# full manual walkthrough: SELF-HOST.md in the repo`} />
+# full manual walkthrough: host-runner/README.md in the repo`} />
         <div id="chat"></div>
         <Snippet title="Python (openai SDK)" code={`from openai import OpenAI
 

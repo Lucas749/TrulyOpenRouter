@@ -95,8 +95,8 @@ cd gateway && SECRETS_BACKEND=ring PORT=4121 \
 npm run dev --prefix web                                            # :3002
 ```
 
-Then open `/onboarding`: login → subscribe → chat. Full operator guide in `SELF-HOST.md`,
-hosting guide in `DEPLOY.md`.
+Then open `/onboarding`: login → subscribe → chat. Operator guide in
+`host-runner/README.md`, hosting guide in `DEPLOY.md`.
 
 Becoming a host is one command: `curl -fsSL https://trulyopenrouter.vercel.app/install.sh | bash`
 
