@@ -11,8 +11,8 @@
 
 </div>
 
-User pays a classic usage subscription and a decentralized network of hosts server inference. 
-Every API request settles via x402. Hosts can monitize excess compute.
+User pays a classic usage subscription and a decentralized network of hosts serve inference. 
+Every API request settles via x402. Hosts can monetize excess compute.
 
 > **Become a host with one command**
 >

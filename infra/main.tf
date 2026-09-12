@@ -125,9 +125,10 @@ resource "aws_instance" "tor" {
     su ubuntu -c 'git clone https://github.com/Lucas749/TrulyOpenRouter /home/ubuntu/TrulyOpenRouter' || true
     cat > /home/ubuntu/NEXT-STEPS.txt <<'NEXT'
     1. scp .env.prod to this box (never commit it)
-    2. Caddyfile: set your domain
-    3. docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
-    4. pull the model, point DNS, add Privy origin (see DEPLOY.md)
+    2. docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+    3. pull the model, then add this box's origin in Privy
+    Nothing here terminates TLS: the gateway is plain HTTP on :4121 and the
+    public HTTPS surface is Vercel's, which reaches it over GATEWAY_URL.
     NEXT
   EOF
 
