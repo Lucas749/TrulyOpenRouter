@@ -1,6 +1,6 @@
-# Production stack: everything on ONE VPS (see DEPLOY.md for why not Vercel).
-# Public surface is only 80/443 via caddy -> web. Gateway/guard/ollama stay
-# on the internal network; the operator reaches the gateway over SSH tunnel.
+# Production stack on the VPS: gateway + one serving host (guard + ollama).
+# The web UI is served by Vercel, which has its own Postgres — the box no longer
+# runs a copy. Vercel reaches the gateway on :4121; guard stays localhost-only.
 services:
   db:
     image: postgres:16-alpine
@@ -79,23 +79,6 @@ services:
       - guard
       - db
 
-  web:
-    build:
-      context: ./web
-      args:
-        NEXT_PUBLIC_PRIVY_APP_ID: ${NEXT_PUBLIC_PRIVY_APP_ID:?set in .env.prod}
-    environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-tor}:${POSTGRES_PASSWORD:?set in .env.prod}@${POSTGRES_HOST:-db}:5432/${POSTGRES_DB:-tor}?sslmode=no-verify
-      - GATEWAY_URL=http://gateway:4121
-      - GATEWAY_ADMIN_TOKEN=${GATEWAY_ADMIN_TOKEN:?set in .env.prod}
-      - NEXT_PUBLIC_PRIVY_APP_ID=${NEXT_PUBLIC_PRIVY_APP_ID:?set in .env.prod}
-      - PRIVY_APP_SECRET=${PRIVY_APP_SECRET:?set in .env.prod}
-    volumes:
-      - web-data:/app/.data
-    depends_on:
-      - gateway
-      - db
-
   caddy:
     image: caddy:2-alpine
     ports:
@@ -104,12 +87,9 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
-    depends_on:
-      - web
 
 volumes:
   pg-data:
   ollama-data:
   gateway-data:
-  web-data:
   caddy-data:
