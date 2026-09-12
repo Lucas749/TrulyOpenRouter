@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { apiError } from "../../lib/api-error";
 import { connectLedger, preloadLedgerKit } from "../../lib/ledger-device";
@@ -79,6 +79,13 @@ export default function AgentsPanel() {
   const [models, setModels] = useState<string[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [secret, setSecret] = useState<{ name: string; key: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const keyCard = useRef<HTMLElement | null>(null);
+
+  // A key is shown once, so bring its card into view wherever Create or Rotate key was clicked from.
+  useEffect(() => {
+    if (secret) keyCard.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [secret]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   // creation form
@@ -309,11 +316,24 @@ export default function AgentsPanel() {
             </section>
 
             {secret && (
-              <section className="flex flex-col gap-2 rounded-[14px] border border-black p-5">
+              <section ref={keyCard} className="flex flex-col gap-2 rounded-[14px] border border-black p-5">
                 <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Key for {secret.name}, shown once</span>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="break-all rounded-lg bg-[#F4F4F4] px-3 py-2 font-mono text-xs">{secret.key}</span>
-                  <button onClick={() => navigator.clipboard?.writeText(secret.key).catch(() => {})} className="rounded-full border border-black/10 px-3 py-1 text-[11px]">Copy</button>
+                  <button
+                    onClick={() =>
+                      (navigator.clipboard?.writeText(secret.key) ?? Promise.reject()).then(
+                        () => {
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        },
+                        () => {},
+                      )
+                    }
+                    className="rounded-full border border-black/10 px-3 py-1 text-[11px]"
+                  >
+                    {copied ? "Copied" : "Copy"}
+                  </button>
                 </div>
                 <SetupExample secret={secret.key} />
                 <p className="m-0 text-[11px] text-[#6E6E73]">
