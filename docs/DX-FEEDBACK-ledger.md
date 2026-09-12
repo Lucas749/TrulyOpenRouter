@@ -14,11 +14,3 @@ first, then init joins as slot 17.
 **`--output json` doesn't help.** The failure comes back `{"code":"unknown"}`.
 No cause, no trace id, nothing to paste into a report. A single hint —
 "no trustchain member found, enable Ledger Sync first?" — would have ended it.
-
-**`wallet-cli` cannot sign a message.** An agent over its limit needs a human
-to approve exact terms. `ring` encrypts and `send` broadcasts a transaction, but
-there is no personal_sign. We first shipped the approval as a zero-value
-`send` on Sepolia carrying the approval code as calldata: blind signing on the
-device, test ETH on a second chain, and an RPC to verify it. We reverted that
-and sign with the Device Management Kit over USB instead. A clear-signed
-`wallet-cli sign-message` would have made the CLI alone enough.
