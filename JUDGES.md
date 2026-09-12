@@ -45,23 +45,18 @@ The first end-to-end loop: [subscribe](https://hashscan.io/testnet/transaction/0
 
 ### Privy — the AI compute wallet
 
-**How it works.** Privy is the login, and it is what makes the rest usable by people who are
-not crypto-native. You sign in with an email and you have a wallet — no seed phrase, no
-extension, nothing to install, nothing to learn.
+**How it works.** Privy used as login so it's perfect for non crypto natives. No seed phrase, no
+extension.
 
-That wallet is the **AI compute wallet**: built for spending on compute, not for holding
-coins. A team gets a Privy organization wallet, and every control a team actually wants sits
+Privy is used to build our **AI compute wallet** for the new currency 'compute'. 
+A team gets a Privy organization wallet, and every control a team actually wants sits
 on top of it — per-seat spending caps, a daily ceiling for the whole org, which models and
 regions are allowed, pinned hosts, verified-hosts-only, rate limits, and cutting off a
-member's access. Those rules are checked before a payment clears, not after the tokens are
-gone: a request that breaks one is refused with `org_policy` and no host is ever contacted.
-
-Moving money out needs two signatures — the team's financial approver and the platform's
-broker key — so neither a compromised server nor a compromised login can drain a treasury on
-its own.
+member's access. Think Claude Team but on web3. Those rules are checked before a payment clears: a request that breaks 
+one is refused with `org_policy` and no host is ever contacted.
 
 Every treasury action runs as a Privy **intent**, and approving one means signing the exact
-bytes of that action — not flipping a flag in our database:
+bytes of that action:
 
 1. `approveTreasuryIntent` returns **428 `approval_signature_required`** with the precise
    payload to sign (`treasury.ts:722`).
@@ -96,34 +91,65 @@ bytes of that action — not flipping a flag in our database:
 
 ### Ledger — key custody and human approval
 
-Two distinct mechanisms, often confused:
+Ledger for high value security of agents. Compute is the new money and tokens are expensive for
+frontier models. 
 
-**1. Key Ring (custody, no tap per use).** `tor-host ledger init` roots a **trustchain** in the
+**1. Key Ring (custody never share your API key).** `tor-host ledger init` roots a **trustchain** in the
 device seal — one press, once. After that this machine holds a *membership*, and membership is
 what encrypts and decrypts. An agent key lives on disk only as ciphertext and is opened into
 memory for a single task. A server with no USB port can therefore hold a key it can never leak,
 and access is **revocable**: delete one keychain entry and it can open nothing, every file intact.
 
+*The problem it solves.* To run an agent on a box you don't sit at, you normally copy your API
+key onto it. Anyone with the disk, a backup, a log line or root then has your key, and you find
+out from the bill. Here the key never exists in readable form on that machine.
+
+*How we built it.* `tor-agent seal` pipes the key in on **stdin** — never an argument, so it
+never reaches shell history or `ps` — into `wallet-cli ring encrypt`, and only ciphertext lands
+on disk at `0600`. `tor-agent enroll --docker <name>` then copies this Mac's *membership* into
+the container's own keychain, again over stdin. Ledger's CLI has no primitive for enrolling a
+machine with no device attached; that piece is ours.
+
+*What we showed.* A container with `/dev/bus/usb` empty — no Ledger can ever be plugged into it
+— locked out before enrolment, enrolled from the Mac, then opening its sealed key **with no
+device attached**. At the end the membership is deleted and the same container can open nothing,
+every file still in place.
+
+*Code.* `agent-cli/src/ring.mjs` — seal and unseal; the key crosses on stdin only, and the
+password is read from the OS keychain and never printed. `agent-cli/src/enroll.mjs` — the
+membership hand-off into a container. `gateway/src/ring.ts` — in ring mode the gateway loads its
+own broker secrets from the Key Ring, with no environment fallback.
+
 **2. Approvals (a tap every time).** An over-limit spend is an EIP-191 `personal_sign` on
 `44'/60'/0'/0/0`. The agent cannot approve itself — the gateway accepts only a signature from
 the enrolled device. One press buys **one request**, not a new budget: single-use, five-minute grant.
 
-**Code to read**
+*The problem it solves.* An agent with a budget will spend it. The usual answer is to trust it
+and read the invoice afterwards. Here the ceiling is enforced before any host is contacted, and
+the agent's only move when it hits one is to **ask**.
 
-- `agent-cli/src/ring.mjs` — seal and unseal. The key crosses on **stdin only**, never an
-  argument; the password is read from the OS keychain and never printed.
-- `agent-cli/src/enroll.mjs` — gives a container its own Key Ring membership over stdin. Ledger's
-  CLI has no primitive for this; it is the piece we built.
-- `agent-cli/src/ledger-sign.mjs` — the device signature for an approval.
-- `gateway/src/approvals.ts` — `approvalMessage()` binds origin, network, approval id, agent,
-  payer, model, request hash, credits, limits, TTL, revisions, nonce and expiry, so a signature
-  cannot be replayed against different terms. `claimGrant` makes it single-use.
-- `web/lib/ledger-device.ts` — WebHID via the Device Management Kit, for approving in a browser.
-- `gateway/src/taps.ts` · `gateway/src/tap-exec.ts` — high-risk server actions (stake release)
-  never execute without a recorded device tap.
-- `gateway/src/ring.ts` — in ring mode the gateway loads its own broker secrets from the Key
-  Ring with no environment fallback.
-- `docs/DX-FEEDBACK-ledger.md` — what Ledger's tooling got right and wrong, written while using it.
+*How we built it.* Over its limit, the gateway refuses with `403 approval_required` and creates
+an approval whose message binds the exact terms — agent, payer, model, request hash, credits,
+the limit it hit, a nonce and an expiry — so a signature cannot be replayed against different
+terms. The device signs that message as an EIP-191 `personal_sign`. `claimGrant` then burns it:
+one grant, one request, five minutes. The same decision can be made in a browser over WebHID.
+
+*What we showed.* A remote agent stopped by its own daily limit, the terms read on the device,
+one press, and the same request finishing on its own — nothing raised, no new budget. Signed on
+a physical Ledger twice, including from the container with no USB port: receipts `4e143783…`
+(HCS seq 18) and `ab0f7b13…` (seq 19), each with its x402 payment to the host that served the
+resumed request, on [topic `0.0.10379640`](https://hashscan.io/testnet/topic/0.0.10379640).
+
+*Code.* `gateway/src/approvals.ts` — `approvalMessage()` binds origin, network, approval id,
+agent, payer, model, request hash, credits, limits, TTL, revisions, nonce and expiry;
+`claimGrant` makes it single-use. `agent-cli/src/ledger-sign.mjs` — the device signature.
+`web/lib/ledger-device.ts` — WebHID via the Device Management Kit, for approving in a browser.
+`gateway/src/taps.ts` · `gateway/src/tap-exec.ts` — high-risk server actions such as stake
+release never execute without a recorded device tap.
+
+**Also worth reading**
+
+- `docs/DX-FEEDBACK-ledger.md` — feedback and issues
 
 Run it: `node agent-cli/demo.mjs` walks the whole thing — sealed key, a container with no USB
 port, the agent stopped by its own limit, the press, the answer, then the host cut off.
