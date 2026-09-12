@@ -11,6 +11,7 @@ import {
   brokerKey,
   OPEN_STATES,
   PgTreasuryStore,
+  payoutNeedsLedger,
   PrivyRequestError,
   proposeTreasuryIntent,
   provisionTeamWallet,
@@ -189,6 +190,7 @@ function fakeChain() {
 const TEAM: Team = {
   orgId: "org-1", name: "Acme", walletId: "wallet-1", walletAddress: TEAM_WALLET, quorumId: "quorum-1", policyId: "policy-1",
   approverUserId: "did:privy:approver", payoutRecipients: [RECIPIENT], state: "active", defaultAllowanceCredits: null, membershipRevision: 1,
+  ledgerAddress: null, ledgerRevision: 0, payoutLedgerThresholdWei: null,
 };
 const member = (did: string, role: TeamMember["role"]): TeamMember => ({ orgId: "org-1", did, wallet: null, email: null, role, status: "active", allowanceCredits: null });
 const OWNER = member("did:privy:approver", "owner");
@@ -225,6 +227,46 @@ async function approveAsApprover(d: TreasuryDeps, id: string, key: { privateKey:
     return approveTreasuryIntent(d, "org-1", id, { ...approver, approval: { signature, timestamp } });
   }
 }
+
+describe("high-stakes payouts need the enrolled Ledger", () => {
+  const DEVICE = `0x${"a5".repeat(20)}`;
+  const ONE_HBAR = String(10n ** 18n);
+  const hbarIntent = (weibar: bigint) => ({ kind: "payout_hbar" as const, transaction: { value: `0x${weibar.toString(16)}` } as TreasuryIntent["transaction"] });
+  const teamsReturning = (over: Partial<Team>) => ({
+    team: vi.fn(async (id: string): Promise<Team | null> => (id === "org-1" ? { ...TEAM, ...over } : null)),
+    setTeamWallet: vi.fn(async (_id: string, w: any) => ({ ...TEAM, ...w })),
+    setTreasuryLimits: vi.fn(async () => TEAM),
+  });
+
+  it("decides from the asset, the amount, and whether a device is enrolled", () => {
+    expect(payoutNeedsLedger(TEAM, hbarIntent(2n * 10n ** 18n))).toBe(false); // none enrolled
+    const armed: Team = { ...TEAM, ledgerAddress: DEVICE, payoutLedgerThresholdWei: ONE_HBAR };
+    expect(payoutNeedsLedger(armed, hbarIntent(2n * 10n ** 18n))).toBe(true);
+    expect(payoutNeedsLedger(armed, hbarIntent(10n ** 18n))).toBe(true); // at the threshold, not just above
+    expect(payoutNeedsLedger(armed, hbarIntent(10n ** 17n))).toBe(false);
+    // Token payouts are not comparable to an HBAR threshold, so an enrolled device always decides them.
+    expect(payoutNeedsLedger(armed, { kind: "payout_usdc", transaction: { value: "0x0" } as TreasuryIntent["transaction"] })).toBe(true);
+    expect(payoutNeedsLedger(armed, { kind: "buy_credits", transaction: { value: "0x0" } as TreasuryIntent["transaction"] })).toBe(false);
+    expect(payoutNeedsLedger({ ...armed, payoutLedgerThresholdWei: null }, hbarIntent(1n))).toBe(true); // no threshold = every payout
+  });
+
+  it("refuses to co-sign a payout at or over the threshold until the device approves", async () => {
+    const { d, p } = deps({ teams: teamsReturning({ ledgerAddress: DEVICE, payoutLedgerThresholdWei: ONE_HBAR }) });
+    const intent = await proposeTreasuryIntent(d, "org-1", OWNER, "payout_hbar", { recipient: RECIPIENT, amount: "2" });
+    await expect(approveTreasuryIntent(d, "org-1", intent.id, approver)).rejects.toMatchObject({ status: 403, type: "ledger_required" });
+    // Refused before Privy is touched: nothing was authorized on the way out.
+    expect(p.calls.some((c) => c.path.endsWith("/authorize"))).toBe(false);
+    expect((await d.store.get(intent.id))!.state).toBe("awaiting_approvals");
+    // With the device's approval it advances to the Privy signature step, so the gate was the only thing stopping it.
+    await expect(approveTreasuryIntent(d, "org-1", intent.id, { ...approver, ledgerApproved: true })).rejects.toMatchObject({ type: "approval_signature_required" });
+  });
+
+  it("lets a payout under the threshold through without a device", async () => {
+    const { d } = deps({ teams: teamsReturning({ ledgerAddress: DEVICE, payoutLedgerThresholdWei: String(5n * 10n ** 18n) }) });
+    const intent = await proposeTreasuryIntent(d, "org-1", OWNER, "payout_hbar", { recipient: RECIPIENT, amount: "2" });
+    await expect(approveTreasuryIntent(d, "org-1", intent.id, approver)).rejects.toMatchObject({ type: "approval_signature_required" });
+  });
+});
 
 describe("team treasury policy", () => {
   it("allows only reviewed operations with exact plan terms and approved recipients", () => {

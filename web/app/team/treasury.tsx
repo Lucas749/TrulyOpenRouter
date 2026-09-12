@@ -5,6 +5,7 @@ import { useAuthorizationSignature, useWallets } from "@privy-io/react-auth";
 import { createWalletClient, custom, formatEther, parseEther } from "viem";
 import { apiError } from "../../lib/api-error";
 import { accountUrl, txUrl } from "../../lib/chain";
+import { connectLedger, preloadLedgerKit } from "../../lib/ledger-device";
 import { hederaTestnet } from "../../lib/hedera-chains";
 import { friendlyTxError } from "../../lib/tx-errors";
 import { useAuthFetch } from "../components/use-auth-fetch";
@@ -36,11 +37,20 @@ interface Plan {
 
 interface TreasuryView {
   network: string;
-  team: { walletAddress: string | null; state: string; approverUserId: string | null; payoutRecipients: string[] } | null;
+  team: {
+    walletAddress: string | null;
+    state: string;
+    approverUserId: string | null;
+    payoutRecipients: string[];
+    ledgerAddress?: string | null;
+    ledgerRevision?: number;
+    payoutLedgerThresholdWei?: string | null;
+  } | null;
   balances: { hbarWei: string | null; credits: string | null; testUsdcUnits: string | null };
   plans: Plan[];
   limits: { planIds: string[]; hbarPayoutCap: string; usdcPayoutCap: string; recipients: string[] } | null;
   intents: Intent[];
+  burn?: { day: string; credits: number }[];
   me: { role: string; financialApprover: boolean };
 }
 
@@ -130,6 +140,12 @@ const Glyph = ({ d, size = 14 }: { d: ReactNode; size?: number }) => (
   </svg>
 );
 const CHECK = <path d="m5 12 5 5L20 7" />;
+const LEDGER = (
+  <>
+    <rect x="2" y="7" width="20" height="10" rx="2" />
+    <path d="M6 12h.01M10 12h.01M14 12h.01M18 12h.01" />
+  </>
+);
 const COPY = (
   <>
     <rect x="9" y="9" width="12" height="12" rx="2" />
@@ -227,6 +243,8 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
   const [limitUsdc, setLimitUsdc] = useState("");
   const [limitRecipients, setLimitRecipients] = useState("");
   const [openActivity, setOpenActivity] = useState<string | null>(null);
+  const [deviceStep, setDeviceStep] = useState<string | null>(null);
+  const [threshold, setThreshold] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [copied, setCopied] = useState(false);
   const firstLoad = useRef(true);
@@ -246,6 +264,8 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
         const cheapest = view.plans.filter((p) => p.allowed).sort((a, b) => planPrice(a) - planPrice(b))[0];
         const shortfall = cheapest ? planPrice(cheapest) + FEE_ROOM_HBAR - (hbarNumber(view.balances.hbarWei) ?? 0) : 0;
         setDeposit(String(Math.max(1, Math.ceil(shortfall))));
+        const wei = view.team?.payoutLedgerThresholdWei;
+        setThreshold(wei ? formatEther(BigInt(wei)) : "");
       }
     } catch (e) {
       setErr(String((e as Error)?.message ?? e).slice(0, 200));
@@ -257,6 +277,11 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
     const timer = setTimeout(() => void load(), 0);
     return () => clearTimeout(timer);
   }, [load]);
+
+  // Load the Ledger kit up front, so a click reaches the browser's device prompt in time.
+  useEffect(() => {
+    if (view?.team?.ledgerAddress) void preloadLedgerKit().catch(() => {});
+  }, [view?.team?.ledgerAddress]);
 
   // Keep a transaction that is signing or broadcasting current without a manual refresh.
   const moving = !!view?.intents.some((i) => MOVING_STATES.includes(i.state));
@@ -293,16 +318,33 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
     setErr(null);
     setNotice(null);
     try {
-      let r = await send({});
+      let extra: Record<string, unknown> = {};
+      let r = await send(extra);
       let d = await r.json().catch(() => ({}));
+      // A high-stakes payout is refused before Privy is touched: the enrolled device
+      // signs the exact prepared terms, and that proof rides along from here on.
+      const device = d?.error?.ledger as { address: string; message: string; token: string } | undefined;
+      if (r.status === 403 && device) {
+        setDeviceStep("Read the payout on the Ledger and approve it");
+        const ledger = await connectLedger(setDeviceStep);
+        try {
+          extra = { ledger: { message: device.message, token: device.token, signature: await ledger.signMessage(device.message) } };
+        } finally {
+          await ledger.close();
+          setDeviceStep(null);
+        }
+        r = await send(extra);
+        d = await r.json().catch(() => ({}));
+      }
       const challenge = d?.error?.authorization as { payload: string; timestamp: number } | undefined;
       if (r.status === 428 && challenge) {
         const { signature } = await generateAuthorizationSignature(Uint8Array.from(atob(challenge.payload), (c) => c.charCodeAt(0)));
-        r = await send({ signature, timestamp: challenge.timestamp });
+        r = await send({ ...extra, signature, timestamp: challenge.timestamp });
         d = await r.json().catch(() => ({}));
       }
       if (!r.ok) throw new Error(apiError(d, r.status));
     } catch (e) {
+      setDeviceStep(null);
       setErr(String((e as Error)?.message ?? e).slice(0, 240));
     } finally {
       setBusy(null);
@@ -331,6 +373,42 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
       setErr(`Deposit failed: ${friendlyTxError(e)}`);
     } finally {
       setBusy(null);
+    }
+  }
+
+  /// @notice Enrol or remove the Ledger that approves high-stakes payouts. Replacing one is
+  /// remove then enrol, so a single click never has to drive two devices in one session.
+  async function changeLedger(action: "enroll" | "remove") {
+    setBusy("ledger");
+    setErr(null);
+    setNotice(null);
+    try {
+      setDeviceStep(action === "enroll" ? "Confirm the address on the Ledger, then approve the enrolment" : "Approve removing this Ledger on the device");
+      const ledger = await connectLedger(setDeviceStep);
+      try {
+        const address = action === "enroll" ? await ledger.verifiedAddress() : null;
+        const cr = await authFetch(`${base}/ledger/challenge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) });
+        const challenge = await cr.json();
+        if (!cr.ok) throw new Error(apiError(challenge, cr.status));
+        const signature = await ledger.signMessage(challenge.message);
+        const r = await authFetch(`${base}/ledger`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: challenge.message, token: challenge.token, signature }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(apiError(d, r.status));
+        setNotice(action === "enroll" ? "Ledger enrolled — high-stakes payouts now need it." : "Ledger removed.");
+      } finally {
+        await ledger.close();
+        setDeviceStep(null);
+      }
+    } catch (e) {
+      setDeviceStep(null);
+      setErr(String((e as Error)?.message ?? e).slice(0, 240));
+    } finally {
+      setBusy(null);
+      await load();
     }
   }
 
@@ -374,6 +452,14 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
   const payoutUnit = payoutAsset === "payout_hbar" ? "HBAR" : "USDC";
   const payoutCap = payoutAsset === "payout_hbar" ? view?.limits?.hbarPayoutCap : view?.limits?.usdcPayoutCap;
   const active = !!walletAddress && team?.state === "active";
+  // Runway is the plain question a team actually asks: at this pace, how long do the credits last?
+  const burn = view?.burn ?? [];
+  const recentBurn = burn.slice(-7);
+  const avgBurn = recentBurn.length ? recentBurn.reduce((a, b) => a + b.credits, 0) / recentBurn.length : 0;
+  const peakBurn = Math.max(1, ...burn.map((b) => b.credits));
+  const runwayDays = avgBurn > 0 ? Math.floor(Number(view?.balances.credits ?? 0) / avgBurn) : null;
+  const ledgerAddress = team?.ledgerAddress ?? null;
+  const thresholdHbar = team?.payoutLedgerThresholdWei ? formatEther(BigInt(team.payoutLedgerThresholdWei)) : null;
   const busyNote = openIntent && <span className="text-[12px] text-[#8A5300]">Finish the pending transaction above first.</span>;
 
   const sheetTitle: Record<Sheet, string> = {
@@ -415,12 +501,33 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
                 <span className="text-sm text-[#5D5D5D]">credits</span>
               </div>
               <div className="flex flex-wrap items-center gap-2.5">
-                <span className={`inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[11px] ${GOOD}`}>
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#10A37F]" />
-                  wallet active
+                {runwayDays === null ? (
+                  <span className={`inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[11px] ${GOOD}`}>
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#10A37F]" />
+                    wallet active
+                  </span>
+                ) : (
+                  <span className={`inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[11px] ${runwayDays <= 3 ? WAITING : GOOD}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${runwayDays <= 3 ? "bg-[#D97706]" : "bg-[#10A37F]"}`} />
+                    {runwayDays} day{runwayDays === 1 ? "" : "s"} of runway
+                  </span>
+                )}
+                <span className="font-mono text-[12px] text-[#5D5D5D]">
+                  {avgBurn > 0 ? `burn ${Math.round(avgBurn).toLocaleString("en-US")}/day` : "no spend in 14 days"}
                 </span>
-                <span className="font-mono text-[12px] text-[#5D5D5D]">Hedera testnet</span>
               </div>
+              {burn.length > 0 && (
+                <div className="flex h-[46px] items-end gap-1 pt-1" aria-label="Credits spent per day over the last 14 days">
+                  {burn.map((b, i) => (
+                    <div key={b.day} className="flex h-full flex-1 flex-col justify-end" title={`${b.day}: ${b.credits.toLocaleString("en-US")} credits`}>
+                      <div
+                        className={`rounded-sm ${i === burn.length - 1 ? "bg-[#0D0D0D]" : "bg-[#E0E0DC]"}`}
+                        style={{ height: `${Math.max(b.credits > 0 ? 6 : 2, Math.round((b.credits / peakBurn) * 100))}%` }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
               <p className="m-0 max-w-[340px] text-[12px] leading-[1.55] text-[#5D5D5D]">
                 Owned by a two-of-two quorum: {approver ? "you" : "the financial approver"} and the platform broker key. Neither side can move funds alone.
               </p>
@@ -725,6 +832,49 @@ export default function TeamTreasury({ orgId, mock }: { orgId: string; mock: boo
                         )}
                       </Fact>
                     </dl>
+                    <div className="flex flex-col gap-3 rounded-xl border border-[#E5E5E0] bg-white p-4">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className={`inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] ${ledgerAddress ? "bg-[#E7F5EE] text-[#0B7A5D]" : "bg-[#F4F4F4] text-[#0D0D0D]"}`}>
+                          <Glyph size={15} d={LEDGER} />
+                        </span>
+                        <span className="flex min-w-[200px] flex-col gap-0.5">
+                          <span className="text-sm">{ledgerAddress ? "Ledger approves high-stakes payouts" : "No Ledger on this treasury"}</span>
+                          <span className="font-mono text-[12px] text-[#5D5D5D]">
+                            {ledgerAddress
+                              ? `${ledgerAddress.slice(0, 10)}… · ${thresholdHbar === null ? "every payout needs a tap" : `payouts from ${thresholdHbar} HBAR, and all test USDC`}`
+                              : "payouts rely on the Privy quorum alone"}
+                          </span>
+                        </span>
+                        {isOwner && (
+                          <span className="ml-auto flex flex-wrap gap-2">
+                            {ledgerAddress ? (
+                              <button onClick={() => changeLedger("remove")} disabled={!!busy} className={small}>
+                                {busy === "ledger" ? "confirm on Ledger…" : "Remove Ledger"}
+                              </button>
+                            ) : (
+                              <button onClick={() => changeLedger("enroll")} disabled={!!busy} className={small}>
+                                {busy === "ledger" ? "confirm on Ledger…" : "Enrol a Ledger"}
+                              </button>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      {isOwner && ledgerAddress && (
+                        <div className="flex flex-wrap items-center gap-2 border-t border-[#F4F4F4] pt-3">
+                          <span className="text-[12px] text-[#5D5D5D]">Ask the device from</span>
+                          <Amount value={threshold} onChange={setThreshold} unit="HBAR" label="Ledger approval threshold" className="w-[150px]" />
+                          <button
+                            onClick={() => post("threshold", "/payout-threshold", { weibar: threshold.trim() === "" ? null : parseEther(threshold.trim()).toString() })}
+                            disabled={!!busy}
+                            className={small}
+                          >
+                            {busy === "threshold" ? "Saving…" : "Set threshold"}
+                          </button>
+                          <span className="text-[12px] text-[#8F8F8F]">Empty means every HBAR payout needs a tap.</span>
+                        </div>
+                      )}
+                      {deviceStep && <span className="font-mono text-[11px] text-[#5D5D5D]">{deviceStep}</span>}
+                    </div>
                     {isOwner ? (
                       <div className="flex flex-wrap items-center gap-2">
                         <button onClick={editLimits} disabled={!!busy || !!openIntent} className={small}>

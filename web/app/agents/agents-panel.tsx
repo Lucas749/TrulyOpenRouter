@@ -20,6 +20,8 @@ interface Policy {
   lifetimeCredits: number | null;
   maxRequestCredits: number | null;
   models: string[] | null;
+  regions: string[] | null;
+  verifiedOnly: boolean;
   requestsPerMinute: number | null;
   maxConcurrent: number | null;
   credentialTtlDays: number | null;
@@ -107,6 +109,12 @@ const KEY_ICON = (
     <path d="m2 22 2-2" />
   </>
 );
+const SHIELD_ICON = (
+  <>
+    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+    <path d="m9 12 2 2 4-4" />
+  </>
+);
 const CHECK_ICON = <path d="m5 12 5 5L20 7" />;
 const COPY_ICON = (
   <>
@@ -191,6 +199,7 @@ export default function AgentsPanel() {
   const [details, setDetails] = useState<Record<string, Detail>>({});
   const [teams, setTeams] = useState<{ id: string; display_name: string }[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const [regionList, setRegionList] = useState<string[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [secret, setSecret] = useState<{ name: string; key: string } | null>(null);
   const keyCard = useRef<HTMLElement | null>(null);
@@ -208,6 +217,8 @@ export default function AgentsPanel() {
   const [lifetime, setLifetime] = useState("");
   const [maxRequest, setMaxRequest] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
+  const [pickedRegions, setPickedRegions] = useState<string[]>([]);
+  const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [rpm, setRpm] = useState("30");
   const [concurrent, setConcurrent] = useState("2");
   const [ttl, setTtl] = useState("90");
@@ -253,6 +264,18 @@ export default function AgentsPanel() {
         .then((r) => r.json())
         .then((d) => setModels(((d.data ?? []) as { id: string }[]).map((m) => m.id)))
         .catch(() => setModels([]));
+      // Regions come from the hosts actually on the network, the same source the team rules use.
+      void fetch("/api/gw/api/hosts")
+        .then((r) => r.json())
+        .then((d) => {
+          const seen = new Set<string>();
+          for (const h of (d.data ?? []) as { geo?: string; region?: string }[]) {
+            if (h.geo) seen.add(h.geo);
+            if (h.region) seen.add(h.region);
+          }
+          setRegionList([...seen].sort());
+        })
+        .catch(() => setRegionList([]));
     }, 0);
     return () => clearTimeout(timer);
   }, [authenticated, authFetch, refresh]);
@@ -280,6 +303,8 @@ export default function AgentsPanel() {
     lifetimeCredits: numberOrNull(lifetime),
     maxRequestCredits: numberOrNull(maxRequest),
     models: picked.length ? picked : null,
+    regions: pickedRegions.length ? pickedRegions : null,
+    verifiedOnly,
     requestsPerMinute: numberOrNull(rpm),
     maxConcurrent: numberOrNull(concurrent),
     credentialTtlDays: numberOrNull(ttl),
@@ -295,6 +320,8 @@ export default function AgentsPanel() {
     setLifetime("");
     setMaxRequest("");
     setPicked([]);
+    setPickedRegions([]);
+    setVerifiedOnly(false);
     setRpm("30");
     setConcurrent("2");
     setTtl("90");
@@ -345,6 +372,8 @@ export default function AgentsPanel() {
     setLifetime(p.lifetimeCredits === null ? "" : String(p.lifetimeCredits));
     setMaxRequest(p.maxRequestCredits === null ? "" : String(p.maxRequestCredits));
     setPicked(p.models ?? []);
+    setPickedRegions(p.regions ?? []);
+    setVerifiedOnly(p.verifiedOnly);
     setRpm(p.requestsPerMinute === null ? "" : String(p.requestsPerMinute));
     setConcurrent(p.maxConcurrent === null ? "" : String(p.maxConcurrent));
     setTtl(p.credentialTtlDays === null ? "" : String(p.credentialTtlDays));
@@ -601,10 +630,54 @@ export default function AgentsPanel() {
                         {models.length === 0 && <span className="font-mono text-[11px] text-[#8F8F8F]">loading models…</span>}
                       </div>
                     </div>
+                    <div className="flex flex-col gap-2.5">
+                      <span className="text-[12px] text-[#5D5D5D]">
+                        {pickedRegions.length
+                          ? `Regions it may be served from — ${pickedRegions.length} selected.`
+                          : "No region selected, so any region the team allows can serve it."}
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {regionList.map((r) => {
+                          const on = pickedRegions.includes(r);
+                          return (
+                            <button
+                              key={r}
+                              type="button"
+                              aria-pressed={on}
+                              onClick={() => setPickedRegions((p) => (on ? p.filter((x) => x !== r) : [...p, r]))}
+                              className={`${pill} ${on ? "border-[#0D0D0D] bg-[#0D0D0D] text-white" : "border-[#E5E5E0] bg-white text-[#424242] hover:bg-[#F4F4F4]"}`}
+                            >
+                              {on && <Glyph size={13} d={CHECK_ICON} />}
+                              {r}
+                            </button>
+                          );
+                        })}
+                        {regionList.length === 0 && <span className="font-mono text-[11px] text-[#8F8F8F]">no host reports a region yet</span>}
+                      </div>
+                    </div>
                     <div className="grid gap-3 sm:grid-cols-[repeat(auto-fit,minmax(148px,1fr))]">
                       <Field label="Requests per minute" value={rpm} onChange={setRpm} unit="req" />
                       <Field label="Concurrent requests" value={concurrent} onChange={setConcurrent} unit="calls" />
                       <Field label="Key expiry" value={ttl} onChange={setTtl} unit="days" placeholder="never" />
+                    </div>
+                    <div className="flex items-center gap-3.5 rounded-xl border border-[#E5E5E0] p-[13px_16px]">
+                      <span className="inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-[#F4F4F4] text-[#0D0D0D]">
+                        <Glyph d={SHIELD_ICON} />
+                      </span>
+                      <span className="flex flex-col gap-0.5">
+                        <span className="text-sm">Verified hosts only</span>
+                        <span className="text-[12px] text-[#5D5D5D]">Excludes hosts that failed a spot-check, even when they&apos;re cheapest.</span>
+                      </span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={verifiedOnly}
+                        aria-label="Verified hosts only"
+                        onClick={() => setVerifiedOnly((v) => !v)}
+                        className={`relative ml-auto h-6 w-[42px] shrink-0 rounded-full transition-colors ${verifiedOnly ? "bg-[#0D0D0D]" : "bg-[#CDCDCD]"}`}
+                      >
+                        <span className={`absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-all ${verifiedOnly ? "left-[21px]" : "left-[3px]"}`} />
+                      </button>
                     </div>
                   </div>
                 </Row>
@@ -765,6 +838,8 @@ export default function AgentsPanel() {
                             `${a.policy.requestsPerMinute ?? "no"} req/min`,
                             `${a.policy.maxConcurrent ?? "no"} concurrent`,
                             a.policy.maxRequestCredits === null ? "no per-request cap" : `${fmt(a.policy.maxRequestCredits)} cr/req cap`,
+                            a.policy.regions === null ? "any region" : `regions ${a.policy.regions.join(", ")}`,
+                            ...(a.policy.verifiedOnly ? ["verified hosts only"] : []),
                             `sponsor ${teamName(a.orgId)}`,
                             `policy revision ${a.policyRevision}`,
                             ...(detail.effective.memberAllowance !== undefined ? [`allowance ${detail.effective.memberAllowance === null ? "unlimited" : `${fmt(detail.effective.memberAllowance)}/mo`}`] : []),

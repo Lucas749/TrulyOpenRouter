@@ -27,6 +27,7 @@ vi.mock("../../../../lib/privy-server", () => ({
 }));
 
 import { GET as listOrgs, POST as createOrg } from "./route";
+import { PATCH as renameOrg } from "./[orgId]/route";
 import { getMember } from "../../../../lib/members";
 
 const CREATOR = "0x1111111111111111111111111111111111111111";
@@ -93,6 +94,21 @@ describe("team creation", () => {
     expect(((await r.json()) as any).error).toContain("not safe to activate");
     expect(await getMember("org-test", "did:privy:creator")).toBeNull();
     expect(gatewayCalls).toHaveLength(1);
+  });
+
+  it("renames a team for its owner only, and the listing shows the new name", async () => {
+    await createOrg(post({ name: "Acme" }));
+    const patch = (body: unknown, token: string | null = "creator") =>
+      new Request("http://x", { method: "PATCH", headers: token ? { authorization: `Bearer ${token}` } : {}, body: JSON.stringify(body) });
+    const at = { params: Promise.resolve({ orgId: "org-test" }) };
+    expect((await renameOrg(patch({ name: "Renamed" }, null), at)).status).toBe(401);
+    expect((await renameOrg(patch({ name: "Renamed" }, "stranger"), at)).status).toBe(403);
+    expect((await renameOrg(patch({ name: "   " }), at)).status).toBe(400);
+    expect((await renameOrg(patch({ name: "Renamed" }), at)).status).toBe(200);
+    // The new name reaches the gateway mirror, which shows it on receipts and approvals.
+    expect(gatewayCalls.at(-1)!.body.name).toBe("Renamed");
+    const mine: any = await (await listOrgs(new Request("http://x", { headers: { authorization: "Bearer creator" } }))).json();
+    expect(mine.data[0].display_name).toBe("Renamed");
   });
 
   it("lists only teams visible to the verified login", async () => {

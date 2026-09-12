@@ -20,6 +20,8 @@ EXCEPTION WHEN undefined_column OR duplicate_column THEN
   NULL; -- a concurrent boot renamed it first
 END $$;
 ALTER TABLE team_orgs ADD COLUMN IF NOT EXISTS creator_wallet text;
+-- Team name the owner set here. Privy holds its own org name; this one wins on screen.
+ALTER TABLE team_orgs ADD COLUMN IF NOT EXISTS display_name text;
 
 -- Team members (allowance null = inherit org default).
 CREATE TABLE IF NOT EXISTS team_members (
@@ -92,6 +94,8 @@ ALTER TABLE team_org_rules ADD COLUMN IF NOT EXISTS allowed_regions jsonb;
 ALTER TABLE team_org_rules ADD COLUMN IF NOT EXISTS require_verified boolean;
 ALTER TABLE team_org_rules ADD COLUMN IF NOT EXISTS rate_limit_per_min int;
 ALTER TABLE team_org_rules ADD COLUMN IF NOT EXISTS pinned_hosts jsonb;
+-- Org-wide switch: may an agent ask a human for more credits at its ceiling? Null = yes.
+ALTER TABLE team_org_rules ADD COLUMN IF NOT EXISTS agent_exceptions boolean;
 
 -- Rule-change intents: propose (owner/manager-signed) -> decide (owner-signed)
 -- -> applied + synced to gateway. Same audit-trail shape as increase requests.

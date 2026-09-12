@@ -14,7 +14,7 @@ export async function syncTeamToGateway(orgId: string, preview?: (members: Membe
   if (!meta) return { synced: false, skipped: false, error: "team not found" };
   const next = preview ? preview(meta.members.map((m) => ({ ...m })), meta) : { members: meta.members, defaultAllowanceCredits: meta.defaultAllowanceCredits };
   try {
-    const r = await syncTeamSnapshot({ orgId, defaultAllowanceCredits: next.defaultAllowanceCredits, members: next.members });
+    const r = await syncTeamSnapshot({ orgId, name: meta.displayName, defaultAllowanceCredits: next.defaultAllowanceCredits, members: next.members });
     return { synced: r === "synced", skipped: r === "skipped", error: null };
   } catch (e: unknown) {
     return { synced: false, skipped: false, error: String((e as Error)?.message ?? e).slice(0, 120) };

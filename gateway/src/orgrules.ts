@@ -10,6 +10,7 @@ export interface OrgRule {
   allowedModels: string[] | null; // null = all models
   allowedRegions: string[] | null; // geo/region slugs, null = all regions
   requireVerified: boolean; // only hosts passing model checks
+  agentExceptions: boolean; // agents may ask a human for more credits; false = hard stop at the ceiling
   rateLimitPerMin: number | null; // calls/min across member handles, null = unlimited
   pinnedHosts: string[] | null; // exact host addresses, null = any host
   handles: string[]; // key:<prefix> + wallet:<addr> identifying member spend
@@ -27,6 +28,8 @@ const clean = (r: OrgRule): OrgRule => ({
   allowedModels: r.allowedModels ?? null,
   allowedRegions: r.allowedRegions ?? null,
   requireVerified: !!r.requireVerified,
+  // Absent means allowed: a team that never set this keeps the approval escape hatch.
+  agentExceptions: r.agentExceptions !== false,
   rateLimitPerMin: r.rateLimitPerMin ?? null,
   pinnedHosts: r.pinnedHosts ?? null,
   // Handles compare case-insensitively downstream — normalize once, here.
@@ -63,15 +66,15 @@ export class PgOrgRules implements OrgRuleStore {
     if (!rule.orgId) throw new Error("orgId required");
     const c = clean(rule);
     await this.q().query(
-      `INSERT INTO org_rules (org_id, daily_cap, allowed_models, allowed_regions, require_verified, rate_limit_per_min, pinned_hosts, handles)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `INSERT INTO org_rules (org_id, daily_cap, allowed_models, allowed_regions, require_verified, rate_limit_per_min, pinned_hosts, handles, agent_exceptions)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        ON CONFLICT (org_id) DO UPDATE SET daily_cap = EXCLUDED.daily_cap,
          allowed_models = EXCLUDED.allowed_models, allowed_regions = EXCLUDED.allowed_regions,
          require_verified = EXCLUDED.require_verified, rate_limit_per_min = EXCLUDED.rate_limit_per_min,
-         pinned_hosts = EXCLUDED.pinned_hosts, handles = EXCLUDED.handles`,
+         pinned_hosts = EXCLUDED.pinned_hosts, handles = EXCLUDED.handles, agent_exceptions = EXCLUDED.agent_exceptions`,
       [c.orgId, c.dailyCapCredits, c.allowedModels ? JSON.stringify(c.allowedModels) : null,
         c.allowedRegions ? JSON.stringify(c.allowedRegions) : null, c.requireVerified,
-        c.rateLimitPerMin, c.pinnedHosts ? JSON.stringify(c.pinnedHosts) : null, JSON.stringify(c.handles)],
+        c.rateLimitPerMin, c.pinnedHosts ? JSON.stringify(c.pinnedHosts) : null, JSON.stringify(c.handles), c.agentExceptions],
     );
   }
 
@@ -85,6 +88,7 @@ export class PgOrgRules implements OrgRuleStore {
       allowedModels: r.allowed_models == null ? null : typeof r.allowed_models === "string" ? JSON.parse(r.allowed_models) : r.allowed_models,
       allowedRegions: r.allowed_regions == null ? null : typeof r.allowed_regions === "string" ? JSON.parse(r.allowed_regions) : r.allowed_regions,
       requireVerified: !!r.require_verified,
+      agentExceptions: r.agent_exceptions !== false,
       rateLimitPerMin: r.rate_limit_per_min != null ? Number(r.rate_limit_per_min) : null,
       pinnedHosts: r.pinned_hosts == null ? null : typeof r.pinned_hosts === "string" ? JSON.parse(r.pinned_hosts) : r.pinned_hosts,
       handles: typeof r.handles === "string" ? JSON.parse(r.handles) : (r.handles ?? []),
@@ -103,6 +107,7 @@ export class PgOrgRules implements OrgRuleStore {
       allowedModels: r.allowed_models == null ? null : typeof r.allowed_models === "string" ? JSON.parse(r.allowed_models) : r.allowed_models,
       allowedRegions: r.allowed_regions == null ? null : typeof r.allowed_regions === "string" ? JSON.parse(r.allowed_regions) : r.allowed_regions,
       requireVerified: !!r.require_verified,
+      agentExceptions: r.agent_exceptions !== false,
       rateLimitPerMin: r.rate_limit_per_min != null ? Number(r.rate_limit_per_min) : null,
       pinnedHosts: r.pinned_hosts == null ? null : typeof r.pinned_hosts === "string" ? JSON.parse(r.pinned_hosts) : r.pinned_hosts,
       handles: typeof r.handles === "string" ? JSON.parse(r.handles) : (r.handles ?? []),

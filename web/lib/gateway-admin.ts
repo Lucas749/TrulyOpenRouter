@@ -117,6 +117,7 @@ export async function provisionTeam(input: { name: string; approverUserId: strin
 
 export interface TeamSnapshotInput {
   orgId: string;
+  name?: string;
   defaultAllowanceCredits?: number;
   members: Array<{ did: string; walletAddress: string; email?: string; role: string; status: string; allowanceCredits?: number }>;
 }
@@ -133,6 +134,7 @@ export async function syncTeamSnapshot(team: TeamSnapshotInput): Promise<"synced
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
     body: JSON.stringify({
+      ...(team.name === undefined ? {} : { name: team.name }),
       defaultAllowanceCredits: credits(team.defaultAllowanceCredits),
       members: team.members.map((m) => ({
         did: m.did,
@@ -154,6 +156,7 @@ export interface OrgRuleSync {
   allowedModels: string[] | null;
   allowedRegions: string[] | null;
   requireVerified: boolean;
+  agentExceptions: boolean;
   rateLimitPerMin: number | null;
   pinnedHosts: string[] | null;
   handles: string[];

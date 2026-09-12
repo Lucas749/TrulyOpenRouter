@@ -30,7 +30,7 @@ import { hostEarnings } from "./host-earnings.js";
 import { hederaCollectionChain, hostLinkMessage, PgTeamHosts, recordCollection, TeamHostError, type TeamHostDeps } from "./team-hosts.js";
 import { applyHostSettings, authorizeHostSettings, HostSettingsError, MemoryHostRuntime, PgHostRuntime, type HostRuntimeStore } from "./host-runtime.js";
 import { normalizeSnapshot, PgTeams, TeamError } from "./teams.js";
-import { approveTreasuryIntent, proposeTreasuryIntent, provisionTeamWallet, reconcileTreasuryIntent, rejectTreasuryIntent, teamLimitsView, TEST_USDC_ADDRESS, TreasuryError, type TreasuryDeps } from "./treasury.js";
+import { approveTreasuryIntent, payoutNeedsLedger, proposeTreasuryIntent, provisionTeamWallet, reconcileTreasuryIntent, rejectTreasuryIntent, teamLimitsView, TEST_USDC_ADDRESS, TreasuryError, type TreasuryDeps } from "./treasury.js";
 import { AGENT_KEY_PREFIX, AgentError, normalizePolicy, PgAgents, type Agent, type AgentPolicy } from "./agents.js";
 import { PgAccounting, periods, type CounterLimit, type Violation } from "./accounting.js";
 import { ApprovalError, approvalAuthority, approvalMessage, approveByLedgerSignature, decideAgentApproval, PgApprovals, type AgentApproval, type ApprovalMethod } from "./approvals.js";
@@ -431,6 +431,7 @@ export function createApp(opts: GatewayOptions = {}) {
       // for something their org disallows — never a stack trace.
       let orgRegionAllow: string[] | null = null; // intersected across caller orgs
       let orgVerifiedOnly = false;
+      let orgAgentExceptions = true; // any org that forbids exceptions turns this off
       let orgPinnedHosts: string[] | null = null; // union: any pinned host serves
       let orgRateLimit: number | null = null; // strictest (min) across caller orgs
       let orgRateHandles: string[] = [];
@@ -450,6 +451,7 @@ export function createApp(opts: GatewayOptions = {}) {
               orgRegionAllow = orgRegionAllow ? orgRegionAllow.filter((r) => o.allowedRegions!.includes(r)) : [...o.allowedRegions];
             }
             if (o.requireVerified) orgVerifiedOnly = true;
+            if (!o.agentExceptions) orgAgentExceptions = false;
             if (o.pinnedHosts) {
               orgPinnedHosts = orgPinnedHosts ? [...new Set([...orgPinnedHosts, ...o.pinnedHosts])] : [...o.pinnedHosts];
             }
@@ -513,27 +515,35 @@ export function createApp(opts: GatewayOptions = {}) {
           const checks = await Promise.all(hosts.map(async (h) => ({ h, failing: (await ver.verification(h.address, h.modelId)).failing })));
           pool = checks.filter((c) => !c.failing).map((c) => c.h);
         }
-        // Org routing policy: pinned hosts, allowed regions (observed geo,
-        // self-report fallback), verified-only. Empty pool = explicit org
-        // denial, not a silent 404.
-        if (orgRegionAllow || orgVerifiedOnly || orgPinnedHosts) {
+        // Routing policy: pinned hosts, allowed regions (observed geo, self-report
+        // fallback), verified-only. An agent narrows its own routing further — its
+        // regions intersect the org's and its verified-only flag can only add the
+        // requirement, never drop it. Empty pool = explicit denial, not a silent 404.
+        const agentPolicy = agentCall?.agent.policy ?? null;
+        const regionAllow = agentPolicy?.regions
+          ? orgRegionAllow
+            ? orgRegionAllow.filter((r) => agentPolicy.regions!.includes(r))
+            : [...agentPolicy.regions]
+          : orgRegionAllow;
+        const verifiedOnly = orgVerifiedOnly || !!agentPolicy?.verifiedOnly;
+        if (regionAllow || verifiedOnly || orgPinnedHosts) {
           const meta = opts.meta;
           const kept: typeof pool = [];
           for (const h of pool) {
             if (orgPinnedHosts && !orgPinnedHosts.some((a) => a.toLowerCase() === h.address.toLowerCase())) continue;
-            if (orgRegionAllow) {
+            if (regionAllow) {
               const geo = meta ? await cachedGeo(h.address, h.endpoint, meta).catch(() => null) : null;
               const region = meta ? await meta.regionOf(h.address).catch(() => null) : null;
-              if (![geo, region].filter(Boolean).some((r) => orgRegionAllow!.includes(r as string))) continue;
+              if (![geo, region].filter(Boolean).some((r) => regionAllow.includes(r as string))) continue;
             }
-            if (orgVerifiedOnly && ver) {
+            if (verifiedOnly && ver) {
               const v = await ver.verification(h.address, h.modelId);
               if (!(v.checks > 0 && !v.failing)) continue;
             }
             kept.push(h);
           }
           if (kept.length === 0 && pool.length > 0) {
-            throw new OrgPolicyDenied("no host matches org region/host policy");
+            throw new OrgPolicyDenied("no host matches the region, pinned-host, or verification policy");
           }
           pool = kept;
         }
@@ -554,7 +564,8 @@ export function createApp(opts: GatewayOptions = {}) {
           const p = periods();
           const counters: CounterLimit[] = [];
           if (agent) {
-            const approvable = agent.policy.exceptions.credits;
+            // The agent may ask for more only while its own policy and its team both allow it.
+            const approvable = agent.policy.exceptions.credits && orgAgentExceptions;
             counters.push({ subject: `agent:${agent.id}`, period: p.day, limit: agent.policy.dailyCredits, label: "agent daily credits", approvable });
             counters.push({ subject: `agent:${agent.id}`, period: p.month, limit: agent.policy.monthlyCredits, label: "agent monthly credits", approvable });
             counters.push({ subject: `agent:${agent.id}`, period: p.all, limit: agent.policy.lifetimeCredits, label: "agent lifetime credits", approvable });
@@ -1354,7 +1365,7 @@ export function createApp(opts: GatewayOptions = {}) {
       return;
     }
     try {
-      const { orgId, dailyCapCredits, allowedModels, allowedRegions, requireVerified, rateLimitPerMin, pinnedHosts, handles } = req.body ?? {};
+      const { orgId, dailyCapCredits, allowedModels, allowedRegions, requireVerified, agentExceptions, rateLimitPerMin, pinnedHosts, handles } = req.body ?? {};
       if (!orgId || typeof orgId !== "string") throw new Error("orgId required");
       if (dailyCapCredits !== null && dailyCapCredits !== undefined && (!Number.isFinite(Number(dailyCapCredits)) || Number(dailyCapCredits) < 0)) {
         throw new Error("dailyCapCredits must be a non-negative number or null");
@@ -1377,6 +1388,8 @@ export function createApp(opts: GatewayOptions = {}) {
         allowedModels: allowedModels ?? null,
         allowedRegions: allowedRegions ?? null,
         requireVerified: !!requireVerified,
+        // Absent means allowed, so an older web build never silently removes the escape hatch.
+        agentExceptions: agentExceptions !== false,
         rateLimitPerMin: rateLimitPerMin ?? null,
         pinnedHosts: pinnedHosts ?? null,
         handles: Array.isArray(handles) ? handles.filter((h: unknown) => typeof h === "string") : [],
@@ -1495,12 +1508,26 @@ export function createApp(opts: GatewayOptions = {}) {
           if (plan) plans.push({ planId: String(planId), priceTinybar: String(plan.priceTinybar), credits: String(plan.credits), allowed: !!limits?.planIds.includes(String(planId)) });
         }
       }
+      // Fourteen UTC days of this team's spend, oldest first. The burn strip and the
+      // runway estimate both read from it; a team with no receipts gets zeros, not a gap.
+      const dayMs = 86_400_000;
+      const today = Math.floor(Date.now() / dayMs) * dayMs;
+      const teamReceipts = ((await opts.receipts?.list(10_000)) ?? []).filter((r) => r.team === req.params.orgId);
+      const burn = Array.from({ length: 14 }, (_, i) => {
+        const start = today - (13 - i) * dayMs;
+        return {
+          day: new Date(start).toISOString().slice(0, 10),
+          credits: teamReceipts.filter((r) => r.ts >= start && r.ts < start + dayMs).reduce((a, r) => a + (Number(r.amountCredits ?? 0) || 0), 0),
+        };
+      });
       const strip = (id: string | null | undefined) => String(id ?? "").replace(/^did:privy:/, "");
       res.json({
         network: "hedera-testnet",
+        burn,
         team: team && {
           orgId: team.orgId, name: team.name, state: team.state, walletAddress: team.walletAddress, quorumId: team.quorumId, policyId: team.policyId,
           approverUserId: team.approverUserId, payoutRecipients: team.payoutRecipients, membershipRevision: team.membershipRevision,
+          ledgerAddress: team.ledgerAddress, ledgerRevision: team.ledgerRevision, payoutLedgerThresholdWei: team.payoutLedgerThresholdWei,
         },
         balances,
         plans,
@@ -1700,6 +1727,113 @@ export function createApp(opts: GatewayOptions = {}) {
     res.json({ intent });
   });
 
+  // --- Team Ledger: high-stakes payouts ---------------------------------------
+  // A team may enroll one Ledger. A payout at or above its threshold then needs that
+  // device's signature over the exact prepared transaction, on top of the Privy
+  // quorum. The device is checked before Privy is touched, so a refusal costs nothing.
+
+  type LedgerTeam = { orgId: string; name: string; walletAddress: string | null; ledgerAddress: string | null; ledgerRevision: number };
+
+  const teamLedgerLines = (team: LedgerTeam, action: string, approver: string) => [
+    "TrulyOpenRouter team Ledger enrollment",
+    `origin: ${origin}`,
+    "network: hedera-testnet",
+    `action: ${action}`,
+    `team: ${team.orgId} (${team.name})`,
+    `wallet: ${team.walletAddress ?? "none"}`,
+    `approver: ${approver}`,
+    `current approver: ${team.ledgerAddress ?? "none"}`,
+    `enrollment revision: ${team.ledgerRevision}`,
+  ];
+
+  const payoutApprovalLines = (team: LedgerTeam, intent: { id: string; walletAddress: string; kind: string; terms: Record<string, string> }) => [
+    "TrulyOpenRouter treasury payout",
+    `origin: ${origin}`,
+    "network: hedera-testnet",
+    `team: ${team.orgId} (${team.name})`,
+    `wallet: ${intent.walletAddress}`,
+    `transaction: ${intent.id}`,
+    `action: ${intent.terms.action ?? intent.kind}`,
+    `amount: ${intent.terms.amount ?? "0"} ${intent.terms.asset ?? "HBAR"}`,
+    `recipient: ${intent.terms.recipient ?? "none"}`,
+    `nonce: ${intent.terms.nonce ?? "0"}`,
+    `approver: ${team.ledgerAddress ?? "none"}`,
+    `enrollment revision: ${team.ledgerRevision}`,
+  ];
+
+  const ledgerFailure = (res: any, e: unknown) => {
+    if (e instanceof LedgerChallengeError) res.status(e.status).json({ error: { message: e.message, type: e.type } });
+    else treasuryFailure(res, e);
+  };
+
+  /// @notice An active team owner, plus the team row. Only owners change the approver.
+  async function teamLedgerOwner(req: any, res: any) {
+    const actor = await teamActor(req, res, req.params.orgId);
+    if (!actor) return null;
+    if (actor.member.role !== "owner") {
+      res.status(403).json({ error: { message: "Only a team owner can change the Ledger that approves payouts.", type: "forbidden" } });
+      return null;
+    }
+    const team = await opts.teams!.team(req.params.orgId);
+    if (!team) {
+      res.status(404).json({ error: { message: "team not found", type: "not_found" } });
+      return null;
+    }
+    return { ...actor, team };
+  }
+
+  app.post("/api/team/orgs/:orgId/ledger/challenge", async (req, res) => {
+    const ctx = await teamLedgerOwner(req, res);
+    if (!ctx) return;
+    try {
+      const raw = req.body?.address;
+      const address = raw === undefined || raw === null || raw === "" ? null : String(raw).toLowerCase();
+      if (address !== null && !/^0x[0-9a-f]{40}$/.test(address)) throw new LedgerChallengeError(400, "invalid_request", "Enter the Ledger's Ethereum address.");
+      const action = !ctx.team.ledgerAddress ? "enroll" : address ? "replace" : "remove";
+      if (action === "enroll" && !address) throw new LedgerChallengeError(400, "invalid_request", "Connect the Ledger to enroll its address.");
+      if (action === "replace" && address === ctx.team.ledgerAddress) throw new LedgerChallengeError(409, "already_enrolled", "This Ledger is already enrolled.");
+      res.json({ action, currentApprover: ctx.team.ledgerAddress, ...issueChallenge(teamLedgerLines(ctx.team, action, address ?? "none")) });
+    } catch (e) {
+      ledgerFailure(res, e);
+    }
+  });
+
+  app.post("/api/team/orgs/:orgId/ledger", async (req, res) => {
+    const ctx = await teamLedgerOwner(req, res);
+    if (!ctx) return;
+    try {
+      const { team } = ctx;
+      const message = verifyChallenge(req.body?.message, req.body?.token);
+      const action = challengeField(message, "action");
+      const approver = challengeField(message, "approver") ?? "";
+      if (!action || !["enroll", "replace", "remove"].includes(action) || !describesCurrent(message, teamLedgerLines(team, action, approver))) {
+        throw new LedgerChallengeError(409, "stale_challenge", "The team or its Ledger enrollment changed. Start again.");
+      }
+      if (action !== "remove" && (await messageSigner(message, req.body?.signature)) !== approver) {
+        throw new LedgerChallengeError(401, "bad_signature", "The Ledger being enrolled did not sign this enrollment.");
+      }
+      if (action !== "enroll" && (await messageSigner(message, action === "remove" ? req.body?.signature : req.body?.currentSignature)) !== team.ledgerAddress) {
+        throw new LedgerChallengeError(401, "bad_signature", "The currently enrolled Ledger must approve this change.");
+      }
+      res.json({ team: await opts.teams!.setLedger(team.orgId, action === "remove" ? null : approver, team.ledgerRevision) });
+    } catch (e) {
+      ledgerFailure(res, e);
+    }
+  });
+
+  // Weibar, so the gateway needs no unit conversion; the browser already formats HBAR.
+  app.post("/api/team/orgs/:orgId/payout-threshold", async (req, res) => {
+    const ctx = await teamLedgerOwner(req, res);
+    if (!ctx) return;
+    try {
+      const raw = req.body?.weibar;
+      const wei = raw === undefined || raw === null || raw === "" ? null : String(raw);
+      res.json({ team: await opts.teams!.setPayoutLedgerThreshold(ctx.team.orgId, wei) });
+    } catch (e) {
+      ledgerFailure(res, e);
+    }
+  });
+
   app.post("/api/team/orgs/:orgId/intents/:id/approve", async (req, res) => {
     const actor = await teamActor(req, res, req.params.orgId);
     if (!actor) return;
@@ -1708,9 +1842,33 @@ export function createApp(opts: GatewayOptions = {}) {
     try {
       const signature = req.body?.signature;
       const approval = typeof signature === "string" ? { signature, timestamp: Number(req.body?.timestamp) } : undefined;
-      res.json({ intent: await approveTreasuryIntent(treasury, req.params.orgId, req.params.id, { member: actor.member, identity: actor.identity, approval }) });
+      const [team, intent] = await Promise.all([opts.teams!.team(req.params.orgId), treasury.store.get(req.params.id)]);
+      let ledgerApproved = false;
+      if (team && intent && intent.orgId === team.orgId && payoutNeedsLedger(team, intent)) {
+        const ledger = req.body?.ledger;
+        // No signature yet: hand back the exact terms the device must show.
+        if (!ledger) {
+          res.status(403).json({
+            error: {
+              message: "This payout needs approval on the team's enrolled Ledger.",
+              type: "ledger_required",
+              ledger: { address: team.ledgerAddress, ...issueChallenge(payoutApprovalLines(team, intent)) },
+            },
+          });
+          return;
+        }
+        const message = verifyChallenge(ledger.message, ledger.token);
+        if (!describesCurrent(message, payoutApprovalLines(team, intent))) {
+          throw new LedgerChallengeError(409, "stale_challenge", "The payout or the Ledger enrollment changed. Start again.");
+        }
+        if ((await messageSigner(message, ledger.signature)) !== team.ledgerAddress) {
+          throw new LedgerChallengeError(401, "bad_signature", "The team's enrolled Ledger did not approve this payout.");
+        }
+        ledgerApproved = true;
+      }
+      res.json({ intent: await approveTreasuryIntent(treasury, req.params.orgId, req.params.id, { member: actor.member, identity: actor.identity, approval, ledgerApproved }) });
     } catch (e) {
-      treasuryFailure(res, e);
+      ledgerFailure(res, e);
     }
   });
 
@@ -1811,6 +1969,12 @@ export function createApp(opts: GatewayOptions = {}) {
     if (rules?.allowedModels && policy.models?.some((m) => !rules.allowedModels!.includes(m))) {
       throw new AgentError(400, "exceeds_parent", "The team does not allow some of these models.");
     }
+    if (rules?.allowedRegions && policy.regions?.some((r) => !rules.allowedRegions!.includes(r))) {
+      throw new AgentError(400, "exceeds_parent", "The team does not allow some of these regions.");
+    }
+    if (rules?.requireVerified && policy.verifiedOnly === false) {
+      throw new AgentError(400, "exceeds_parent", "The team requires verified hosts, so this agent cannot turn that off.");
+    }
     return { team, allowance, teamModels: rules?.allowedModels ?? null };
   }
 
@@ -1821,6 +1985,7 @@ export function createApp(opts: GatewayOptions = {}) {
       (k) => before[k] !== null && (after[k] === null || (after[k] as number) > (before[k] as number)),
     ),
     ...(before.models !== null && (after.models === null || after.models.some((m) => !before.models!.includes(m))) ? ["models"] : []),
+    ...(before.regions !== null && (after.regions === null || after.regions.some((r) => !before.regions!.includes(r))) ? ["regions"] : []),
     ...(before.verifiedOnly && !after.verifiedOnly ? ["verifiedOnly"] : []),
     ...(!before.exceptions.credits && after.exceptions.credits ? ["exceptions"] : []),
   ];

@@ -201,11 +201,18 @@ CREATE INDEX IF NOT EXISTS treasury_intents_org_idx ON treasury_intents (org_id,
 -- At most one unfinished treasury transaction per team keeps nonces unambiguous.
 CREATE UNIQUE INDEX IF NOT EXISTS treasury_intents_open_idx ON treasury_intents (org_id)
   WHERE state IN ('proposed', 'awaiting_approvals', 'authorized', 'signed', 'submitted', 'uncertain');
+-- Org-wide switch: may an agent ask a human for more credits at its ceiling? Null/true = yes.
+ALTER TABLE org_rules ADD COLUMN IF NOT EXISTS agent_exceptions boolean;
 ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS payout_recipients jsonb NOT NULL DEFAULT '[]';
 -- Wallet limits each team sets for itself, mirrored in its Privy policy (null = network defaults).
 ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS plan_ids jsonb;
 ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS payout_cap_hbar_wei text;
 ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS payout_cap_usdc_units text;
+-- High-stakes payouts: the Ledger that must approve a payout at or above the threshold.
+-- No address = no device gate; no threshold with an address = every payout needs the device.
+ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS ledger_address text;
+ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS ledger_revision integer NOT NULL DEFAULT 0;
+ALTER TABLE team_finance ADD COLUMN IF NOT EXISTS payout_ledger_threshold_wei text;
 ALTER TABLE treasury_intents ADD COLUMN IF NOT EXISTS policy_change jsonb;
 DO $$
 BEGIN

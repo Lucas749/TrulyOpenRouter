@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { privyApi } from "../../../../lib/privy-server";
-import { addMember, setOrgCreator, visibleOrgIds } from "../../../../lib/members";
+import { addMember, getOrgMeta, setOrgCreator, visibleOrgIds } from "../../../../lib/members";
 import { provisionTeam } from "../../../../lib/gateway-admin";
 import { requireSession } from "../../../../lib/session";
 import { syncTeamToGateway } from "../../../../lib/team-sync";
@@ -17,14 +17,18 @@ export async function GET(req: Request) {
     // unfiltered listing: identity comes from the verified token.
     const visible = await visibleOrgIds(session);
     return NextResponse.json({
-      data: list
-        .filter((o: any) => visible.has(o.id))
-        .map((o: any) => ({
-          ...o,
-          wallets: all
-            .filter((w: any) => w.entity?.id === o.id)
-            .map((w: any) => ({ id: w.id, address: w.address, policy_ids: w.policy_ids ?? [] })),
-        })),
+      data: await Promise.all(
+        list
+          .filter((o: any) => visible.has(o.id))
+          .map(async (o: any) => ({
+            ...o,
+            // A name the owner set here wins over whatever Privy calls the organization.
+            display_name: (await getOrgMeta(o.id))?.displayName ?? o.display_name,
+            wallets: all
+              .filter((w: any) => w.entity?.id === o.id)
+              .map((w: any) => ({ id: w.id, address: w.address, policy_ids: w.policy_ids ?? [] })),
+          })),
+      ),
     });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e).slice(0, 200) }, { status: 502 });

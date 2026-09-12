@@ -65,6 +65,29 @@ export default function TeamOrgs({
   const [msg, setMsg] = useState<string | null>(null);
   const [created, setCreated] = useState<{ org: { id: string }; wallet: { address: string } } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+
+  /// @notice Rename a team. The server allows owners only, so a member sees the refusal here.
+  async function rename(orgId: string) {
+    if (!draft.trim()) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await authFetch(`/api/team/orgs/${encodeURIComponent(orgId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: draft.trim() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(apiError(d, r.status));
+      setRenaming(null);
+      await load();
+    } catch (e) {
+      setMsg(String((e as Error)?.message ?? e).slice(0, 200));
+    }
+    setBusy(false);
+  }
 
   async function load() {
     if (mock) {
@@ -156,9 +179,48 @@ export default function TeamOrgs({
         <div key={o.id} className="flex flex-col gap-7">
           <div className="flex flex-wrap items-end justify-between gap-6">
             <div className="flex flex-col gap-2.5">
-              <div className="flex items-center gap-2.5">
-                <h1 className="m-0 text-[34px] font-normal tracking-[-0.03em]">{o.display_name}</h1>
-                <span className="inline-flex h-6 items-center rounded-full bg-[#F4F4F4] px-2.5 text-[12px] text-[#424242]">team plan</span>
+              <div className="flex flex-wrap items-center gap-2.5">
+                {renaming === o.id ? (
+                  <>
+                    <input
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void rename(o.id);
+                        if (e.key === "Escape") setRenaming(null);
+                      }}
+                      aria-label="Team name"
+                      autoFocus
+                      className="h-[46px] min-w-[240px] rounded-xl border border-[#E5E5E0] bg-white px-3 text-[28px] font-normal tracking-[-0.03em] outline-none focus:border-black/40"
+                    />
+                    <button
+                      onClick={() => rename(o.id)}
+                      disabled={busy || !draft.trim()}
+                      className="flex h-9 items-center rounded-full bg-[#0D0D0D] px-4 text-[13px] font-medium text-white transition-colors hover:bg-[#2F2F2F] disabled:bg-[#D4D4CF]"
+                    >
+                      {busy ? "saving…" : "Save"}
+                    </button>
+                    <button onClick={() => setRenaming(null)} className="text-[13px] text-[#5D5D5D] underline underline-offset-2">
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <h1 className="m-0 text-[34px] font-normal tracking-[-0.03em]">{o.display_name}</h1>
+                    <span className="inline-flex h-6 items-center rounded-full bg-[#F4F4F4] px-2.5 text-[12px] text-[#424242]">team plan</span>
+                    {!mock && (
+                      <button
+                        onClick={() => {
+                          setRenaming(o.id);
+                          setDraft(o.display_name ?? "");
+                        }}
+                        className="text-[13px] text-[#5D5D5D] underline underline-offset-2 hover:text-[#0D0D0D]"
+                      >
+                        Rename
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
               <p className="m-0 max-w-[620px] text-[15px] leading-[1.6] text-[#5D5D5D]">
                 One compute wallet for the whole team. Every seat and every agent spends against it under limits the wallet itself enforces — an agent that hits its

@@ -41,6 +41,7 @@ export interface OrgMeta {
   periodDays: number;
   members: Member[];
   creatorWallet?: string; // who created it (lowercased) — visibility filter, not auth
+  displayName?: string; // owner-set team name; undefined = whatever Privy calls the org
 }
 
 export type RequestStatus = "pending" | "approved" | "denied";
@@ -139,7 +140,7 @@ const pgBackend: MemberBackend = {
     const orgs: Record<string, OrgMeta> = {};
     const { rows: o } = await q.query(`SELECT * FROM team_orgs`);
     for (const r of o) {
-      orgs[r.id] = { orgId: r.id, defaultAllowanceCredits: r.default_allowance_credits != null ? Number(r.default_allowance_credits) : undefined, periodDays: r.period_days, members: [], creatorWallet: r.creator_wallet ?? undefined };
+      orgs[r.id] = { orgId: r.id, defaultAllowanceCredits: r.default_allowance_credits != null ? Number(r.default_allowance_credits) : undefined, periodDays: r.period_days, members: [], creatorWallet: r.creator_wallet ?? undefined, displayName: r.display_name ?? undefined };
     }
     const { rows: m } = await q.query(`SELECT * FROM team_members`);
     for (const r of m) {
@@ -155,10 +156,11 @@ const pgBackend: MemberBackend = {
     const q = db();
     for (const [id, o] of Object.entries(s.orgs)) {
       await q.query(
-        `INSERT INTO team_orgs (id, default_allowance_credits, period_days, creator_wallet) VALUES ($1,$2,$3,$4)
+        `INSERT INTO team_orgs (id, default_allowance_credits, period_days, creator_wallet, display_name) VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT (id) DO UPDATE SET default_allowance_credits = EXCLUDED.default_allowance_credits, period_days = EXCLUDED.period_days,
-           creator_wallet = COALESCE(team_orgs.creator_wallet, EXCLUDED.creator_wallet)`,
-        [id, o.defaultAllowanceCredits ?? null, o.periodDays, o.creatorWallet ?? null],
+           creator_wallet = COALESCE(team_orgs.creator_wallet, EXCLUDED.creator_wallet),
+           display_name = COALESCE(EXCLUDED.display_name, team_orgs.display_name)`,
+        [id, o.defaultAllowanceCredits ?? null, o.periodDays, o.creatorWallet ?? null, o.displayName ?? null],
       );
       for (const m of o.members) {
         await q.query(
@@ -212,6 +214,19 @@ export async function ensureOrg(orgId: string, periodDays = 30): Promise<OrgMeta
 
 /// @notice Record who created the org (once — first writer wins). Powers the
 /// "my teams" filter so strangers never see your orgs and vice versa.
+/// @notice Rename a team. Display only: visibility, billing, and authority are unaffected,
+/// which is why this carries no wallet signature the way allowances and rules do.
+export async function setOrgName(orgId: string, name: string): Promise<OrgMeta> {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 64) throw new Error("name required (<=64 chars)");
+  const meta = await ensureOrg(orgId);
+  meta.displayName = trimmed;
+  const s = await read();
+  s.orgs[orgId] = meta;
+  await write(s);
+  return meta;
+}
+
 export async function setOrgCreator(orgId: string, wallet: string): Promise<void> {
   const meta = await ensureOrg(orgId);
   if (!meta.creatorWallet) {
@@ -541,7 +556,7 @@ export async function decideRequest(
 // Kinds: daily_cap {credits|null}, models {models: string[]|null},
 // per_tx_cap {usd|null} (display mirror; the Privy per-tx policy is set at creation).
 
-export type RuleKind = "daily_cap" | "models" | "regions" | "verified" | "rate_limit" | "hosts" | "per_tx_cap";
+export type RuleKind = "daily_cap" | "models" | "regions" | "verified" | "rate_limit" | "hosts" | "per_tx_cap" | "agent_exceptions";
 
 export interface OrgRules {
   orgId: string;
@@ -549,6 +564,7 @@ export interface OrgRules {
   allowedModels?: string[] | null;
   allowedRegions?: string[] | null;
   requireVerified?: boolean;
+  agentExceptions?: boolean; // may an agent ask a human for more credits at its ceiling
   rateLimitPerMin?: number;
   pinnedHosts?: string[] | null;
   perTxCapUsd?: number;
@@ -574,7 +590,7 @@ export interface RuleChange {
   decisionExpires?: number;
 }
 
-const RULE_KINDS: RuleKind[] = ["daily_cap", "models", "regions", "verified", "rate_limit", "hosts", "per_tx_cap"];
+const RULE_KINDS: RuleKind[] = ["daily_cap", "models", "regions", "verified", "rate_limit", "hosts", "per_tx_cap", "agent_exceptions"];
 
 export function validateRulePayload(kind: string, payload: Record<string, unknown>): void {
   if (!(RULE_KINDS as string[]).includes(kind)) throw new Error(`unknown rule kind (want ${RULE_KINDS.join("|")})`);
@@ -598,6 +614,9 @@ export function validateRulePayload(kind: string, payload: Record<string, unknow
   }
   if (kind === "verified") {
     if (typeof payload.only !== "boolean") throw new Error("verified.only must be true or false");
+  }
+  if (kind === "agent_exceptions") {
+    if (typeof payload.allowed !== "boolean") throw new Error("agent_exceptions.allowed must be true or false");
   }
   if (kind === "rate_limit") {
     const p = payload.perMin;
@@ -628,6 +647,7 @@ function rowToOrgRules(r: Record<string, unknown>): OrgRules {
     allowedModels: jsonColumn(r.allowed_models) as string[] | undefined,
     allowedRegions: jsonColumn(r.allowed_regions) as string[] | undefined,
     requireVerified: (r.require_verified as boolean | null) ?? undefined,
+    agentExceptions: (r.agent_exceptions as boolean | null) ?? undefined,
     rateLimitPerMin: r.rate_limit_per_min != null ? Number(r.rate_limit_per_min) : undefined,
     pinnedHosts: jsonColumn(r.pinned_hosts) as string[] | undefined,
     perTxCapUsd: r.per_tx_cap_usd != null ? Number(r.per_tx_cap_usd) : undefined,
@@ -723,9 +743,9 @@ async function commitRuleChangePg(change: RuleChange, applies: boolean, decision
       const list = (v: string[] | null | undefined) => (v === undefined ? null : JSON.stringify(v));
       await client.query(
         `UPDATE team_org_rules SET daily_cap_credits = $2, allowed_models = $3, allowed_regions = $4, require_verified = $5,
-           rate_limit_per_min = $6, pinned_hosts = $7, per_tx_cap_usd = $8, updated_at = $9 WHERE org_id = $1`,
+           rate_limit_per_min = $6, pinned_hosts = $7, per_tx_cap_usd = $8, updated_at = $9, agent_exceptions = $10 WHERE org_id = $1`,
         [change.orgId, rules.dailyCapCredits ?? null, list(rules.allowedModels), list(rules.allowedRegions), rules.requireVerified ?? null,
-          rules.rateLimitPerMin ?? null, list(rules.pinnedHosts), rules.perTxCapUsd ?? null, rules.updatedAt],
+          rules.rateLimitPerMin ?? null, list(rules.pinnedHosts), rules.perTxCapUsd ?? null, rules.updatedAt, rules.agentExceptions ?? null],
       );
     }
     await client.query("COMMIT");
@@ -756,6 +776,7 @@ function applyRule(o: OrgRules, kind: RuleKind, payload: Record<string, unknown>
   if (kind === "models") next.allowedModels = (payload.models as string[] | null) ?? undefined;
   if (kind === "regions") next.allowedRegions = (payload.regions as string[] | null) ?? undefined;
   if (kind === "verified") next.requireVerified = (payload.only as boolean) ?? undefined;
+  if (kind === "agent_exceptions") next.agentExceptions = (payload.allowed as boolean) ?? undefined;
   if (kind === "rate_limit") next.rateLimitPerMin = (payload.perMin as number | null) ?? undefined;
   if (kind === "hosts") next.pinnedHosts = (payload.hosts as string[] | null) ?? undefined;
   if (kind === "per_tx_cap") next.perTxCapUsd = (payload.usd as number | null) ?? undefined;

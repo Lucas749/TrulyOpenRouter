@@ -435,6 +435,17 @@ export function teamLimits(d: Pick<TreasuryDeps, "planIds" | "hbarPayoutCapWei" 
     : { planIds: d.planIds, hbarPayoutCapWei: d.hbarPayoutCapWei, usdcPayoutCapUnits: d.usdcPayoutCapUnits };
 }
 
+/// @notice Does this transaction need the team's enrolled Ledger? Only payouts do.
+/// The threshold is HBAR weibar, so token payouts need the device whenever one is
+/// enrolled rather than being compared against a figure in a different unit.
+export function payoutNeedsLedger(team: Team, intent: Pick<TreasuryIntent, "kind" | "transaction">): boolean {
+  if (!team.ledgerAddress) return false;
+  if (intent.kind === "payout_usdc") return true;
+  if (intent.kind !== "payout_hbar") return false;
+  const threshold = team.payoutLedgerThresholdWei;
+  return threshold === null || BigInt(intent.transaction.value) >= BigInt(threshold);
+}
+
 export function teamLimitsView(d: Pick<TreasuryDeps, "planIds" | "hbarPayoutCapWei" | "usdcPayoutCapUnits">, team: Team) {
   const l = teamLimits(d, team);
   return { planIds: l.planIds.map(String), hbarPayoutCap: hbar(l.hbarPayoutCapWei), usdcPayoutCap: formatUnits(l.usdcPayoutCapUnits, 6), recipients: team.payoutRecipients };
@@ -663,7 +674,7 @@ export async function approveTreasuryIntent(
   d: TreasuryDeps,
   orgId: string,
   intentId: string,
-  actor: { member: TeamMember; identity: Identity; approval?: { signature: string; timestamp: number } },
+  actor: { member: TeamMember; identity: Identity; approval?: { signature: string; timestamp: number }; ledgerApproved?: boolean },
 ): Promise<TreasuryIntent> {
   const intent = await loadIntent(d, orgId, intentId);
   const team = await activeTeam(d, orgId);
@@ -671,6 +682,11 @@ export async function approveTreasuryIntent(
     throw new TreasuryError(403, "forbidden", "Only the team's financial approver can authorize treasury transactions.");
   }
   if (intent.state !== "awaiting_approvals" || !intent.privyIntentId) throw new TreasuryError(409, "invalid_state", `This transaction is ${intent.state.replace(/_/g, " ")}.`);
+  // The device decides before Privy is touched, so the broker can never co-sign a
+  // high-stakes payout that the enrolled Ledger has not approved.
+  if (payoutNeedsLedger(team, intent) && !actor.ledgerApproved) {
+    throw new TreasuryError(403, "ledger_required", "This payout needs approval on the team's enrolled Ledger.");
+  }
   const remote = await d.privy.request("GET", `/intents/${intent.privyIntentId}`);
   if (remote.status === "expired" || remote.status === "rejected") {
     await d.store.transition(intent.id, ["awaiting_approvals"], { state: remote.status === "expired" ? "expired" : "denied" });

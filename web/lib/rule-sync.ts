@@ -15,6 +15,7 @@ export async function syncRulesToGateway(orgId: string): Promise<{ synced: boole
       allowedModels: rules.allowedModels ?? null,
       allowedRegions: rules.allowedRegions ?? null,
       requireVerified: rules.requireVerified ?? false,
+      agentExceptions: rules.agentExceptions ?? true,
       rateLimitPerMin: rules.rateLimitPerMin ?? null,
       pinnedHosts: rules.pinnedHosts ?? null,
       handles,

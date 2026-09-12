@@ -39,6 +39,9 @@ export interface Team {
   defaultAllowanceCredits: number | null;
   membershipRevision: number;
   limits?: TeamLimits | null; // null = created before per-team limits; the network defaults apply
+  ledgerAddress: string | null; // approves high-stakes payouts; null = no device gate
+  ledgerRevision: number; // advances on every enrollment change, making signatures single-use
+  payoutLedgerThresholdWei: string | null; // at or above this, the device must approve; null = every payout
 }
 
 export interface TeamSnapshot {
@@ -105,6 +108,9 @@ function rowToTeam(r: any): Team {
     state: r.state,
     defaultAllowanceCredits: num(r.default_allowance_credits),
     membershipRevision: Number(r.membership_revision),
+    ledgerAddress: r.ledger_address ?? null,
+    ledgerRevision: Number(r.ledger_revision ?? 0),
+    payoutLedgerThresholdWei: r.payout_ledger_threshold_wei == null ? null : String(r.payout_ledger_threshold_wei),
     limits: r.plan_ids && r.payout_cap_hbar_wei && r.payout_cap_usdc_units
       ? {
           planIds: (typeof r.plan_ids === "string" ? JSON.parse(r.plan_ids) : r.plan_ids).map(String),
@@ -179,6 +185,30 @@ export class PgTeams {
       `UPDATE team_finance SET plan_ids = $2, payout_cap_hbar_wei = $3, payout_cap_usdc_units = $4, payout_recipients = $5, updated_at = $6
        WHERE org_id = $1 RETURNING *`,
       [orgId, JSON.stringify(l.planIds), l.hbarPayoutCapWei, l.usdcPayoutCapUnits, JSON.stringify(l.payoutRecipients.map((r) => r.toLowerCase())), Date.now()],
+    );
+    if (!rows[0]) throw new TeamError(404, "team not found");
+    return rowToTeam(rows[0]);
+  }
+
+  /// @notice Enroll, replace, or remove the Ledger that approves this team's high-stakes payouts.
+  /// The revision advances on every change, so a signature can never be replayed after it.
+  async setLedger(orgId: string, address: string | null, expectedRevision: number): Promise<Team> {
+    if (address !== null && !/^0x[0-9a-f]{40}$/.test(address)) throw new TeamError(400, "The Ledger address must be a lowercase 0x address.");
+    const { rows } = await this.pool.query(
+      `UPDATE team_finance SET ledger_address = $2, ledger_revision = ledger_revision + 1, updated_at = $3
+       WHERE org_id = $1 AND ledger_revision = $4 RETURNING *`,
+      [orgId, address, Date.now(), expectedRevision],
+    );
+    if (!rows[0]) throw new TeamError(409, "The Ledger enrollment changed. Start again.");
+    return rowToTeam(rows[0]);
+  }
+
+  /// @notice The payout size at or above which the enrolled Ledger must approve.
+  async setPayoutLedgerThreshold(orgId: string, wei: string | null): Promise<Team> {
+    if (wei !== null && !/^\d{1,40}$/.test(wei)) throw new TeamError(400, "The threshold must be a whole number of weibar or null.");
+    const { rows } = await this.pool.query(
+      `UPDATE team_finance SET payout_ledger_threshold_wei = $2, updated_at = $3 WHERE org_id = $1 RETURNING *`,
+      [orgId, wei, Date.now()],
     );
     if (!rows[0]) throw new TeamError(404, "team not found");
     return rowToTeam(rows[0]);

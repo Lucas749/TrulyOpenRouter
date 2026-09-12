@@ -16,6 +16,7 @@ interface Rules {
   allowedModels?: string[] | null;
   allowedRegions?: string[] | null;
   requireVerified?: boolean;
+  agentExceptions?: boolean;
   rateLimitPerMin?: number;
   pinnedHosts?: string[] | null;
   perTxCapUsd?: number;
@@ -75,6 +76,14 @@ const HOSTS = (
     <rect x="2" y="3" width="20" height="8" rx="2" />
     <rect x="2" y="13" width="20" height="8" rx="2" />
     <path d="M6 7h.01M6 17h.01" />
+  </>
+);
+const ASK = (
+  <>
+    <path d="M18 11V6a2 2 0 0 0-4 0v5" />
+    <path d="M14 10V4a2 2 0 0 0-4 0v6" />
+    <path d="M10 10.5V6a2 2 0 0 0-4 0v10" />
+    <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2a8 8 0 0 1-8-8" />
   </>
 );
 const COIN = (
@@ -413,6 +422,28 @@ export default function OrgRules({
               className={`relative ml-auto h-6 w-[42px] shrink-0 rounded-full transition-colors disabled:opacity-50 ${rules?.requireVerified ? "bg-[#0D0D0D]" : "bg-[#CDCDCD]"}`}
             >
               <span className={`absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-all ${rules?.requireVerified ? "left-[21px]" : "left-[3px]"}`} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-4 border-b border-[#F4F4F4] py-3">
+            <span className="inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-[#F4F4F4] text-[#0D0D0D]">
+              <Glyph size={15} d={ASK} />
+            </span>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm">Agents may ask for more</span>
+              <span className="text-[12px] leading-[1.55] text-[#5D5D5D]">
+                At its ceiling an agent gets an approval link instead of a refusal. Off means a hard stop for every agent in this team.
+              </span>
+            </div>
+            <button
+              role="switch"
+              aria-checked={rules?.agentExceptions !== false}
+              aria-label="Agents may ask for more"
+              disabled={locked || busy === "agent_exceptions"}
+              onClick={() => submit("agent_exceptions", { allowed: rules?.agentExceptions === false }, "agent_exceptions")}
+              className={`relative ml-auto h-6 w-[42px] shrink-0 rounded-full transition-colors disabled:opacity-50 ${rules?.agentExceptions !== false ? "bg-[#0D0D0D]" : "bg-[#CDCDCD]"}`}
+            >
+              <span className={`absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-all ${rules?.agentExceptions !== false ? "left-[21px]" : "left-[3px]"}`} />
             </button>
           </div>
 
