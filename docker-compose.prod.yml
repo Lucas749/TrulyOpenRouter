@@ -79,17 +79,7 @@ services:
       - guard
       - db
 
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-
 volumes:
   pg-data:
   ollama-data:
   gateway-data:
-  caddy-data:

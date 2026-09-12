@@ -1,22 +1,27 @@
 # Hosting the stack (prod)
 
-## Why one VPS, not Vercel
+## What runs where
 
-Vercel hosts the web UI fine — but our web server keeps state on disk (team
-orgs/members in `.data/members.json`, and it proxies the gateway with a shared
-token). Vercel's filesystem is ephemeral: every deploy wipes teams and queues.
-Fixing that means Postgres. For the hackathon: everything on one VPS with a
-persistent disk, Caddy for HTTPS. Revisit after judging.
+**Vercel serves the web UI** and has its own Postgres, so team state persists there.
+**The VPS runs the two things Vercel cannot**: the gateway Vercel calls for every
+request, and one serving host (guard + Ollama) that answers inference and gets paid.
+
+The box originally ran a second copy of the web app behind Caddy for HTTPS. Both are
+gone: the copy was never reachable (its port was unpublished, the domain a
+placeholder), and with it removed Caddy fronted nothing. Vercel reaches the gateway
+directly on `:4121`.
 
 ## What you need
 
 1. **VPS or AWS** — 2 vCPU / 4 GB minimum (CPU inference for the 0.5b model +
-   gateway + web). Any provider, Ubuntu 24.04. ~$6/mo tier is enough.
+   gateway). Any provider, Ubuntu 24.04. ~$6/mo tier is enough.
    AWS path: `infra/` (Terraform) provisions EC2 + RDS Postgres; you apply it
    (see "AWS" below) — I can't reach your account from here.
-2. **Domain** — an A record pointing at the box (e.g. `app.yourdomain.com`).
-   Needed for HTTPS (Caddy provisions it) and Privy allowed origins.
-3. **SSH access** for the ~10 commands below.
+2. **SSH access** for the ~10 commands below.
+
+A domain is optional now. Nothing on the box terminates TLS: the gateway is plain
+HTTP on `:4121`, and the public HTTPS surface is Vercel's. Add a reverse proxy back
+only if you want the box itself on a hostname.
 
 ## Data (Postgres)
 
@@ -49,16 +54,14 @@ git clone https://github.com/Lucas749/TrulyOpenRouter && cd TrulyOpenRouter
 sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin
 cp .env.prod.example .env.prod && nano .env.prod   # fill every PASTE_…
 
-# Caddyfile: replace app.example.com with your domain
-sed -i 's/app.example.com/YOUR_DOMAIN/' Caddyfile
-
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 docker exec $(docker ps -q --filter ancestor=ollama/ollama) ollama pull qwen2.5:0.5b
-curl -sf http://localhost:4121/health && curl -sf http://localhost:3002/ -o /dev/null && echo UP
+curl -sf http://localhost:4121/health && curl -sf http://127.0.0.1:4122/health && echo UP
 ```
 
-Then in the **Privy dashboard** (your app → Settings → Allowed origins) add
-`https://YOUR_DOMAIN`. Fund the host + agent accounts from the testnet faucets.
+Point the web deployment at the box with `GATEWAY_URL=http://<box-ip>:4121`, and in
+the **Privy dashboard** (your app → Settings → Allowed origins) add the web origin.
+Fund the host + agent accounts from the testnet faucets.
 
 ## Learned the hard way (2026-09-07 sandbox deploy)
 
@@ -80,13 +83,21 @@ Then in the **Privy dashboard** (your app → Settings → Allowed origins) add
 
 ## Notes
 
-- Public surface is only 80/443 → web. Gateway/guard/ollama stay internal;
-  reach the gateway yourself over `ssh -L 4121:localhost:4121 user@host`.
+- Public surface is the gateway on `:4121` (chat is key-gated, admin is token-gated).
+  The guard binds `127.0.0.1` only and is reached through the gateway.
 - Secrets on the VPS are env vars (documented fallback). The Ledger ring path
   is demoed from the laptop — same code, `SECRETS_BACKEND=ring`.
-- Data persists in docker volumes (`web-data`, `gateway-data`, `ollama-data`).
-  Back up `/var/lib/docker/volumes` if teams matter to you.
-- Re-deploy: `git pull && docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build`.
+- Data lives in RDS. Docker volumes (`gateway-data`, `ollama-data`) hold caches and
+  the pulled model, not team state.
+- **The remote checkout has no `.git`** — deploy a source archive, not `git pull`:
+  `tar --exclude=.git --exclude=node_modules --exclude=.env --exclude='*.enc' -czf …`
+  then `scp` and extract over `/home/ubuntu/TrulyOpenRouter`. Never ship `.env*` or
+  `gateway/secrets/*.enc`: the box's own copies must survive.
+- **`next build` does not fit on a 4 GB box.** Build web images elsewhere (or just use
+  Vercel). A full `up -d --build` here has OOM-killed the running services.
+- Re-deploy the gateway only:
+  `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build gateway`.
+  Tag a rollback image first: `docker tag trulyopenrouter-gateway tor-gateway:before-<change>`.
 
 ## Registry replacement (5 HBAR onboarding)
 
