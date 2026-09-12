@@ -16,7 +16,9 @@ services:
     environment:
       # Empty HOST_WALLET = dev mode (x402 gate off). Set to host account id for paid serving.
       - HOST_WALLET=${HOST_WALLET:-}
-      - UPSTREAM_URL=http://ollama:11434
+      # Point at a host-native Ollama when the containerised one is too slow
+      # (Docker Desktop on macOS has no GPU access): http://host.docker.internal:11435
+      - UPSTREAM_URL=${UPSTREAM_URL:-http://ollama:11434}
       - GUARD_PORT=4122
       - X402_TESTNET_FACILITATOR_URL=${X402_TESTNET_FACILITATOR_URL:-https://api.testnet.blocky402.com}
     depends_on:
