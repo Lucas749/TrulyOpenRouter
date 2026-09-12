@@ -9,9 +9,7 @@ It works fine but I had some issues. See below
 Fresh device, genuine-check green, USB fine — init dies with "An unknown error
 occurred talking to the Ledger." The actual problem: no Ledger Sync member
 existed yet. The fix is installing + enabling Ledger Sync in Ledger Live
-first, then init joins as slot 17. The CLI says "open Ledger Sync app" — there
-is no such device app, so that sentence sends you hunting through device menus
-for something that doesn't exist.
+first, then init joins as slot 17.
 
 **`--output json` doesn't help.** The failure comes back `{"code":"unknown"}`.
 No cause, no trace id, nothing to paste into a report. A single hint —
