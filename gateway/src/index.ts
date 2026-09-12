@@ -1240,9 +1240,8 @@ export function createApp(opts: GatewayOptions = {}) {
       const mirror = process.env.MIRROR_URL ?? "https://testnet.mirrornode.hedera.com";
       const rpcUrl = process.env.RPC_URL ?? "";
       const operatorKey = process.env.OPERATOR_KEY ?? "";
-      if (!rpcUrl || !operatorKey) {
-        return res.status(501).json({ error: { message: "RPC_URL + OPERATOR_KEY required", type: "unavailable" } });
-      }
+      // Claim checks come before backend availability, so a repeat request gets the
+      // same answer whether or not the funding keys happen to be configured.
       if (dbEnabled()) {
         await ensureSchema();
         const claimed = await db().query(`SELECT 1 FROM drip_grants WHERE address = $1`, [address]);
@@ -1257,6 +1256,9 @@ export function createApp(opts: GatewayOptions = {}) {
         // No database: fall back to the old rule so local dev still self-limits.
         const exists = await fetch(`${mirror}/api/v1/accounts/${address}`).then((r) => r.ok).catch(() => true);
         if (exists) return res.status(409).json({ error: { message: "account already exists — use the faucet", type: "already_created" } });
+      }
+      if (!rpcUrl || !operatorKey) {
+        return res.status(501).json({ error: { message: "RPC_URL + OPERATOR_KEY required", type: "unavailable" } });
       }
       const { privateKeyToAccount } = await import("viem/accounts");
       const { defineChain } = await import("viem");
