@@ -1,78 +1,3 @@
-
-## Payment flow (for the Hedera judges)
-
-We settle x402 **through the Blocky402 facilitator** (`https://api.testnet.blocky402.com`)
-— deliberately, not the PoC default `x402.org`, because the prize requires facilitator
-settlement on Hedera. Metered, not flat: base + per-1k-tokens → credits at a 1e5 divisor.
-The settlement asset is testnet USDC (HTS token in path). Every settled receipt is mirrored
-to HCS; the receipt id *is* the topic message.
-
-x402 runs **gateway → host**. The caller does not pay x402 at the front door. Each request
-produces two separate legs: `x402Transaction` (USDC to the host) and `debitTx` (vault
-credits). Before signing, the gateway validates scheme, network, asset, amount, fee payer
-and payee against hard bounds, checks the payee's EVM alias matches the registered host,
-and claims a daily treasury ceiling.
-
-One quirk that cost us an afternoon: the hashio relay delivers contract `msg.value` in
-**tinybars, not wei**. All vault amounts are in delivered units.
-
-## Repo map
-
-- `contracts/` — `HostRegistry.sol`, `SubscriptionVault.sol` (Foundry, 22 tests)
-- `gateway/` — routing, x402 gate, budgets, receipts, HCS, verification, approvals, treasury
-- `host-runner/guard/` — payment-gated Ollama proxy (the host sidecar)
-- `host-runner/cli/` — `tor-host`: login, run, status, leave, verify, ledger, withdraw
-- `agent-cli/` — `tor-agent`: seal, run, approve, enroll, status + the guided demo
-- `web/` — chat, network explorer, hosting, agents, team treasury, `/security` tap queue
-- `gateway/secrets/*.enc` — ciphertext only. Keys live in a Ledger trustchain.
-
-Tests: 174 gateway · 78 web · 22 contracts · plus guard and CLI suites.
-
-## Sponsors
-
-- **Hedera** — a live x402-gated service on testnet settled through Blocky402, consumed end
-  to end by an agent that pays per request. HTS token in the settlement path, HCS audit
-  topic, budget-capped agent consumers.
-- **Privy** — email login → embedded wallet. Each team gets a Privy organization wallet
-  owned by a two-signature quorum (the team's financial approver plus the gateway broker
-  key) with a deny-by-default policy: exact-price vault purchases, refunds, and capped
-  payouts to approved recipients. Treasury actions run as Privy **intents**; the gateway
-  checks the signed bytes against the reviewed terms before broadcasting. It refuses to
-  activate a team wallet whose quorum, threshold, policy or signer set doesn't match.
-- **Ledger** — the agent's key is sealed in the Ledger Key Ring (`wallet-cli ring`) and
-  decrypted in memory per task. Agents enrol a Ledger through the Device Management Kit
-  (WebHID in the browser, node-hid in the terminal). Over-limit requests pause until that
-  device signs the exact approval and then resume **once**; widening a protected agent's
-  policy needs the same device, and treasury payouts above a threshold do too. In ring mode
-  the gateway loads its broker secrets from `wallet-cli ring` with no environment fallback.
-
-## The agent story
-
-An agent gets its own key, its own ceiling, and no way to raise either.
-
-- **The key is sealed in a Ledger Key Ring.** `wallet-cli ring encrypt` puts ciphertext on
-  disk; `tor-agent` decrypts it into memory for one task. There is no plaintext key in a
-  file, an environment variable, or a transcript.
-- **A host with no USB port can still hold it.** `tor-agent enroll --docker <name>` reads
-  this Mac's Key Ring membership and provisions the container's own keychain over stdin, so
-  a device-less box can open Key Ring secrets headlessly. Ledger's CLI has no primitive for
-  this; removing that one keychain entry cuts the host off with every file left in place.
-- **Limits are enforced before any host is paid.** Per day, per month, per lifetime, per
-  request, plus models, regions, verified-hosts-only, rate and concurrency.
-- **Over the limit it asks.** The gateway refuses the request, creates an approval bound to
-  those exact terms, and returns `403 approval_required`. The agent cannot approve itself:
-  the server accepts only a signature from the enrolled Ledger, or a team owner's wallet.
-- **One press buys one request** — not a new budget. Single-use, five-minute grant.
-
-```sh
-tor-agent seal                      # seal an agent key into the Key Ring
-tor-agent run "<task>"              # one task; stops for a human when over its limit
-tor-agent approve [<id>]            # sign what's waiting, from the machine with the Ledger
-tor-agent enroll --docker <name>    # give a host with no USB port its own membership
-tor-agent status                    # limits, usage, and anything waiting
-node agent-cli/demo.mjs             # the guided 10-step demo (--start N to resume, --wait to step)
-```
-
 ## For Judges & Sponsors
 
 ### Hedera — x402 payments, HTS settlement, HCS audit
@@ -103,7 +28,7 @@ The first end-to-end loop: [subscribe](https://hashscan.io/testnet/transaction/0
 **Code to read**
 
 - `gateway/src/x402.ts` — which facilitator settles the payment. Fifteen lines, and the only
-  place that choice is made: testnet settles through **Blocky402**, not the `x402.org` reference.
+  place that choice is made: testnet settles through **Blocky402**.
 - `gateway/src/payer.ts` — the paid retry. `paymentRequirementProblem()` refuses a host's
   402 terms unless scheme, network, asset, amount, fee payer and payee all fit hard bounds;
   `onBeforePaymentCreation` then checks the payee account's **EVM alias matches the registered
@@ -118,23 +43,22 @@ The first end-to-end loop: [subscribe](https://hashscan.io/testnet/transaction/0
 - `gateway/src/receipts.ts` · `gateway/src/hcs.ts` — one receipt ties both money legs together;
   its id is the HCS topic message.
 
-**Two money legs, deliberately separate.** `x402Transaction` pays the host in USDC;
-`debitTx` meters the caller's credits in the vault. Deposited HBAR never becomes USDC — the
-gateway funds the USDC leg from its own account.
-
 ### Privy — team treasury and approval signing
 
-**How it works.** A team gets a Privy **organization wallet** owned by a **2-of-2 key quorum**:
-the team's financial approver (a Privy user) plus the platform's broker P-256 key. The broker
-cannot move funds alone. Treasury actions run as Privy **intents**, and approval is a real
-signature over exact bytes, not a database flag:
+**How it works.** A team gets a Privy **organization wallet** that two keys have to agree to
+move: the team's financial approver, who is a Privy user, and the platform's broker P-256
+key. Neither can spend alone, so a compromised server cannot drain a treasury and neither can
+a compromised login.
+
+Every treasury action runs as a Privy **intent**, and approving one means signing the exact
+bytes of that action — not flipping a flag in our database:
 
 1. `approveTreasuryIntent` returns **428 `approval_signature_required`** with the precise
    payload to sign (`treasury.ts:722`).
 2. The approver's browser signs those bytes and they go to `/intents/<id>/authorize`
    (`treasury.ts:731`). Privy rejects anything that isn't the reviewed terms.
 3. Only then does the **broker** co-sign with `generateAuthorizationSignature`
-   (`treasury.ts:747`), satisfying the quorum and releasing the transaction.
+   (`treasury.ts:747`). With both signatures in hand, Privy releases the transaction.
 
 **Code to read**
 
@@ -150,8 +74,7 @@ signature over exact bytes, not a database flag:
   "waiting for your approval" card that drives the signature.
 - `gateway/src/teams.ts` — team state, allowances, and the Ledger payout threshold.
 
-Email login → embedded wallet, so a user never handles a seed phrase; `payoutNeedsLedger()`
-escalates large payouts to hardware (below).
+Email login → embedded wallet, so a user never handles a seed phrase
 
 ### Ledger — key custody and human approval
 
