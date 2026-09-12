@@ -9,8 +9,8 @@
 An open router for AI inference, where an agent that wants to spend more
 has to ask a human holding a Ledger.
 
-**[trulyopenrouter.vercel.app](https://trulyopenrouter.vercel.app)** ·
-**[github.com/Lucas749/TrulyOpenRouter](https://github.com/Lucas749/TrulyOpenRouter)**
+[![Live site](https://img.shields.io/badge/trulyopenrouter.vercel.app-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://trulyopenrouter.vercel.app)
+[![Source](https://img.shields.io/badge/Lucas749%2FTrulyOpenRouter-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Lucas749/TrulyOpenRouter)
 
 </div>
 
