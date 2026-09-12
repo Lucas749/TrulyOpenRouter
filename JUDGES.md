@@ -13,7 +13,7 @@
 
 **x402 payments that settled.** Each is 1000 units of test USDC leaving the gateway's payer
 `0.0.10375331` and arriving at the host that served the request, settled through the
-**Blocky402** facilitator — deliberately not the `x402.org` reference default.
+**Blocky402** facilitator.
 
 | Receipt | HCS seq | USDC to host |
 |---|---|---|
@@ -43,12 +43,22 @@ The first end-to-end loop: [subscribe](https://hashscan.io/testnet/transaction/0
 - `gateway/src/receipts.ts` · `gateway/src/hcs.ts` — one receipt ties both money legs together;
   its id is the HCS topic message.
 
-### Privy — team treasury and approval signing
+### Privy — the AI compute wallet
 
-**How it works.** A team gets a Privy **organization wallet** that two keys have to agree to
-move: the team's financial approver, who is a Privy user, and the platform's broker P-256
-key. Neither can spend alone, so a compromised server cannot drain a treasury and neither can
-a compromised login.
+**How it works.** Privy is the login, and it is what makes the rest usable by people who are
+not crypto-native. You sign in with an email and you have a wallet — no seed phrase, no
+extension, nothing to install, nothing to learn.
+
+That wallet is the **AI compute wallet**: built for spending on compute, not for holding
+coins. A team gets a Privy organization wallet, and every control a team actually wants sits
+on top of it — per-seat spending caps, a daily ceiling for the whole org, which models and
+regions are allowed, pinned hosts, verified-hosts-only, rate limits, and cutting off a
+member's access. Those rules are checked before a payment clears, not after the tokens are
+gone: a request that breaks one is refused with `org_policy` and no host is ever contacted.
+
+Moving money out needs two signatures — the team's financial approver and the platform's
+broker key — so neither a compromised server nor a compromised login can drain a treasury on
+its own.
 
 Every treasury action runs as a Privy **intent**, and approving one means signing the exact
 bytes of that action — not flipping a flag in our database:
@@ -73,8 +83,16 @@ bytes of that action — not flipping a flag in our database:
 - `web/app/team/treasury.tsx` — deposit, buy credits, pay out, limits, and the amber
   "waiting for your approval" card that drives the signature.
 - `gateway/src/teams.ts` — team state, allowances, and the Ledger payout threshold.
+- `gateway/src/orgrules.ts` · `gateway/src/index.ts:439` — the rules a team sets, and the one
+  place every request is measured against them. Models, regions, pinned hosts, verified-only,
+  rate limit and daily ceiling are all checked before a host is chosen; a breach raises
+  `OrgPolicyDenied` and the request stops there.
+- `web/app/team/rules.tsx` · `web/lib/rule-sync.ts` — the rules UI, and the sync that pushes
+  them to the gateway so enforcement never depends on the browser.
+- `web/app/team/members.tsx` — seats, roles, per-member caps, invites and removal.
+- `web/app/agents/agents-panel.tsx` — the same idea one level down: an agent key with its own
+  ceiling, its own allowed models and regions, and a switch for whether it may ask for more.
 
-Email login → embedded wallet, so a user never handles a seed phrase
 
 ### Ledger — key custody and human approval
 
