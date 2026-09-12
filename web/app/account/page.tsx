@@ -172,7 +172,8 @@ export default function AccountPage() {
     })();
   }, [address]);
 
-  const shownName = savedName ?? displayName ?? email ?? (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Account");
+  // Never fall back to the email: it would put the login address in the page heading.
+  const shownName = savedName ?? displayName ?? (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Account");
   const initial = shownName.replace(/^did:privy:/, "").charAt(0).toUpperCase() || "?";
 
   return (
@@ -198,7 +199,7 @@ export default function AccountPage() {
             <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black text-sm font-medium text-white">{initial}</span>
             <span className="min-w-0">
               <span className="block truncate text-sm font-medium">{shownName}</span>
-              <span className="block truncate font-mono text-[11px] text-[#6E6E73]">{email ?? address ?? ""}</span>
+              <span className="block truncate font-mono text-[11px] text-[#6E6E73]">{address ?? ""}</span>
             </span>
           </div>
           {TABS.map((t) => (
@@ -244,10 +245,6 @@ export default function AccountPage() {
                         className="h-10 flex-1 rounded-lg border border-black/10 px-3 text-sm"
                       />
                     </label>
-                    <div className="flex flex-col gap-2 p-5 sm:flex-row sm:items-center">
-                      <span className="w-40 shrink-0 text-sm text-[#5D5D5D]">Email</span>
-                      <span className="font-mono text-sm">{email ?? "—"}</span>
-                    </div>
                     <div className="flex flex-col gap-2 p-5 sm:flex-row sm:items-center">
                       <span className="w-40 shrink-0 text-sm text-[#5D5D5D]">Login method</span>
                       <span className="rounded-full border border-black/10 px-3 py-1 text-xs">Email via Privy</span>

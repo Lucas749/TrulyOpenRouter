@@ -7,6 +7,7 @@ import { MockBanner, useMock } from "./components/mock";
 import { MOCK_HOST_MATH, MOCK_HERO, MOCK_RECEIPTS, MOCK_STATS, type StatPoint } from "../lib/mock";
 import { topicUrl, txUrl } from "../lib/chain";
 import { Wordmark } from "./components/mark";
+import { ArrowRightLeft, CreditCard, Focus, Hand, Key, KeyRound, Lock, Percent, Receipt, Server, Usb, UserRoundPlus, Users, Wallet } from "lucide-react";
 
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
@@ -22,7 +23,7 @@ function useCycle<T>(items: T[], ms: number, active: boolean): T {
 
 // Indicative $10 equivalents (Sep 2026: HBAR $0.08, ETH $2,450, BTC $79k).
 // Static marketing copy, not live quotes — the vault takes HBAR either way.
-const SUB_PRICES = ["$10", "10 USDC", "125 HBAR", "0.0041 ETH", "0.00013 BTC"];
+const SUB_PRICES = ["$10", "10 USDC", "125 HBAR", "0.0041 ETH", "0.00013 BTC", "0.051 SOL"];
 
 interface ReceiptView {
   amount: string;
@@ -34,6 +35,36 @@ interface ReceiptView {
 }
 
 const short = (s: string, n = 6) => (s.length > n + 1 ? `${s.slice(0, n)}…` : s);
+
+// Feature rows shared by the compute-wallet and Ledger sections.
+function FeatureRow({ icon, title, body, last }: { icon: React.ReactNode; title: string; body: string; last?: boolean }) {
+  return (
+    <div className={`flex items-start gap-3 border-t border-[#E5E5E0] py-[13px] ${last ? "border-b" : ""}`}>
+      <span className="mt-0.5 flex-none text-[#0D0D0D]">{icon}</span>
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-medium">{title}</span>
+        <span className="text-[13px] leading-[1.55] text-[#5D5D5D]">{body}</span>
+      </div>
+    </div>
+  );
+}
+
+// One seat's spend against its cap, in the illustrative team-wallet card.
+function Meter({ name, value, pct, tone }: { name: string; value: string; pct: number; tone: "idle" | "warn" | "full" }) {
+  const bar = tone === "full" ? "bg-[#DC2626]" : tone === "warn" ? "bg-[#D97706]" : "bg-[#CDCDCD]";
+  const text = tone === "full" ? "text-[#B3261E]" : tone === "warn" ? "text-[#8A5300]" : "text-[#6E6E73]";
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-2.5">
+        <span className="text-xs text-[#424242]">{name}</span>
+        <span className={`font-mono text-xs ${text}`}>{value}</span>
+      </div>
+      <div className="h-[5px] overflow-hidden rounded-full bg-[#F0F0EE]">
+        <div className={`h-full rounded-full ${bar}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
 
 export default function Landing() {
   const [mock, toggleMock] = useMock();
@@ -141,7 +172,7 @@ export default function Landing() {
             </Link>
             <Link href="/host" className="flex h-12 items-center rounded-full border border-black/10 px-6 hover:bg-black/5">Serve a model</Link>
           </div>
-          <p className="-mt-1 text-[13px] text-[#8F8F8F]">Crypto only, same flat month.</p>
+          <p className="-mt-1 text-[13px] text-[#8F8F8F]">Priced in USDC, ETH, BTC, SOL or HBAR — settled in HBAR, same flat month.</p>
           <p className="m-0 font-mono text-[13px] text-[#6E6E73]">{settledLine} calls settled today, <Link href="/network" className="text-[#2563EB]">verify any of them ↗</Link></p>
         </div>
       </section>
@@ -271,6 +302,167 @@ export default function Landing() {
       </section>
 
       <section className="px-6 py-[88px]">
+        <div className="mx-auto flex max-w-[1120px] flex-col gap-11">
+          <div className="flex flex-col items-center gap-2.5 text-center">
+            <h2 className="m-0 text-[34px] font-normal tracking-[-0.025em]">How the money moves</h2>
+            <p className="m-0 max-w-[600px] text-[#5D5D5D]">Four steps, and only the last one touches a host. Every rule you set is checked before the payment clears, not after the tokens are gone.</p>
+          </div>
+          <div className="rounded-[14px] border border-[#E5E5E0]">
+            <div className="flex flex-col px-6 pb-[22px] pt-7">
+              <div className="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="flex flex-col gap-2.5 rounded-xl border border-[#E5E5E0] p-4">
+                  <div className="flex items-center gap-2.5"><Wallet size={17} /><span className="text-sm font-medium">Team wallet</span></div>
+                  <span className="text-xs leading-[1.55] text-[#5D5D5D]">One per org, minted by Privy. Funded in crypto; seats are spending rules inside it.</span>
+                  <span className="mt-auto font-mono text-[11px] text-[#6E6E73]">owned 2-of-2</span>
+                </div>
+                <div className="flex flex-col gap-2.5 rounded-xl border border-[#E5E5E0] bg-[#F7F7F5] p-4">
+                  <div className="flex items-center gap-2.5"><Lock size={17} /><span className="text-sm font-medium">Vault</span></div>
+                  <span className="text-xs leading-[1.55] text-[#5D5D5D]">Holds the credits. The daily quota and per-user spend caps are enforced in the contract itself.</span>
+                  <span className="inline-flex h-[22px] items-center gap-1.5 self-start rounded-full bg-[#E7F5EE] px-2.5 text-[11px] text-[#0B7A5D]">rules enforced</span>
+                  <span className="mt-auto font-mono text-[11px] text-[#6E6E73]">0xd75c…f576</span>
+                </div>
+                <div className="flex flex-col gap-2.5 px-2.5 py-4">
+                  <div className="flex items-center gap-2.5"><ArrowRightLeft size={17} /><span className="text-sm font-medium">Router</span></div>
+                  <span className="text-xs leading-[1.55] text-[#5D5D5D]">Candidates are scored on price, latency, stake and your firm rules.</span>
+                  <span className="mt-auto font-mono text-[11px] text-[#6E6E73]">x402 signed per call</span>
+                </div>
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex flex-1 flex-col gap-2 rounded-xl border border-[#CFE9DE] p-4">
+                    <div className="flex items-center gap-2.5"><Server size={17} className="text-[#0B7A5D]" /><span className="whitespace-nowrap text-sm font-medium">Host that wins</span></div>
+                    <span className="text-xs leading-[1.55] text-[#5D5D5D]">Serves the call and keeps {HOST_SHARE_PCT}% of what you spent.</span>
+                    <span className="mt-auto font-mono text-[11px] text-[#0B7A5D]">✓ settled · {HOST_SHARE_PCT}%</span>
+                  </div>
+                  <div className="flex items-center gap-2.5 rounded-xl border border-[#E5E5E0] px-3.5 py-[11px]">
+                    <Percent size={15} className="flex-none text-[#8F8F8F]" />
+                    <span className="text-xs text-[#5D5D5D]">Protocol</span>
+                    <span className="ml-auto font-mono text-xs">{100 - HOST_SHARE_PCT}%</span>
+                  </div>
+                </div>
+              </div>
+              {/* The horizontal flow only reads when the four cards sit in one row. */}
+              <div className="relative mt-2.5 hidden h-24 lg:block">
+                <svg viewBox="0 0 1000 96" width="100%" height="96" preserveAspectRatio="none" fill="none" className="block" role="img" aria-label="Funds flow from the team wallet to the vault, through the router, and on to the host that wins">
+                  <line x1="125" y1="48" x2="355" y2="48" stroke="#CDCDCD" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="6 6" style={{ animation: "tor-flow 1.1s linear infinite" }} />
+                  <line x1="375" y1="48" x2="545" y2="48" stroke="#CDCDCD" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="6 6" style={{ animation: "tor-flow 1.1s linear infinite" }} />
+                  <line x1="560" y1="12" x2="560" y2="84" stroke="#E5E5E0" strokeWidth="1" strokeDasharray="3 4" />
+                  <line x1="700" y1="12" x2="700" y2="84" stroke="#E5E5E0" strokeWidth="1" strokeDasharray="3 4" />
+                  <path d="M560 48C610 48 625 18 660 18h40" stroke="#E0E0DC" strokeWidth="1.5" strokeLinecap="round" />
+                  <path d="M560 48C610 48 625 78 660 78h40" stroke="#E0E0DC" strokeWidth="1.5" strokeLinecap="round" />
+                  <circle cx="700" cy="18" r="4" stroke="#CDCDCD" strokeWidth="1.5" />
+                  <circle cx="700" cy="78" r="4" stroke="#CDCDCD" strokeWidth="1.5" />
+                  <line x1="560" y1="48" x2="700" y2="48" stroke="#10A37F" strokeWidth="1.8" strokeLinecap="round" strokeDasharray="7 5" style={{ animation: "tor-flow 1.1s linear infinite" }} />
+                  <line x1="700" y1="48" x2="860" y2="48" stroke="#10A37F" strokeWidth="1.8" strokeLinecap="round" strokeDasharray="7 5" style={{ animation: "tor-flow 1.1s linear infinite" }} />
+                  <path d="m856 42 8 6-8 6" stroke="#0B7A5D" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                  <circle cx="125" cy="48" r="4" fill="#0D0D0D" />
+                  <circle cx="375" cy="48" r="4" fill="#0D0D0D" />
+                  <circle cx="560" cy="48" r="4" fill="#0D0D0D" />
+                </svg>
+                <span className="absolute left-[24%] top-5 -translate-x-1/2 whitespace-nowrap font-mono text-xs text-[#5D5D5D]">subscription in</span>
+                <span className="absolute left-[46%] top-5 -translate-x-1/2 whitespace-nowrap font-mono text-xs text-[#5D5D5D]">per call</span>
+                <span className="absolute left-[78%] top-5 -translate-x-1/2 whitespace-nowrap font-mono text-xs text-[#0B7A5D]">✓ settled</span>
+                <span className="absolute left-[70%] top-0 -translate-x-1/2 whitespace-nowrap text-xs text-[#5D5D5D]">too slow</span>
+                <span className="absolute bottom-0 left-[70%] -translate-x-1/2 whitespace-nowrap text-xs text-[#5D5D5D]">region blocked</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3.5 rounded-[14px] bg-[#F7F7F5] px-[22px] py-[18px]">
+            <span className="text-sm text-[#424242]">Nothing in this path can spend more than you allowed — the ceiling is in the wallet, not in our code.</span>
+            <Link href="/docs#architecture" className="text-sm text-[#2563EB]">Read the payment spec →</Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-y border-[#E5E5E0] bg-[#F7F7F5] px-6 py-[88px]">
+        <div className="mx-auto grid max-w-[1120px] grid-cols-1 items-center gap-12 lg:grid-cols-2">
+          <div className="flex flex-col gap-[18px]">
+            <div className="flex items-center gap-2.5">
+              <Focus size={17} />
+              <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">AI compute wallet · by Privy</span>
+            </div>
+            <h2 className="m-0 text-balance text-[34px] font-normal tracking-[-0.028em]">A wallet built for spending on compute, not for holding coins</h2>
+            <p className="m-0 leading-relaxed text-[#5D5D5D]">Log in with an email and you have one. It pays per call, carries your team&apos;s limits, and never asks you to write down a phrase. This is what makes an AI budget something you can actually enforce.</p>
+            <div className="flex flex-col gap-0.5">
+              <FeatureRow icon={<UserRoundPlus size={16} />} title="Email in, wallet out" body="Key shares split between your device and an enclave. No seed phrase, no extension, exportable whenever you want it." />
+              <FeatureRow icon={<Key size={16} />} title="Scoped keys, enforced before the payment clears" body="One key per agent or service, each with its own models, regions and ceiling. The gateway checks the limit before any host is paid, so a leaked key can't outspend it." />
+              <FeatureRow icon={<Users size={16} />} title="One treasury, per-seat allowances" body="Invite the team, give each seat a monthly cap, watch the burn in one place. Works the way a Claude Code or Codex team plan should." />
+              <FeatureRow icon={<CreditCard size={16} />} title="Priced in the crypto you hold" body="Subscriptions settle in HBAR; hosts are paid per call in USDC. Refund whatever you didn't spend." last />
+            </div>
+            <div className="flex flex-wrap items-center gap-3.5">
+              <Link href="/onboarding" className="inline-flex h-11 items-center rounded-full bg-[#0D0D0D] px-5 text-[15px] font-medium text-white hover:bg-zinc-800">Get a compute wallet</Link>
+              <Link href="/team" className="text-sm text-[#2563EB]">See the team treasury →</Link>
+            </div>
+          </div>
+          <div className="overflow-hidden rounded-[14px] border border-[#E5E5E0] bg-white shadow-[0_24px_48px_-30px_rgba(0,0,0,0.16)]">
+            <div className="flex items-center gap-2.5 border-b border-[#E5E5E0] px-5 py-[18px]">
+              <span className="text-sm font-medium">Midas Global</span>
+              <span className="inline-flex h-[22px] items-center rounded-full bg-[#F4F4F4] px-2.5 text-[11px] text-[#424242]">team wallet</span>
+              <span className="ml-auto font-mono text-xs text-[#6E6E73]">illustration</span>
+            </div>
+            <div className="flex flex-col gap-[18px] px-5 py-[22px]">
+              <div className="flex items-baseline gap-2.5">
+                <span className="font-mono text-[38px] leading-none tracking-[-0.035em]">48,200</span>
+                <span className="text-[13px] text-[#5D5D5D]">credits</span>
+                <span className="ml-auto inline-flex h-[22px] items-center gap-1.5 rounded-full bg-[#E7F5EE] px-2.5 text-[11px] text-[#0B7A5D]"><span className="h-1.5 w-1.5 rounded-full bg-[#10A37F]" />14 days runway</span>
+              </div>
+              <div className="flex flex-col gap-2.5">
+                <Meter name="Lucas · owner" value="4,120 · no cap" pct={34} tone="idle" />
+                <Meter name="Maya · admin" value="4,620 / 5,000" pct={92} tone="warn" />
+                <Meter name="nightly-evals · agent key" value="5,000 / 5,000" pct={100} tone="full" />
+              </div>
+              <div className="flex items-center gap-2.5 rounded-xl bg-[#F7F7F5] px-3.5 py-3">
+                <Hand size={15} className="flex-none text-[#8A5300]" />
+                <span className="text-xs leading-relaxed text-[#424242]">nightly-evals hit its ceiling and is asking for 2,000 more — it can&apos;t take them.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-6 py-[88px]">
+        <div className="mx-auto grid max-w-[1120px] grid-cols-1 items-center gap-12 lg:grid-cols-2">
+          <div className="overflow-hidden rounded-[14px] border border-[#E5E5E0]">
+            <div className="flex items-center gap-2.5 border-b border-[#E5E5E0] px-5 py-4">
+              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Tap queue</span>
+              <span className="ml-auto inline-flex h-[22px] items-center gap-1.5 rounded-full bg-[#FDF3E2] px-2.5 text-[11px] text-[#8A5300]"><span className="h-1.5 w-1.5 rounded-full bg-[#D97706]" />1 waiting</span>
+            </div>
+            <div className="flex flex-col gap-3 border-b border-[#F4F4F4] px-5 py-[18px]">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="text-sm">Release 700 HBAR of stake</span>
+                <span className="inline-flex h-[22px] items-center gap-1.5 rounded-full bg-[#FDF3E2] px-2.5 text-[11px] text-[#8A5300]"><span className="h-1.5 w-1.5 rounded-full bg-[#D97706]" />pending</span>
+                <span className="ml-auto font-mono text-[11px] text-[#8F8F8F]">4m ago</span>
+              </div>
+              <pre className="m-0 overflow-x-auto rounded-[10px] bg-[#F7F7F5] px-3.5 py-3 font-mono text-[11px] leading-relaxed">tor-host ledger taps</pre>
+              <div className="flex flex-wrap items-center gap-3.5 text-[11px] text-[#5D5D5D]">
+                <span>1 Run it</span><span>2 Approve on the device</span><span>3 Verify</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5 px-5 py-[18px]">
+              <span className="text-sm">Pay out 10 HBAR</span>
+              <span className="inline-flex h-[22px] items-center gap-1.5 rounded-full bg-[#E7F5EE] px-2.5 text-[11px] text-[#0B7A5D]"><span className="h-1.5 w-1.5 rounded-full bg-[#10A37F]" />confirmed</span>
+              <Link href="/security" className="ml-auto font-mono text-[11px] text-[#2563EB]">open the queue ↗</Link>
+            </div>
+          </div>
+          <div className="flex flex-col gap-[18px]">
+            <div className="flex items-center gap-2.5">
+              <Usb size={17} />
+              <span className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">Agent control · with Ledger</span>
+            </div>
+            <h2 className="m-0 text-balance text-[34px] font-normal tracking-[-0.028em]">The expensive decisions wait for a physical tap</h2>
+            <p className="m-0 leading-relaxed text-[#5D5D5D]">Routine calls run at machine speed. Moving money out, releasing stake, rewriting a policy or raising an agent&apos;s ceiling doesn&apos;t — those queue until someone approves them on a device sitting in a drawer.</p>
+            <div className="flex flex-col gap-0.5">
+              <FeatureRow icon={<Hand size={16} />} title="An agent asks, it never takes" body="At the ceiling the gateway refuses the spend and creates an approval instead. One tap releases one request — not a new budget." />
+              <FeatureRow icon={<KeyRound size={16} />} title="Keys are sealed in a Ledger Key Ring" body="An agent's key sits on disk as ciphertext and is opened only for a task. The team treasury needs two signatures, so no single key moves funds alone." />
+              <FeatureRow icon={<Receipt size={16} />} title="Every approval leaves a trace" body="The device signs the exact terms — agent, amount, the limit it hit, an expiry — and the receipt id lands on a public Hedera topic." last />
+            </div>
+            <div className="flex flex-wrap items-center gap-3.5">
+              <Link href="/security" className="inline-flex h-11 items-center rounded-full border border-[#E5E5E0] px-5 text-[15px] font-medium hover:bg-[#F4F4F4]">See the tap queue</Link>
+              <Link href="/agents" className="text-sm text-[#2563EB]">Set up an agent →</Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-6 py-[88px]">
         <div className="mx-auto grid max-w-[920px] grid-cols-1 items-center gap-10 rounded-[14px] border border-[#E5E5E0] p-8 md:grid-cols-2">
           <div className="flex flex-col gap-3.5">
             <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#5D5D5D]">▦ Host math</div>
@@ -309,7 +501,8 @@ export default function Landing() {
               <Link href="/chat" className="text-[13px] text-[#2563EB]">Chat</Link>
               <Link href="/network" className="text-[13px] text-[#2563EB]">Network explorer</Link>
               <Link href="/host" className="text-[13px] text-[#2563EB]">Host dashboard</Link>
-              <Link href="/team" className="text-[13px] text-[#2563EB]">Team pools</Link>
+              <Link href="/team" className="text-[13px] text-[#2563EB]">Team treasury</Link>
+              <Link href="/agents" className="text-[13px] text-[#2563EB]">Agents</Link>
               <Link href="/account" className="text-[13px] text-[#2563EB]">Account settings</Link>
               <Link href="/security" className="text-[13px] text-[#2563EB]">Security</Link>
             </div>
