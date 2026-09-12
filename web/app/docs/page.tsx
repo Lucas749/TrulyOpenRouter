@@ -22,6 +22,48 @@ function Snippet({ title, code }: { title: string; code: string }) {
   );
 }
 
+function Node({ title, meta, sub, dark }: { title: string; meta?: string; sub?: string; dark?: boolean }) {
+  return (
+    <div className={`rounded-[12px] border p-4 ${dark ? "border-[#0D0D0D] bg-[#0D0D0D]" : "border-[#E5E5E0] bg-white"}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <span className={`text-sm font-medium ${dark ? "text-white" : "text-black"}`}>{title}</span>
+        {meta ? <span className={`font-mono text-[11px] ${dark ? "text-[#8FA0B8]" : "text-[#6E6E73]"}`}>{meta}</span> : null}
+      </div>
+      {sub ? <p className={`m-0 mt-1.5 font-mono text-[11px] leading-relaxed ${dark ? "text-[#A9B2C0]" : "text-[#6E6E73]"}`}>{sub}</p> : null}
+    </div>
+  );
+}
+
+function Step({ label }: { label: string }) {
+  return (
+    <div className="flex items-start gap-3 py-1 pl-4">
+      <span className="mt-px text-base leading-none text-[#C9C9C4]">↓</span>
+      <span className="font-mono text-[11px] leading-relaxed text-[#5D5D5D]">{label}</span>
+    </div>
+  );
+}
+
+function Contract({ name, address, lines }: { name: string; address: string; lines: string[] }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-[14px] border border-[#E5E5E0] p-5">
+      <span className="text-sm font-medium">{name}</span>
+      <a
+        href={`https://hashscan.io/testnet/contract/${address}`}
+        target="_blank"
+        rel="noreferrer"
+        className="break-all font-mono text-[11px] text-[#2563EB] underline"
+      >
+        {address}
+      </a>
+      <ul className="m-0 mt-1 flex list-none flex-col gap-1.5 p-0">
+        {lines.map((l) => (
+          <li key={l} className="font-mono text-[11px] leading-relaxed text-[#5D5D5D]">{l}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function DocsPage() {
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
@@ -41,11 +83,97 @@ export default function DocsPage() {
           <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">API docs</h1>
           <p className="mb-0 mt-2 text-[#5D5D5D]">OpenAI-compatible. Two env vars and any harness works — opencode, Cursor, Cline, or plain curl. Testnet gateway: <span className="font-mono text-sm text-black">http://127.0.0.1:4121</span> (local) · contracts on Hedera testnet.</p>
           <nav className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
-            {["quickstart", "chat", "models", "receipts", "keys", "hosts", "errors"].map((a) => (
+            {["architecture", "quickstart", "chat", "models", "receipts", "keys", "hosts", "errors"].map((a) => (
               <a key={a} href={`#${a}`} className="font-mono text-xs text-[#2563EB] underline">{a}</a>
             ))}
           </nav>
         </div>
+        <section id="architecture" className="flex flex-col gap-5">
+          <div>
+            <h2 className="m-0 text-[20px] font-normal tracking-[-0.01em]">How it fits together</h2>
+            <p className="mb-0 mt-2 text-sm leading-relaxed text-[#5D5D5D]">
+              Two contracts on Hedera testnet and one off-chain router. You put HBAR into the vault and get
+              credits. Anyone can run a host — stake, register, serve. Every routed call moves money twice:
+              once to the host in USDC over x402, once against your credits in the vault.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1 rounded-[14px] border border-[#E5E5E0] bg-[#FCFCFB] p-5">
+            <Node
+              title="You"
+              meta="any wallet"
+              sub="subscribe(planId) payable — plan 0 is 10 HBAR → 10,000 credits"
+            />
+            <Step label="prompt → POST /v1/chat/completions" />
+            <Node
+              title="Gateway"
+              meta="off-chain router"
+              sub="checks your limits before any money moves · picks a host on price, latency, stake and reliability"
+              dark
+            />
+            <Step label="host's guard answers HTTP 402 payment_required" />
+            <Step label="gateway pays $0.001 test USDC over x402 — settled by the Blocky402 facilitator" />
+            <Node
+              title="Host"
+              meta="anyone · 4 HBAR stake"
+              sub="register() on HostRegistry, then serves the completion from its own GPU"
+            />
+            <Step label="gateway calls debit(user, host, credits, receiptHash)" />
+            <Node
+              title="SubscriptionVault"
+              meta="holds the HBAR"
+              sub="credits[you] −N · hostEarnings[host] +90% · accruedFees +10%"
+            />
+            <Step label="host calls withdraw() and pulls its earnings as HBAR" />
+            <Node title="Receipt" meta="id = sha256" sub="both legs recorded, id mirrored to HCS topic 0.0.10379640" />
+          </div>
+
+          <div className="rounded-[14px] border border-[#E5E5E0] bg-[#F7F7F5] p-5 text-sm leading-relaxed text-[#5D5D5D]">
+            <p className="m-0 mb-2 font-medium text-black">Two money legs, deliberately separate</p>
+            <p className="m-0">
+              The host is paid <span className="font-medium text-black">per request in test USDC</span> by the
+              gateway over x402. Your <span className="font-medium text-black">credits</span> are metered down
+              in the vault, where the host&apos;s 90% share accrues in HBAR and is withdrawn separately. HBAR you
+              deposit never converts into USDC — the gateway funds the USDC leg from its own account. A receipt
+              ties both legs to one call.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Contract
+              name="SubscriptionVault"
+              address="0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576"
+              lines={[
+                "subscribe(planId) payable — buy credits",
+                "debit(user, host, amount, receiptHash) — gateway only",
+                "withdraw() — host pulls earnings as HBAR",
+                "refund() — cash out unused credits at a fixed rate",
+                "daily quota + per-user spend caps enforced in-contract",
+                "PROTOCOL_FEE_BPS = 1000 → 10% fee, 90% to the host",
+              ]}
+            />
+            <Contract
+              name="HostRegistry"
+              address="0x5f83c19413fc15181e2e79512947e374c7b8dc56"
+              lines={[
+                "register(...) — 4 HBAR min stake, model id + digest",
+                "heartbeat() — stay in rotation",
+                "updatePricing(pricePerReq, pricePer1kTokens)",
+                "deregister() → release() after a 24h timelock",
+                "challenge(host, receiptId) — dispute hook",
+                "eligibleHosts(modelId) — what the router reads",
+              ]}
+            />
+          </div>
+
+          <Snippet
+            title="Verify the facilitator yourself (live)"
+            code={`curl -s https://trulyopenrouter.vercel.app/api/gw/api/config | jq
+# -> { chainId: 296, registry, vault,
+#      facilitator: "https://api.testnet.blocky402.com",
+#      usdc: "0.0.429274" }`}
+          />
+        </section>
         <div id="quickstart"></div>
         <Snippet title="Run everything locally (CLI, stack, Ledger, Privy)" code={`git clone https://github.com/Lucas749/TrulyOpenRouter && cd TrulyOpenRouter
 sh quickstart.sh   # ~15 min, testnet only, nothing costs money`} />
@@ -121,7 +249,7 @@ curl http://127.0.0.1:4121/api/hosts/<address>
 502 upstream_error   — host/gateway leg failed, receipt still recorded where possible`} />
         <div className="rounded-[14px] border border-[#E5E5E0] bg-[#F7F7F5] p-5 text-sm leading-relaxed text-[#5D5D5D]">
           <p className="m-0 mb-2 font-medium text-black">Money path (Hedera testnet)</p>
-          <p className="m-0 font-mono text-xs leading-relaxed">Registry 0xa454…dc3 · Vault 0xd75c…f576 · USDC 0.0.429274 · facilitator api.testnet.blocky402.com · 1 credit ≡ $0.001 by definition · contract value unit is tinybar (sent/1e10), see SPEC money rule.</p>
+          <p className="m-0 font-mono text-xs leading-relaxed">Registry 0x5f83…dc56 (legacy 0xa454…2dc3) · Vault 0xd75c…f576 · USDC 0.0.429274 · facilitator api.testnet.blocky402.com · 1 credit ≡ $0.001 by definition · contract value unit is tinybar (sent/1e10), see SPEC money rule.</p>
           <p className="mb-0 mt-2"><Link href="/api" className="text-[#2563EB] underline">Manage keys →</Link></p>
         </div>
       </main>
