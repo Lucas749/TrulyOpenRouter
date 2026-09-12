@@ -421,12 +421,7 @@ export default function AccountPage() {
                 </div>
               )}
 
-              {tab === "agents" && (
-                <div className="flex flex-col gap-6">
-                  <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">Agents</h1>
-                  <AgentsPanel />
-                </div>
-              )}
+              {tab === "agents" && <AgentsPanel />}
 
               {tab === "security" && (
                 <div className="flex flex-col gap-6">
@@ -442,15 +437,7 @@ export default function AccountPage() {
                 </div>
               )}
 
-              {tab === "team" && (
-                <div className="flex flex-col gap-6">
-                  <div>
-                    <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">Team</h1>
-                    <p className="m-0 mt-1 text-sm text-[#6E6E73]">Create teams (quorum → org → wallet + spending policy), invite members by Privy DID, set allowances, approve increases. Owners see everything; members see their own caps.</p>
-                  </div>
-                  <TeamOrgs me={me} mock={mock} />
-                </div>
-              )}
+              {tab === "team" && <TeamOrgs me={me} mock={mock} />}
 
               {tab === "notifications" && (
                 <div className="flex flex-col gap-6">
