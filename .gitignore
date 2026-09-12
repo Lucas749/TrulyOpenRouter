@@ -1,5 +1,11 @@
 .local/
 .DS_Store
+
+# `next dev` rewrites web/AGENTS.md on every run; keep it out of the tree.
+web/AGENTS.md
+web/CLAUDE.md
+# A second checkout that the globally linked tor-host runs from, not part of the repo.
+temp/
 node_modules/
 .vercel/
 infra/.terraform/
