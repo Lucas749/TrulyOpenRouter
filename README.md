@@ -4,22 +4,18 @@
 
 # TrulyOpenRouter
 
-**One subscription. Every open model. Hosts get paid per call.**
-
-An open router for AI inference, where an agent that wants to spend more
-has to ask a human holding a Ledger.
+**Actually OpenRouter on Crypto Rails powered by x402**
 
 [![Live site](https://img.shields.io/badge/trulyopenrouter.vercel.app-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://trulyopenrouter.vercel.app)
 [![Source](https://img.shields.io/badge/Lucas749%2FTrulyOpenRouter-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Lucas749/TrulyOpenRouter)
 
 </div>
 
-Users pay a flat HBAR subscription. Each request pays the serving host 0.001 test USDC
-over x402 and meters the user's credits. Hosts register permissionlessly, serve through
-a payment-gated guard, and withdraw anytime. Every settled call leaves a receipt mirrored
-to an HCS audit topic.
+User pays a classic usage subscription and a decentralized network of hosts server inference. 
+Every API request settles via x402. Hosts can monitize excess compute.
 
-## How money moves
+## How it works
+
 
 1. **Subscribe** — HBAR into `SubscriptionVault` → credits (10 HBAR → 10,000).
 2. **Chat** — the gateway routes to a host; $0.001 testnet USDC goes to that host's
@@ -32,12 +28,11 @@ to an HCS audit topic.
 5. **Agents** — `tor_sk_agt_` keys with hard limits. Over the limit the request stops and
    waits for a human instead of spending more.
 
-Contracts: Registry `0x5f83c19413fc15181e2e79512947e374c7b8dc56`
-(legacy `0xa45461bdefef422a81b22f36ebfd0995c7642dc3`), Vault
-`0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576`, USDC `0.0.429274`, HCS topic `0.0.10379640`.
-
-The gateway spends separately funded test USDC from account `0.0.10375331`. HBAR
-subscriptions do not convert into USDC. Testnet tokens have no financial value.
+Live on Hedera testnet:
+[**HostRegistry** `0x5f83c194…dc56`](https://hashscan.io/testnet/contract/0x5f83c19413fc15181e2e79512947e374c7b8dc56) ·
+[**SubscriptionVault** `0xd75c46c0…f576`](https://hashscan.io/testnet/contract/0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576) ·
+[**USDC** `0.0.429274`](https://hashscan.io/testnet/token/0.0.429274) ·
+[**HCS audit topic** `0.0.10379640`](https://hashscan.io/testnet/topic/0.0.10379640)
 
 ## The agent story
 
@@ -65,27 +60,6 @@ tor-agent enroll --docker <name>    # give a host with no USB port its own membe
 tor-agent status                    # limits, usage, and anything waiting
 node agent-cli/demo.mjs             # the guided 10-step demo (--start N to resume, --wait to step)
 ```
-
-## Where it runs
-
-```
-browser ──▶ Vercel (Next.js UI + its own Postgres for team state)
-                │  /api/gw/*
-                ▼
-            gateway :4121  ──▶ RDS Postgres (agents, approvals, receipts, team mirror)
-                │                      │
-                │ routes + pays        └──▶ HCS topic 0.0.10379640 (receipt ids)
-                ▼
-            guard :4122 ──▶ Ollama        ← one VPS runs the gateway and this host
-```
-
-A request goes browser → Vercel → the gateway. The gateway checks the caller's limits
-**before** contacting anyone, picks a host, calls its guard, gets an HTTP 402, signs a
-test-USDC transfer on Hedera, and retries. The host serves the completion, the user's vault
-credits are metered down, and one receipt records both legs.
-
-Hosts are independent: anyone can run the guard on their own machine and register. The VPS
-happens to run one so the network is never empty.
 
 ## Run it
 
