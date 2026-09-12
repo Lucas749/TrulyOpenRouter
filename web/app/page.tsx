@@ -7,6 +7,7 @@ import { MockBanner, useMock } from "./components/mock";
 import { MOCK_HOST_MATH, MOCK_HERO, MOCK_RECEIPTS, MOCK_STATS, type StatPoint } from "../lib/mock";
 import { topicUrl, txUrl } from "../lib/chain";
 import { Wordmark } from "./components/mark";
+import Globe, { type GlobeHost } from "./components/globe";
 import { ArrowRightLeft, CreditCard, Focus, Hand, Key, KeyRound, Lock, Percent, Receipt, Server, Usb, UserRoundPlus, Users, Wallet } from "lucide-react";
 
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
@@ -71,6 +72,7 @@ export default function Landing() {
   const [stats, setStats] = useState<StatPoint[] | null>(null);
   const [receipts, setReceipts] = useState<ReceiptView[] | null>(null);
   const [hero, setHero] = useState<{ hosts: number; settled: string } | null>(null);
+  const [globeHosts, setGlobeHosts] = useState<GlobeHost[]>([]);
   const [medianWei, setMedianWei] = useState<string | null>(null);
   // Protocol constant (mirrors gateway settle.ts 9/10 split), NOT mock data.
   const HOST_SHARE_PCT = 90;
@@ -85,6 +87,11 @@ export default function Landing() {
         const s: any = await (await fetch(`${GATEWAY}/api/stats`)).json();
         if (!live) return;
         setHero({ hosts: s.hostsOnline ?? 0, settled: (s.settledToday ?? 0).toLocaleString("en-US") });
+        // Same shape the network explorer feeds the globe.
+        const h: { data?: { address: string; geo?: string | null; region?: string | null; active?: boolean }[] } =
+          await (await fetch(`${GATEWAY}/api/hosts`)).json();
+        if (!live) return;
+        setGlobeHosts((h.data ?? []).map((x) => ({ id: x.address, region: x.geo ?? x.region ?? null, active: !!x.active })));
         setStats([
           { label: "Hosts online", value: String(s.hostsOnline ?? "—"), delta: "", note: s.regions ? `${s.regions} regions, observed from host IPs` : "regions not collected yet" },
           { label: "Models served", value: String(s.modelsServed ?? "—"), delta: "", note: "digest-pinned" },
@@ -205,23 +212,25 @@ export default function Landing() {
               </div>
             </div>
           </Link>
-          <Link href="/network" className="relative flex min-h-[400px] flex-col overflow-hidden rounded-[14px] border border-[#0A0E14] bg-[#0A0E14]">
+          {/* Not a Link: the globe owns buttons of its own, and an anchor can't wrap them. */}
+          <div className="relative flex min-h-[400px] flex-col overflow-hidden rounded-[14px] border border-[#0A0E14] bg-[#0A0E14]">
             <div className="absolute left-[18px] top-4 z-[2] flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[#6B7686]">◉ Live network</div>
-            <div className="flex flex-1 items-center justify-center">
-              <span className="font-mono text-xs text-[#6B7686]">globe ships with the network slice</span>
+            {/* Stops above the caption bar so the globe's own region chips stay clear of it. */}
+            <div className="absolute inset-x-0 bottom-[62px] top-0">
+              <Globe hosts={globeHosts} />
             </div>
-            <div className="absolute inset-x-0 bottom-0 z-[2] flex items-end justify-between gap-3 bg-gradient-to-t from-[#0A0E14] to-transparent p-[14px_18px]">
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] flex items-end justify-between gap-3 bg-gradient-to-t from-[#0A0E14] to-transparent p-[14px_18px]">
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-1.5 text-[11px] text-[#8B95A5]">
                   <span className="h-1.5 w-1.5 rounded-full bg-[#10A37F]" /> serving
                   <span className="ml-2 h-1.5 w-1.5 rounded-full bg-[#D97706]" /> degraded
                   <span className="ml-2 h-1.5 w-1.5 rounded-full bg-[#DC2626]" /> offline
                 </div>
-                <div className="font-mono text-xs text-[#E6EAF0]">{mock ? "12 hosts · 3 regions · 40 arcs/min" : "live counts land with /network"}</div>
+                <div className="font-mono text-xs text-[#E6EAF0]">{mock ? "12 hosts · 3 regions · 40 arcs/min" : globeHosts.length ? `${globeHosts.filter((h) => h.active).length} serving · ${globeHosts.length} registered` : "connecting to network…"}</div>
               </div>
-              <span className="text-xs text-[#7FB2FF]">Open explorer ↗</span>
+              <Link href="/network" className="pointer-events-auto text-xs text-[#7FB2FF]">Open explorer ↗</Link>
             </div>
-          </Link>
+          </div>
         </div>
       </section>
 

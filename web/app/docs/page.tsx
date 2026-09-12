@@ -240,18 +240,14 @@ curl https://trulyopenrouter.vercel.app/api/gw/api/hosts
 curl https://trulyopenrouter.vercel.app/api/gw/api/hosts/<address>
 # heartbeat (cron every 10 min keeps you in rotation) · leave: tor-host leave`} />
         <div id="errors"></div>
-        <Snippet title="Errors (honest codes, no fake 200s)" code={`401 invalid_api_key  — unknown/revoked key or bad wallet signature
+        <Snippet title="Errors" code={`401 invalid_api_key  — unknown/revoked key or bad wallet signature
 402 payment_required — wallet out of credits, subscribe first
 404 model_not_found  — model not in key scope, or unknown receipt/host
 409 conflict         — e.g. member already active, tap already decided
 429 quota_exceeded   — member allowance spent, owner raises it in /team
 501 unavailable      — leg not configured (admin token, vault, tap signer)
 502 upstream_error   — host/gateway leg failed, receipt still recorded where possible`} />
-        <div className="rounded-[14px] border border-[#E5E5E0] bg-[#F7F7F5] p-5 text-sm leading-relaxed text-[#5D5D5D]">
-          <p className="m-0 mb-2 font-medium text-black">Money path (Hedera testnet)</p>
-          <p className="m-0 font-mono text-xs leading-relaxed">Registry 0x5f83…dc56 (legacy 0xa454…2dc3) · Vault 0xd75c…f576 · USDC 0.0.429274 · facilitator api.testnet.blocky402.com · 1 credit ≡ $0.001 by definition · contract value unit is tinybar (sent/1e10), see SPEC money rule.</p>
-          <p className="mb-0 mt-2"><Link href="/api" className="text-[#2563EB] underline">Manage keys →</Link></p>
-        </div>
+        <p className="m-0 text-sm"><Link href="/api" className="text-[#2563EB] underline">Manage keys →</Link></p>
       </main>
     </div>
   );

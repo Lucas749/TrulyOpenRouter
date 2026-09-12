@@ -190,13 +190,13 @@ export default function AccountPage() {
             <Link href="/host" className="hover:text-black">Serve</Link>
             <Link href="/docs" className="hover:text-black">Docs</Link>
           </nav>
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black text-xs font-medium text-white">{initial}</span>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black text-xs font-medium text-white">{initial}</span>
         </div>
       </header>
       <main className="mx-auto flex w-full max-w-[1200px] items-start gap-10 px-6 py-10">
         <aside className="flex w-56 shrink-0 flex-col gap-1">
           <div className="mb-4 flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black text-sm font-medium text-white">{initial}</span>
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black text-sm font-medium text-white">{initial}</span>
             <span className="min-w-0">
               <span className="block truncate text-sm font-medium">{shownName}</span>
               <span className="block truncate font-mono text-[11px] text-[#6E6E73]">{address ?? ""}</span>
