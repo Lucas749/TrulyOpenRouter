@@ -12,12 +12,14 @@ const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What c
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
 import Markdown from "../components/markdown";
+import { txUrl } from "../../lib/chain";
 
 interface Msg {
   role: string;
   content: string;
   receipt?: string;
   settled?: boolean;
+  debitTx?: string; // vault debit hash, for the HashScan link under a settled reply
   subscribeCta?: boolean;
 }
 
@@ -164,6 +166,17 @@ export default function ChatPage() {
         body: JSON.stringify({ model, messages: [{ role: "user", content: text }], ...(billTo !== "personal" ? { tor_team: billTo } : handle ? { userHandle: handle } : {}) }),
       });
       const d = await r.json();
+      // The chat response carries the receipt id but not the debit hash, so read the
+      // receipt once and link the proof straight out to HashScan.
+      let debitTx: string | undefined;
+      if (r.ok && d.tor_receipt && d.tor_settled) {
+        try {
+          const rec = await (await fetch(`${GATEWAY}/api/receipts/${d.tor_receipt}`)).json();
+          if (typeof rec?.debitTx === "string" && rec.debitTx) debitTx = rec.debitTx;
+        } catch {
+          /* A missing proof link must never hide the answer. */
+        }
+      }
       apply({
         role: "assistant",
         content: r.ok
@@ -173,6 +186,7 @@ export default function ChatPage() {
             : r.status === 401 ? "Sign in again to continue." : `Error: ${d.error?.message ?? "Request failed. Try again."}`,
         receipt: d.tor_receipt,
         settled: d.tor_settled,
+        debitTx,
         subscribeCta: r.status === 402,
       });
     } catch {
@@ -283,20 +297,21 @@ export default function ChatPage() {
                 )}
               </div>
               {m.receipt && (
-                <p className="m-0 font-mono text-[11px] text-emerald-700">
+                <p className="m-0 flex flex-wrap items-center gap-2 font-mono text-[11px] text-emerald-700">
                   {m.settled ? (
                     <>
-                      ✓{" "}
-                      <a
-                        href={`/api/gw/api/receipts/${m.receipt}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="Open the receipt: both payment legs and the HCS sequence"
-                        className="underline decoration-emerald-700/40 underline-offset-2 hover:decoration-emerald-700"
-                      >
-                        {m.receipt.slice(0, 12)}…
-                      </a>{" "}
-                      · settled ↗
+                      <span>✓ {m.receipt.slice(0, 12)}… · settled</span>
+                      {m.debitTx && (
+                        <a
+                          href={txUrl(m.debitTx)}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="This payment on HashScan"
+                          className="inline-flex items-center gap-1 rounded-full border border-emerald-700/30 px-2 py-[1px] text-[10px] hover:bg-emerald-50"
+                        >
+                          See the transaction ↗
+                        </a>
+                      )}
                     </>
                   ) : (
                     <Link href="/onboarding" className="underline">demo reply — subscribe to settle onchain</Link>
