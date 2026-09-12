@@ -11,3 +11,12 @@ export const accountUrl = (id?: string | null): string => (id ? `${ROOT}/account
 export const contractUrl = (addr?: string | null): string => (addr ? `${ROOT}/contract/${addr}` : "#");
 export const tokenUrl = (id?: string | null): string => (id ? `${ROOT}/token/${id}` : "#");
 export const topicUrl = (id: string = HCS_AUDIT_TOPIC): string => `${ROOT}/topic/${id}`;
+
+/// @notice Hedera transaction ids arrive as `0.0.x@seconds.nanos`; explorers want
+/// `0.0.x-seconds-nanos`. Only the separators change — the dots inside the account
+/// id must survive, so the timestamp is converted on its own.
+export const hederaTxUrl = (id?: string | null): string => {
+  const [account, stamp] = (id ?? "").split("@");
+  if (!account || !stamp) return "#";
+  return `${ROOT}/transaction/${account}-${stamp.replace(".", "-")}`;
+};

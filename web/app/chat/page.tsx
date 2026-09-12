@@ -12,7 +12,7 @@ const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What c
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
 import Markdown from "../components/markdown";
-import { txUrl } from "../../lib/chain";
+import { hederaTxUrl, txUrl } from "../../lib/chain";
 
 interface Msg {
   role: string;
@@ -20,6 +20,7 @@ interface Msg {
   receipt?: string;
   settled?: boolean;
   debitTx?: string; // vault debit hash, for the HashScan link under a settled reply
+  x402Tx?: string; // the host's USDC payment — the leg that pays the machine that served
   subscribeCta?: boolean;
 }
 
@@ -169,10 +170,12 @@ export default function ChatPage() {
       // The chat response carries the receipt id but not the debit hash, so read the
       // receipt once and link the proof straight out to HashScan.
       let debitTx: string | undefined;
+      let x402Tx: string | undefined;
       if (r.ok && d.tor_receipt && d.tor_settled) {
         try {
           const rec = await (await fetch(`${GATEWAY}/api/receipts/${d.tor_receipt}`)).json();
           if (typeof rec?.debitTx === "string" && rec.debitTx) debitTx = rec.debitTx;
+          if (typeof rec?.x402Transaction === "string" && rec.x402Transaction) x402Tx = rec.x402Transaction;
         } catch {
           /* A missing proof link must never hide the answer. */
         }
@@ -187,6 +190,7 @@ export default function ChatPage() {
         receipt: d.tor_receipt,
         settled: d.tor_settled,
         debitTx,
+        x402Tx,
         subscribeCta: r.status === 402,
       });
     } catch {
@@ -301,15 +305,27 @@ export default function ChatPage() {
                   {m.settled ? (
                     <>
                       <span>✓ {m.receipt.slice(0, 12)}… · settled</span>
+                      {/* Two separate legs: x402 pays the host in USDC, the vault debits credits. */}
+                      {m.x402Tx && (
+                        <a
+                          href={hederaTxUrl(m.x402Tx)}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="The host's USDC payment on HashScan, settled over x402"
+                          className="inline-flex items-center gap-1 rounded-full border border-emerald-700/40 bg-emerald-50 px-2 py-[1px] text-[10px] font-medium hover:bg-emerald-100"
+                        >
+                          USDC to host ↗
+                        </a>
+                      )}
                       {m.debitTx && (
                         <a
                           href={txUrl(m.debitTx)}
                           target="_blank"
                           rel="noreferrer"
-                          title="This payment on HashScan"
+                          title="The vault debit on HashScan — your credits coming down"
                           className="inline-flex items-center gap-1 rounded-full border border-emerald-700/30 px-2 py-[1px] text-[10px] hover:bg-emerald-50"
                         >
-                          See the transaction ↗
+                          vault debit ↗
                         </a>
                       )}
                     </>
