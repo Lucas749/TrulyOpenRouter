@@ -16,6 +16,26 @@ Every API request settles via x402. Hosts can monitize excess compute.
 
 ## How it works
 
+Four steps, and only the last one touches a host. Every rule you set is checked
+before the payment clears, not after the tokens are gone.
+
+```mermaid
+flowchart LR
+    W["Team wallet<br/>one per org, minted by Privy<br/>owned 2-of-2"]
+    V["Vault<br/>holds the credits<br/>quota and spend caps enforced in the contract"]
+    R["Router<br/>scored on price, latency,<br/>stake and your firm rules"]
+    H["Host that wins<br/>serves the call<br/>keeps 90% of what you spent"]
+    P["Protocol<br/>10%"]
+    S1["too slow"]
+    S2["region blocked"]
+
+    W -->|subscription in| V
+    V -->|per call| R
+    R -.-> S1
+    R -.-> S2
+    R ==>|x402 signed per call| H
+    H -->|fee| P
+```
 
 1. **Subscribe** — HBAR into `SubscriptionVault` → credits (10 HBAR → 10,000).
 2. **Chat** — the gateway routes to a host; $0.001 testnet USDC goes to that host's
@@ -174,7 +194,8 @@ The first end-to-end loop: [subscribe](https://hashscan.io/testnet/transaction/0
 
 **Code to read**
 
-- `gateway/src/x402.ts` — facilitator selection. 15 lines, and the whole Blocky402 decision.
+- `gateway/src/x402.ts` — which facilitator settles the payment. Fifteen lines, and the only
+  place that choice is made: testnet settles through **Blocky402**, not the `x402.org` reference.
 - `gateway/src/payer.ts` — the paid retry. `paymentRequirementProblem()` refuses a host's
   402 terms unless scheme, network, asset, amount, fee payer and payee all fit hard bounds;
   `onBeforePaymentCreation` then checks the payee account's **EVM alias matches the registered

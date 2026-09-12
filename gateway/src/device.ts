@@ -4,7 +4,7 @@ import { db } from "./db.js";
 // Device-code login for the host CLI: `tor-host login` shows a code, the user approves it
 // on the web (Privy-authenticated), the CLI polls until approved, then stores the token.
 // v1: codes are short-lived randoms; approval binds a userId. Production adds rate limits
-// + signature-bound tokens (see SPEC).
+// + signature-bound tokens.
 
 const CODE_TTL_MS = 10 * 60_000;
 

@@ -23,7 +23,7 @@ export function loadReferences(): Record<string, ReferenceSet> {
 /// Sends deterministic fingerprint probes (temperature 0, fixed seed) and compares against
 /// reference outputs captured from a trusted run of the same serving stack.
 ///
-/// Honesty notes (SPEC §7 verifiability):
+/// Honesty notes on what this does and does not prove:
 /// - Greedy outputs can legitimately differ across backends/quantizations. References MUST be
 ///   captured from the same stack hosts run (our pinned host-runner image). Cross-stack
 ///   mismatches are a signal, not proof — hence battery + threshold + consecutive-round policy.

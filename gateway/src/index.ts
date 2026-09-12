@@ -900,7 +900,7 @@ export function createApp(opts: GatewayOptions = {}) {
   });
 
   // Hosts self-report their region slug. Validated, overwrite-only, no auth in dev
-  // (production: signature check against the host key — see SPEC).
+  // (production: signature check against the host key).
   app.post("/api/hosts/:address/meta", async (req, res) => {
     if (!opts.meta) {
       res.status(501).json({ error: { message: "host meta not configured", type: "unavailable" } });
@@ -915,7 +915,7 @@ export function createApp(opts: GatewayOptions = {}) {
   });
 
   // Claim a host for an account (link step of `tor-host login`). Dev: open + overwrite;
-  // production: signature check that the caller holds the host key (see SPEC).
+  // production: signature check that the caller holds the host key.
   app.post("/api/hosts/:address/owner", async (req, res) => {
     if (!opts.meta) {
       res.status(501).json({ error: { message: "host meta not configured", type: "unavailable" } });

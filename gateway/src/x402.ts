@@ -1,7 +1,8 @@
 import { HTTPFacilitatorClient, x402ResourceServer } from "@x402/core/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 
-// Qual REQUIRES Blocky402 settlement: default testnet to Blocky, NOT x402.org (see SPEC §8a).
+// x402 needs a facilitator to verify and settle a payment. Testnet goes through Blocky402,
+// which settles on Hedera, rather than the x402.org reference. Override with the env var.
 const TESTNET_FACILITATOR =
   process.env.X402_TESTNET_FACILITATOR_URL ?? "https://api.testnet.blocky402.com";
 

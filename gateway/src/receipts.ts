@@ -29,7 +29,7 @@ export interface ReceiptInput {
   hcsSeq?: string; // audit topic sequence (the public proof link)
 }
 
-// Money rule (SPEC §7): 1 credit ≡ $0.001 BY DEFINITION. Displays derive $ as
+// Money rule: 1 credit ≡ $0.001 BY DEFINITION. Displays derive $ as
 // credits × 0.001 — a defined unit conversion, never a market rate. Onchain wei
 // amounts map 1:1 to credit base units at the documented testnet rate.
 
@@ -38,7 +38,7 @@ export interface Receipt extends ReceiptInput {
   ts: number;
 }
 
-/// @notice Bodies never touch a receipt — hashes only (see privacy split, SPEC §1b…§4).
+/// @notice Bodies never touch a receipt — prompt and completion are recorded as hashes only.
 export function buildReceipt(input: ReceiptInput, ts = Date.now()): Receipt {
   const id = sha256hex(
     [input.promptHash, input.completionHash, input.modelDigest, input.host, input.priceWei, input.latencyMs,
