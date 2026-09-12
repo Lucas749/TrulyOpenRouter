@@ -63,11 +63,29 @@ say(
 
 if (!run("which", ["wallet-cli"]).stdout.trim()) fail("Ledger's wallet-cli is not installed: npm i -g @ledgerhq/wallet-cli");
 if (run("docker", ["info"], { stdio: "ignore" }).status !== 0) fail("Docker is not running.");
-if (!existsSync(SEALED_KEY)) fail(`No sealed agent key at ${SEALED_KEY}. Run: node agent-cli/bin/tor-agent.mjs seal`);
 
-// ------------------------------------------------------- 1. the sealed key
+// --------------------------------------------------- 1. where the agent comes from
 
-await step(1, "The agent's key is sealed in the Ledger Key Ring", "Nothing readable is on disk. This is what an attacker would find.");
+await step(1, "The agent is created in the signed-in web app", "Its limits and its Ledger are set here, once, by a human.");
+const SITE = BASE.replace("/api/gw", "");
+if (process.platform === "darwin") spawnSync("open", [`${SITE}/agents`]);
+say(
+  box("On screen at /agents", [
+    `New agent   → "Agent name", then "Funding source" (personal or a team)`,
+    `limits      → "Credits per UTC day" is 0 here, so the first task must ask`,
+    `checkbox    → "Credit limits may request a human approval" stays on`,
+    `Create agent→ "Key for <name>, shown once", with Copy next to it`,
+    `Connect Ledger → the device shows its address, then signs the enrolment`,
+    ``,
+    `That key is what gets sealed below. It is never stored in readable form.`,
+  ]),
+);
+
+if (!existsSync(SEALED_KEY)) fail(`No sealed agent key yet. Copy the key from that page, then run: node agent-cli/bin/tor-agent.mjs seal`);
+
+// ------------------------------------------------------- 2. the sealed key
+
+await step(2, "The agent's key is sealed in the Ledger Key Ring", "Nothing readable is on disk. This is what an attacker would find.");
 const sealed = readFileSync(SEALED_KEY);
 say(
   box("On disk", [
@@ -79,9 +97,9 @@ say(
 say(dim("  keys this machine keeps on the ring:"));
 spawnSync("wallet-cli", ["ring", "keys"], { stdio: "inherit" });
 
-// --------------------------------------------------- 2. a host with no USB
+// --------------------------------------------------- 3. a host with no USB
 
-await step(2, `Bring up ${CONTAINER}: a host with no USB port`, "A plain Linux box. No Ledger can ever be plugged into it.");
+await step(3, `Bring up ${CONTAINER}: a host with no USB port`, "A plain Linux box. No Ledger can ever be plugged into it.");
 if (inContainer(["true"]).status !== 0) {
   const spin = new Spinner().start("starting the container");
   const up = run("docker", ["compose", "-f", COMPOSE, "up", "-d", "--build"]);
@@ -101,26 +119,26 @@ say(
   ]),
 );
 
-// ------------------------------------------- 3. locked out before enrolment
+// ------------------------------------------- 4. locked out before enrolment
 
-await step(3, "Show that the host cannot open the secret yet", "Removing its Key Ring membership puts it back to a fresh machine.");
+await step(4, "Show that the host cannot open the secret yet", "Removing its Key Ring membership puts it back to a fresh machine.");
 revoke(account);
 const locked = inContainer(["tor-agent", "ring-check"]);
 say(locked.status === 0 ? warn("the host could still open it") : ok("the host cannot open the sealed key: no Key Ring membership"));
 
-// --------------------------------------------------------- 4. enrol the host
+// --------------------------------------------------------- 5. enrol the host
 
-await step(4, "Enrol the host from this Mac", "The Ledger stays here. Only the right to open Key Ring secrets travels, over stdin.");
+await step(5, "Enrol the host from this Mac", "The Ledger stays here. Only the right to open Key Ring secrets travels, over stdin.");
 if (agent(["enroll", "--docker", CONTAINER], { stdio: "inherit" }).status !== 0) fail("Enrolment failed.");
 
-await step(5, "Ask the host what it can see", "It opens the key with no device attached, and reads its own limits from the gateway.");
+await step(6, "Ask the host what it can see", "It opens the key with no device attached, and reads its own limits from the gateway.");
 const before = inContainer(["tor-agent", "status"]);
 say(output(before).trim());
 if (APPROVAL_ID.test(output(before))) say(dim("  (an approval is already waiting; this demo signs the one it creates, by id)"));
 
-// ------------------------------------------- 6. the host asks, and is stopped
+// ------------------------------------------- 7. the host asks, and is stopped
 
-await step(6, "The host tries to do work", "Its daily limit stops the request. Nothing is sent, and no host is paid.");
+await step(7, "The host tries to do work", "Its daily limit stops the request. Nothing is sent, and no host is paid.");
 const child = spawn("docker", ["exec", "-e", "MAX_TOKENS=32", CONTAINER, "tor-agent", "run", PROMPT], { stdio: ["ignore", "pipe", "pipe"] });
 let transcript = "";
 for (const stream of [child.stdout, child.stderr]) stream.setEncoding("utf8").on("data", (d) => (transcript += d));
@@ -154,15 +172,15 @@ if (STOP_AFTER === "request") {
   process.exit(0);
 }
 
-// ------------------------------------------------------- 7. the Ledger press
+// ------------------------------------------------------- 8. the Ledger press
 
-await step(7, "Allow that spend on your Ledger", "Plug in the Ledger, unlock it, open the Ethereum app, and quit Ledger Live.");
+await step(8, "Allow that spend on your Ledger", "Plug in the Ledger, unlock it, open the Ethereum app, and quit Ledger Live.");
 // Name the approval, so an older one waiting cannot be signed in place of this one.
 agent(["approve", ...(approval ? [approval] : [])], { stdio: "inherit" });
 
-// ------------------------------------------------- 8. the answer comes back
+// ------------------------------------------------- 9. the answer comes back
 
-await step(8, "The remote agent finishes on its own", "It was waiting for your decision, not for a new command.");
+await step(9, "The remote agent finishes on its own", "It was waiting for your decision, not for a new command.");
 const code = await new Promise((resolve) => (child.exitCode !== null ? resolve(child.exitCode) : child.on("close", resolve)));
 say(transcript.trim().split("\n").slice(-14).join("\n"));
 if (code !== 0) fail("The remote run did not finish cleanly.");
@@ -189,9 +207,9 @@ if (receipt) {
   );
 }
 
-// ------------------------------------------------------------ 9. cut it off
+// ----------------------------------------------------------- 10. cut it off
 
-await step(9, "Cut the host off", "Remove its membership. Every file stays where it is, and it can open nothing.");
+await step(10, "Cut the host off", "Remove its membership. Every file stays where it is, and it can open nothing.");
 revoke(account);
 const after = inContainer(["tor-agent", "ring-check"]);
 say(after.status === 0 ? warn("the host can still open the key") : ok("the host can no longer open the sealed key"));
