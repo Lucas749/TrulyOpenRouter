@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { MockBanner, useMock } from "../components/mock";
+import { Wordmark } from "../components/mark";
 
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
@@ -44,7 +45,8 @@ export default function HostPage() {
       {mock && <MockBanner onOff={toggleMock} />}
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
-          <Link href="/" className="text-[18px] font-semibold">Truly<span className="text-[15px] font-normal text-[#8F8F8F]">OpenRouter</span></Link>
+          <Link href="/" >
+            <Wordmark /></Link>
           <nav className="flex items-center gap-6 text-sm font-medium text-[#6E6E73]">
             <Link href="/chat" className="hover:text-black">Chat</Link>
             <Link href="/network" className="hover:text-black">Network</Link>

@@ -7,6 +7,7 @@ import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, Copy, Cpu, ExternalLin
 import { hbarLabel, hostAddresses, loadHost, loadHostDashboard, storedHosts, storeHosts, totalHostAmount, type HostDashboard, type HostEntry } from "../../../lib/host-dashboard";
 import { usdLabel } from "../../../lib/money";
 import { hostLocation } from "../../../lib/host-locations";
+import { Wordmark } from "../../components/mark";
 
 const button = "inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-[#E5E5E0] bg-white px-4 text-sm font-medium transition hover:bg-[#F5F5F5] disabled:cursor-wait disabled:opacity-50";
 const primary = "inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-[#0D0D0D] px-4 text-sm font-medium text-white transition hover:bg-[#262626]";
@@ -106,7 +107,7 @@ export default function HostDashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#FFFFFF] font-sans text-[#0D0D0D]">
-      <header className="border-b border-[#E5E5E0] bg-white"><div className="mx-auto flex h-[72px] max-w-[1248px] items-center justify-between gap-5 px-5 sm:px-8"><Link href="/" className="text-lg font-semibold tracking-tight">Truly<span className="font-normal text-[#8F8F8F]">OpenRouter</span></Link><nav className="hidden items-center gap-7 text-sm text-[#737373] sm:flex"><Link href="/chat" className="hover:text-black">Chat</Link><Link href="/network" className="hover:text-black">Network</Link><Link href="/host" className="font-medium text-[#0D0D0D]">Serve</Link></nav><Link href="/account" className="text-xs text-[#737373]">Account <ArrowUpRight className="ml-1 inline" size={13} /></Link></div></header>
+      <header className="border-b border-[#E5E5E0] bg-white"><div className="mx-auto flex h-[72px] max-w-[1248px] items-center justify-between gap-5 px-5 sm:px-8"><Link href="/" ><Wordmark /></Link><nav className="hidden items-center gap-7 text-sm text-[#737373] sm:flex"><Link href="/chat" className="hover:text-black">Chat</Link><Link href="/network" className="hover:text-black">Network</Link><Link href="/host" className="font-medium text-[#0D0D0D]">Serve</Link></nav><Link href="/account" className="text-xs text-[#737373]">Account <ArrowUpRight className="ml-1 inline" size={13} /></Link></div></header>
       <main className="mx-auto max-w-[1248px] px-5 pb-16 pt-9 sm:px-8 sm:pt-12">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-5"><div><Link href="/host" className="text-xs font-medium text-[#737373]">Serve / Your workspace</Link><h1 className="mb-2 mt-3 text-[34px] font-semibold leading-tight tracking-[-0.04em] sm:text-[40px]">My hosts</h1><p className="m-0 text-sm text-[#737373]">Your models, activity, and earnings. All in one place.</p></div><div className="flex gap-2"><button onClick={() => setRefreshKey((n) => n + 1)} disabled={refreshing} className={button}><RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />Refresh</button><Link href="/host" className={primary}><Plus size={16} />Add a host</Link></div></div>
         {dashboard?.notice && <div role="status" className="mb-5 rounded-xl border border-[#E5E5E0] bg-[#F5F5F5] px-4 py-3 text-sm text-[#8B6B29]">{dashboard.notice}</div>}

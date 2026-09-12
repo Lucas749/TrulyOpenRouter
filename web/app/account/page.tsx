@@ -9,6 +9,8 @@ import { MockBanner, useMock } from "../components/mock";
 import { ApiKeysPanel } from "../api/page";
 import TeamOrgs from "../team/orgs";
 import TapQueue from "../security/taps";
+import { Wordmark } from "../components/mark";
+import AgentsPanel from "../agents/agents-panel";
 
 const VAULT = "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576";
 const VAULT_ABI = parseAbi([
@@ -30,6 +32,7 @@ const TABS = [
   { key: "wallets", label: "Wallets" },
   { key: "plan", label: "Plan and credits" },
   { key: "keys", label: "API keys" },
+  { key: "agents", label: "Agents" },
   { key: "security", label: "Security" },
   { key: "team", label: "Team" },
   { key: "notifications", label: "Notifications" },
@@ -177,8 +180,8 @@ export default function AccountPage() {
       {mock && <MockBanner onOff={toggleMock} />}
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
-          <Link href="/" className="text-[18px] font-semibold">
-            Truly<span className="text-[15px] font-normal text-[#8F8F8F]">OpenRouter</span>
+          <Link href="/" >
+            <Wordmark />
           </Link>
           <nav className="flex items-center gap-6 text-sm font-medium text-[#6E6E73]">
             <Link href="/chat" className="hover:text-black">Chat</Link>
@@ -415,6 +418,13 @@ export default function AccountPage() {
                     <Link href="/agents" className="text-black underline">Open Agents</Link>
                   </p>
                   <ApiKeysPanel />
+                </div>
+              )}
+
+              {tab === "agents" && (
+                <div className="flex flex-col gap-6">
+                  <h1 className="m-0 text-[28px] font-normal tracking-[-0.02em]">Agents</h1>
+                  <AgentsPanel />
                 </div>
               )}
 

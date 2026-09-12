@@ -6,6 +6,7 @@ import LoginButton from "./components/login-button";
 import { MockBanner, useMock } from "./components/mock";
 import { MOCK_HOST_MATH, MOCK_HERO, MOCK_RECEIPTS, MOCK_STATS, type StatPoint } from "../lib/mock";
 import { topicUrl, txUrl } from "../lib/chain";
+import { Wordmark } from "./components/mark";
 
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
@@ -106,14 +107,7 @@ export default function Landing() {
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between gap-6 px-6">
           <Link href="/" className="flex items-center gap-2">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
-              <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" stroke="#E5E5E0" />
-              <path d="M5.5 15.5h3.2c1.6 0 2.1-3 3.7-3h1.4" />
-              <circle cx="6" cy="15.5" r="1.1" fill="#0D0D0D" stroke="none" />
-              <circle cx="10.4" cy="13.6" r="1.1" fill="#0D0D0D" stroke="none" />
-              <circle cx="17.4" cy="12.5" r="2.6" />
-            </svg>
-            <span className="text-[18px] font-semibold">Truly<span className="text-[15px] font-normal text-[#8F8F8F]">OpenRouter</span></span>
+            <Wordmark />
           </Link>
           <nav className="flex items-center gap-6 text-sm font-medium text-[#6E6E73]">
             <Link href="/chat" className="hover:text-black">Chat</Link>
@@ -307,7 +301,7 @@ export default function Landing() {
         <div className="mx-auto flex max-w-[1200px] flex-col gap-10">
           <div className="grid grid-cols-2 gap-8 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
             <div className="flex flex-col gap-2.5">
-              <span className="text-[19px] font-semibold">Truly<span className="text-base font-normal text-[#8F8F8F]">OpenRouter</span></span>
+              <Wordmark />
               <p className="m-0 max-w-[260px] text-[13px] leading-relaxed text-[#6E6E73]">Like OpenRouter, except open. Open models, independent hosts, verifiable settlement. {mock ? "Figures on this page are mock data." : "Figures on this page are live testnet data."}</p>
             </div>
             <div className="flex flex-col gap-2.5">

@@ -8,6 +8,7 @@ import { hederaTestnet } from "../../lib/hedera-chains";
 import LoginButton from "../components/login-button";
 import { contractUrl } from "../../lib/chain";
 import { friendlyTxError } from "../../lib/tx-errors";
+import { Wordmark } from "../components/mark";
 
 const VAULT = "0xd75c46c0e82115ab4d24326dbbbbffe4e7d0c576";
 const PLAN_ID = 0;
@@ -161,8 +162,8 @@ export default function OnboardingPage() {
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[640px] items-center justify-between px-6">
-          <Link href="/" className="text-[18px] font-semibold">
-            Truly<span className="text-[15px] font-normal text-[#8F8F8F]">OpenRouter</span>
+          <Link href="/" >
+            <Wordmark />
           </Link>
           <LoginButton />
         </div>

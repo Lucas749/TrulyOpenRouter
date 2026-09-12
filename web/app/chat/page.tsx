@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import LoginButton from "../components/login-button";
 import { useAuthFetch } from "../components/use-auth-fetch";
+import { Wordmark } from "../components/mark";
 
 const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What can you run on a laptop GPU?", "How do host payouts work?"];
 
@@ -182,7 +183,8 @@ export default function ChatPage() {
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 w-full max-w-2xl items-center justify-between px-6">
-          <Link href="/" className="text-[18px] font-semibold">Truly<span className="text-[15px] font-normal text-[#8F8F8F]">OpenRouter</span></Link>
+          <Link href="/" >
+            <Wordmark /></Link>
           <nav className="flex items-center gap-5 text-sm font-medium text-[#6E6E73]">
             <span className="text-black">Chat</span>
             <Link href="/network" className="hover:text-black">Network</Link>
