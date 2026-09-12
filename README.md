@@ -59,6 +59,27 @@ tor-agent status                    # limits, usage, and anything waiting
 node agent-cli/demo.mjs             # the guided 10-step demo, pauses before each step
 ```
 
+## Where it runs
+
+```
+browser ──▶ Vercel (Next.js UI + its own Postgres for team state)
+                │  /api/gw/*
+                ▼
+            gateway :4121  ──▶ RDS Postgres (agents, approvals, receipts, team mirror)
+                │                      │
+                │ routes + pays        └──▶ HCS topic 0.0.10379640 (receipt ids)
+                ▼
+            guard :4122 ──▶ Ollama        ← one VPS runs the gateway and this host
+```
+
+A request goes browser → Vercel → the gateway. The gateway checks the caller's limits
+**before** contacting anyone, picks a host, calls its guard, gets an HTTP 402, signs a
+test-USDC transfer on Hedera, and retries. The host serves the completion, the user's vault
+credits are metered down, and one receipt records both legs.
+
+Hosts are independent: anyone can run the guard on their own machine and register. The VPS
+happens to run one so the network is never empty.
+
 ## Run it
 
 ```sh
