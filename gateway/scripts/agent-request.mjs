@@ -69,7 +69,7 @@ async function approveOnLedger(approvalId) {
   const res = await fetch(`${base}/v1/agent/approvals/${encodeURIComponent(approvalId)}`, { headers: auth });
   const ledger = (await res.json().catch(() => ({}))).ledger;
   if (!res.ok || !ledger) return console.error("This approval has no Ledger route. Use the approval page instead.");
-  const signerScript = fileURLToPath(new URL("../../agent-demo/ledger-sign.mjs", import.meta.url));
+  const signerScript = fileURLToPath(new URL("../../agent-cli/src/ledger-sign.mjs", import.meta.url));
   const signed = spawnSync(process.execPath, [signerScript, ledger.address], { input: ledger.message, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] });
   const signature = String(signed.stdout ?? "").trim();
   if (signed.status !== 0 || !/^0x[0-9a-fA-F]{130}$/.test(signature)) {

@@ -1,0 +1,13 @@
+# The hosted agent used in the demo: no device, no USB, no readable secret.
+#   docker compose -f agent-cli/docker-compose.yml up -d --build
+#   tor-agent enroll --docker tor-agent-host
+services:
+  agent-host:
+    build:
+      context: ..
+      dockerfile: agent-cli/Dockerfile
+    container_name: tor-agent-host
+    environment:
+      KEYRING_PASS: ${KEYRING_PASS:-tor-demo}
+      TOR_BASE: ${TOR_BASE:-https://trulyopenrouter.vercel.app/api/gw}
+    command: ["sleep", "infinity"]

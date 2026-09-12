@@ -36,13 +36,16 @@ The first output line says where the key came from: `Agent key: decrypted from t
 ## Approve over-limit spend on the Ledger from the terminal
 
 Add `TOR_APPROVE=ledger` to the command above. On `approval_required`, the helper fetches the exact approval text and
-`agent-demo/ledger-sign.mjs` asks the Ledger connected over USB to sign it (Ledger's Device Management Kit). The script
-first checks that the device is the agent's enrolled Ledger. The gateway verifies the signature against that address,
-then the request is sent once. Nothing touches a chain.
+`agent-cli/src/ledger-sign.mjs` asks the Ledger connected over USB to sign it (Ledger's Device Management Kit). The
+script first checks that the device is the agent's enrolled Ledger. The gateway verifies the signature against that
+address, then the request is sent once. Nothing touches a chain.
 
-One-time setup: `npm --prefix agent-demo install`. For each approval the user keeps the Ledger plugged in and unlocked
+One-time setup: `npm --prefix agent-cli install`. For each approval the user keeps the Ledger plugged in and unlocked
 with the Ethereum app open, and Ledger Live quit. Tell the user to watch the Ledger as soon as the output says
 `Read the approval on the Ledger and sign it`.
+
+The same steps run from `agent-cli` as `tor-agent run "<task>" --approve ledger`, and `tor-agent enroll --docker <name>`
+gives a host with no USB port its own Key Ring membership. See `agent-cli/README.md`.
 
 If the output says `No Ledger found`, `not the agent's enrolled Ledger`, `You rejected`, or `No Ledger signature`, the
 approval stays pending and the approval link still works. Relay the message; do not start another run.

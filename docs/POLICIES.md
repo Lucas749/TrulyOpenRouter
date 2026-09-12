@@ -284,7 +284,7 @@ agent, request, and policy revision. Approvers:
 - **Ledger route:** the enrolled device signs the exact message through Ledger's
   Device Management Kit over WebHID.
 - **Terminal Ledger route:** the same signature, made over USB from a terminal
-  (`TOR_APPROVE=ledger`, `agent-demo/ledger-sign.mjs`). The agent relays it with
+  (`tor-agent approve`, `agent-cli/src/ledger-sign.mjs`). The agent relays it with
   its own key (`POST /v1/agent/approvals/:id/ledger-signature`); the gateway
   rebuilds the message, requires the enrolled address as the signer, and applies
   the same pending, expiry, and revision checks. No chain is involved.

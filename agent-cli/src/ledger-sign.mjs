@@ -4,7 +4,7 @@
 // the agent's enrolled Ledger, shows the message on the device, and prints only the signature on stdout.
 // Progress goes to stderr. Nothing is sent to any chain.
 //
-//   node agent-demo/ledger-sign.mjs 0xEnrolledLedgerAddress < approval-message.txt
+//   node agent-cli/src/ledger-sign.mjs 0xEnrolledLedgerAddress < approval-message.txt
 import { createRequire } from "node:module";
 
 // The kits' ESM builds use directory imports that Node cannot resolve; their CommonJS builds load in Node.
@@ -30,7 +30,7 @@ const describe = (e) => e?.message || e?.originalError?.message || e?._tag || St
 const timeout = (ms, what) => new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} took too long`)), ms).unref());
 
 const expected = String(process.argv[2] ?? "").toLowerCase();
-if (!/^0x[0-9a-f]{40}$/.test(expected)) fail("Usage: node agent-demo/ledger-sign.mjs <enrolled Ledger address> < approval-message.txt");
+if (!/^0x[0-9a-f]{40}$/.test(expected)) fail("Usage: node agent-cli/src/ledger-sign.mjs <enrolled Ledger address> < approval-message.txt");
 const message = await new Promise((resolve) => {
   let text = "";
   process.stdin.setEncoding("utf8").on("data", (d) => (text += d)).on("end", () => resolve(text));
