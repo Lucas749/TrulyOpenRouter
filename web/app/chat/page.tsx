@@ -11,6 +11,8 @@ const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What c
 
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
+import Markdown from "../components/markdown";
+
 interface Msg {
   role: string;
   content: string;
@@ -274,7 +276,11 @@ export default function ChatPage() {
           {msgs.map((m, i) => (
             <div key={i} className={`flex flex-col gap-1 py-4 ${m.role === "user" ? "items-end" : "items-start"}`}>
               <div className={m.role === "user" ? "max-w-[85%] rounded-2xl bg-black px-4 py-2 text-white" : "w-full"}>
-                <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed">{m.content}</p>
+                {m.role === "user" ? (
+                  <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed">{m.content}</p>
+                ) : (
+                  <Markdown text={m.content} />
+                )}
               </div>
               {m.receipt && (
                 <p className="m-0 font-mono text-[11px] text-emerald-700">
