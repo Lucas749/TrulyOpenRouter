@@ -314,7 +314,7 @@ export default function ChatPage() {
                           title="The host's USDC payment on HashScan, settled over x402"
                           className="inline-flex items-center gap-1 rounded-full border border-emerald-700/40 bg-emerald-50 px-2 py-[1px] text-[10px] font-medium hover:bg-emerald-100"
                         >
-                          USDC to host ↗
+                          x402 · USDC to host ↗
                         </a>
                       )}
                       {m.debitTx && (
