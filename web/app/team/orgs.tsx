@@ -93,7 +93,7 @@ export default function TeamOrgs({
     if (mock) {
       // Mock swaps ENTIRELY to fixtures: one fixture org + fixture members.
       const { MOCK_TEAM_ORG } = await import("../../lib/mock");
-      setOrgs([{ id: MOCK_TEAM_ORG.id, display_name: "Acme (mock)", default_key_quorum_id: "quorum_mock", wallets: [] }]);
+      setOrgs([{ id: MOCK_TEAM_ORG.id, display_name: MOCK_TEAM_ORG.name, default_key_quorum_id: "quorum_mock", wallets: [] }]);
       return;
     }
     try {

@@ -163,10 +163,18 @@ export default function OrgRules({
 
   const load = useCallback(async () => {
     if (mock) {
+      // Mock swaps ENTIRELY to fixtures, pickers included: models and regions come from the
+      // same fixture hosts the network page shows, so the demo never says "loading…".
+      const { MOCK_HOSTS } = await import("../../lib/mock");
       setIsOwner(true);
       setCanManage(true);
-      setRules({ orgId, dailyCapCredits: 300, allowedModels: null, updatedAt: Date.now() });
+      setRules({ orgId, dailyCapCredits: 5000, rateLimitPerMin: 120, allowedModels: ["Llama-3.1-8B", "Qwen2.5-7B"], allowedRegions: ["eu-central", "eu-west"], updatedAt: Date.now() });
+      setDaily("5000");
+      setRate("120");
       setPending([]);
+      setModels([...new Set(MOCK_HOSTS.map((h) => h.modelId))]);
+      setRegions([...new Set(MOCK_HOSTS.map((h) => h.region))].sort());
+      setHosts(MOCK_HOSTS.map((h) => ({ address: h.address, modelId: h.modelId })));
       return;
     }
     try {

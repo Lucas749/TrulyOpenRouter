@@ -5,7 +5,7 @@ import { use, useEffect, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { createWalletClient, custom, parseAbi } from "viem";
 import { hederaTestnet } from "../../../../lib/hedera-chains";
-import { MockBanner, useMock } from "../../../components/mock";
+import { TopBanner, useDemo, useMock } from "../../../components/mock";
 import { MOCK_HOSTS } from "../../../../lib/mock";
 import { accountUrl, topicUrl, txUrl } from "../../../../lib/chain";
 
@@ -15,6 +15,7 @@ const REGISTRY_ABI = parseAbi(["function challenge(address host, bytes32 receipt
 export default function HostDetailPage({ params }: { params: Promise<{ address: string }> }) {
   const { address } = use(params);
   const [mock, toggleMock] = useMock();
+  const [demo, setDemo] = useDemo();
   const [d, setD] = useState<any | null>(null);
   const [missing, setMissing] = useState(false);
   const [wallet, setWallet] = useState<{ hbar: string; usdc: string } | null>(null);
@@ -90,7 +91,7 @@ export default function HostDetailPage({ params }: { params: Promise<{ address: 
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
-      {mock && <MockBanner onOff={toggleMock} />}
+      <TopBanner mock={mock} demo={demo} onOffMock={toggleMock} onOffDemo={setDemo} />
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[920px] items-center justify-between px-6">
           <Link href="/network" className="text-sm text-[#6E6E73] hover:text-black">← Network</Link>

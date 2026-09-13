@@ -9,7 +9,7 @@ import { topicUrl, txUrl } from "../../lib/chain";
 import { usdLabel } from "../../lib/money";
 
 const receiptUrl = (r: any): string => (r.debitTx ? txUrl(r.debitTx) : topicUrl());
-import { MockBanner, useMock } from "../components/mock";
+import { TopBanner, useDemo, useMock } from "../components/mock";
 import { MOCK_HOSTS, type MockHost } from "../../lib/mock";
 import { Wordmark } from "../components/mark";
 
@@ -71,6 +71,7 @@ function StatusDot({ active }: { active: boolean }) {
 
 export default function NetworkPage() {
   const [mock, toggleMock] = useMock();
+  const [demo, setDemo] = useDemo();
   const [tab, setTab] = useState<"hosts" | "live" | "receipts">("hosts");
   const [hosts, setHosts] = useState<Host[] | null>(null);
   const [receipts, setReceipts] = useState<Receipt[] | null>(null);
@@ -128,7 +129,7 @@ export default function NetworkPage() {
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
-      {mock && <MockBanner onOff={toggleMock} />}
+      <TopBanner mock={mock} demo={demo} onOffMock={toggleMock} onOffDemo={setDemo} />
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
           <Link href="/" >

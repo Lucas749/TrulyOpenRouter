@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useExportWallet, useLinkAccount, usePrivy, useUnlinkWallet, useWallets } from "@privy-io/react-auth";
 import { createPublicClient, createWalletClient, custom, http, parseAbi } from "viem";
 import { hederaTestnet } from "../../lib/hedera-chains";
-import { MockBanner, useMock } from "../components/mock";
+import { DEMO_ME, TopBanner, useDemo, useMock } from "../components/mock";
 import { ApiKeysPanel } from "../api/page";
 import TeamOrgs from "../team/orgs";
 import TapQueue from "../security/taps";
@@ -48,11 +48,15 @@ export default function AccountPage() {
   const { exportWallet } = useExportWallet();
   const [walletMsg, setWalletMsg] = useState<string | null>(null);
   const [mock, toggleMock] = useMock();
+  const [demo, setDemo] = useDemo();
   const [tab, setTab] = useState<TabKey>("profile");
 
-  const address = (user?.wallet?.address ?? wallets[0]?.address) as `0x${string}` | undefined;
+  // Demo mode stands in for a Privy login, so the page renders as a signed-in account
+  // reading fixtures. No request carries a token, so nothing here can be executed.
+  const address = (user?.wallet?.address ?? wallets[0]?.address ?? (demo ? DEMO_ME.wallet : undefined)) as `0x${string}` | undefined;
   const email = (user as any)?.email?.address ?? (user as any)?.google?.email ?? null;
-  const me = user ? { did: user.id, wallet: wallets[0]?.address ?? user?.wallet?.address ?? null, email } : null;
+  const me = user ? { did: user.id, wallet: wallets[0]?.address ?? user?.wallet?.address ?? null, email } : demo ? DEMO_ME : null;
+  const signedIn = authenticated || demo;
 
   // profile (display name lives server-side; email/login come from Privy)
   const [displayName, setDisplayName] = useState("");
@@ -120,6 +124,22 @@ export default function AccountPage() {
   }
 
   useEffect(() => {
+    if (demo) {
+      // Demo swaps ENTIRELY to fixtures; no call is made with the stand-in address.
+      void import("../../lib/mock").then((m) => {
+        // Without a name the avatar falls back to "?" and the heading renders blank.
+        setSavedName("Demo Explorer");
+        setHbar(m.MOCK_ACCOUNT.hbar);
+        setCredits(m.MOCK_ACCOUNT.credits);
+        setHederaId(m.MOCK_ACCOUNT.hederaId);
+        setReqCount(m.MOCK_ACCOUNT.reqCount);
+        setPaidUsd(m.MOCK_ACCOUNT.paidUsd);
+        setRecentCalls(m.MOCK_ACCOUNT.recentCalls);
+        setModelSplit(m.MOCK_ACCOUNT.modelSplit);
+        setVaultTxs(m.MOCK_ACCOUNT.vaultTxs);
+      });
+      return;
+    }
     if (!address) return;
     (async () => {
       try {
@@ -178,7 +198,7 @@ export default function AccountPage() {
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
-      {mock && <MockBanner onOff={toggleMock} />}
+      <TopBanner mock={mock} demo={demo} onOffMock={toggleMock} onOffDemo={setDemo} />
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
           <Link href="/" >
@@ -212,7 +232,7 @@ export default function AccountPage() {
             </button>
           ))}
           <button
-            onClick={logout}
+            onClick={() => (demo ? setDemo(false) : logout())}
             className="mt-4 flex h-10 items-center justify-center gap-2 rounded-full border border-black/10 text-sm hover:bg-black/5"
           >
             Sign out
@@ -220,9 +240,9 @@ export default function AccountPage() {
         </aside>
 
         <div className="min-w-0 flex-1">
-          {!ready ? (
+          {!ready && !demo ? (
             <div className="h-32 animate-pulse rounded-[14px] bg-[#F4F4F4]" />
-          ) : !authenticated ? (
+          ) : !signedIn ? (
             <div className="flex flex-col items-center gap-3 rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-12 text-center">
               <p className="m-0 text-sm text-[#6E6E73]">log in to manage your account</p>
               <Link href="/onboarding" className="flex h-10 items-center rounded-full bg-black px-5 text-sm text-white">Log in</Link>

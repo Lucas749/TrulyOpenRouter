@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { MockBanner, useMock } from "../components/mock";
+import { TopBanner, useDemo, useMock } from "../components/mock";
 import TapQueue from "./taps";
 
 export default function SecurityPage() {
   const [mock, toggleMock] = useMock();
+  const [demo, setDemo] = useDemo();
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
-      {mock && <MockBanner onOff={toggleMock} />}
+      <TopBanner mock={mock} demo={demo} onOffMock={toggleMock} onOffDemo={setDemo} />
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[720px] items-center justify-between px-6">
           <Link href="/account" className="text-sm text-[#6E6E73] hover:text-black">← Account</Link>

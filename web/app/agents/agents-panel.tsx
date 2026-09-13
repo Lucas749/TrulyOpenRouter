@@ -7,6 +7,7 @@ import { apiError } from "../../lib/api-error";
 import { connectLedger, preloadLedgerKit } from "../../lib/ledger-device";
 import LoginButton from "../components/login-button";
 import { useAuthFetch } from "../components/use-auth-fetch";
+import { useDemo } from "../components/mock";
 import AgentFunding from "./funding";
 
 // Agents workspace: agents get their own credentials with explicit limits,
@@ -194,6 +195,7 @@ function CopyButton({ text, label, dark = false }: { text: string; label: string
 
 export default function AgentsPanel() {
   const { ready, authenticated } = usePrivy();
+  const [demo] = useDemo();
   const authFetch = useAuthFetch();
   const [agents, setAgents] = useState<AgentRow[] | null>(null);
   const [details, setDetails] = useState<Record<string, Detail>>({});
@@ -253,6 +255,17 @@ export default function AgentsPanel() {
 
   // Deferred off the effect body, so loading state never lands in the same tick as the first paint.
   useEffect(() => {
+    if (demo) {
+      // Demo swaps ENTIRELY to fixtures; no agent call carries a token.
+      void import("../../lib/mock").then((m) => {
+        setAgents(m.MOCK_AGENTS as unknown as AgentRow[]);
+        setDetails(m.MOCK_AGENT_DETAILS as unknown as Record<string, Detail>);
+        setTeams([{ id: m.MOCK_TEAM_ORG.id, display_name: m.MOCK_TEAM_ORG.name }]);
+        setModels(["Llama-3.1-8B", "Qwen2.5-7B", "Mistral-7B"]);
+        setRegionList(["eu-central", "eu-west", "us-east", "us-west"]);
+      });
+      return;
+    }
     if (!authenticated) return;
     const timer = setTimeout(() => {
       void refresh().catch((e) => setErr(errorText(e)));
@@ -278,7 +291,7 @@ export default function AgentsPanel() {
         .catch(() => setRegionList([]));
     }, 0);
     return () => clearTimeout(timer);
-  }, [authenticated, authFetch, refresh]);
+  }, [authenticated, authFetch, refresh, demo]);
 
   // Load the Ledger kit when a row opens, so a click reaches the browser's device prompt in time.
   useEffect(() => {
@@ -494,9 +507,9 @@ export default function AgentsPanel() {
         </p>
       </div>
 
-      {!ready ? (
+      {!ready && !demo ? (
         <div className="h-32 animate-pulse rounded-[14px] bg-[#F4F4F4]" />
-      ) : !authenticated ? (
+      ) : !authenticated && !demo ? (
         <div className="flex flex-col items-center gap-3 rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-12 text-center">
           <p className="m-0 text-sm text-[#6E6E73]">Log in to create and manage agents.</p>
           <LoginButton />

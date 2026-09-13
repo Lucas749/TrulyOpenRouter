@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { MockBanner, useMock } from "../components/mock";
+import { TopBanner, useDemo, useMock } from "../components/mock";
 import { Wordmark } from "../components/mark";
 
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
@@ -16,6 +16,7 @@ const GPUS = [
 
 export default function HostPage() {
   const [mock, toggleMock] = useMock();
+  const [demo, setDemo] = useDemo();
   const [gpu, setGpu] = useState(GPUS[1]);
   const [duty, setDuty] = useState(5);
   const [median, setMedian] = useState<number | null>(null);
@@ -42,7 +43,7 @@ export default function HostPage() {
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
-      {mock && <MockBanner onOff={toggleMock} />}
+      <TopBanner mock={mock} demo={demo} onOffMock={toggleMock} onOffDemo={setDemo} />
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-6">
           <Link href="/" >

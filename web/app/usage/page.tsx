@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { DEMO_ME, TopBanner, useDemo, useMock } from "../components/mock";
 
 const GATEWAY = "/api/gw"; // same-origin proxy, never localhost (browser prompt + mixed content)
 
@@ -22,13 +23,21 @@ const short = (s: string, n = 6) => (s && s.length > n + 1 ? `${s.slice(0, n)}‚Ä
 export default function UsagePage() {
   const { ready, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
+  const [mock, toggleMock] = useMock();
+  const [demo, setDemo] = useDemo();
   const [filter, setFilter] = useState<"wallet" | "keys">("wallet");
   const [rows, setRows] = useState<Receipt[] | null>(null);
   const [keyCount, setKeyCount] = useState<Record<string, number>>({});
 
-  const address = user?.wallet?.address ?? wallets[0]?.address;
+  const address = user?.wallet?.address ?? wallets[0]?.address ?? (demo ? DEMO_ME.wallet : undefined);
+  // Demo reads as signed in, so the wallet history renders instead of the log-in prompt.
+  const signedIn = authenticated || demo;
 
   useEffect(() => {
+    if (demo) {
+      setKeyCount({ deadbeef01: 412, deadbeef02: 137 });
+      return;
+    }
     (async () => {
       try {
         const keys: { prefix: string }[] = JSON.parse(window.localStorage.getItem("tor-keys") ?? "[]");
@@ -42,9 +51,14 @@ export default function UsagePage() {
         setKeyCount(counts);
       } catch {}
     })();
-  }, []);
+  }, [demo]);
 
   useEffect(() => {
+    if (demo) {
+      // Demo swaps ENTIRELY to fixtures; no request is made with the stand-in address.
+      void import("../../lib/mock").then((m) => setRows(m.MOCK_USAGE_RECEIPTS));
+      return;
+    }
     if (!address || filter !== "wallet") {
       setRows(null);
       return;
@@ -59,12 +73,13 @@ export default function UsagePage() {
         setRows([]);
       }
     })();
-  }, [address, filter]);
+  }, [address, filter, demo]);
 
   const keyRows = Object.entries(keyCount);
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
+      <TopBanner mock={mock} demo={demo} onOffMock={toggleMock} onOffDemo={setDemo} />
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[720px] items-center justify-between px-6">
           <Link href="/account" className="text-sm text-[#6E6E73] hover:text-black">‚Üê Account</Link>
@@ -83,9 +98,9 @@ export default function UsagePage() {
 
         {filter === "wallet" && (
           <>
-            {!ready ? (
+            {!ready && !demo ? (
               <div className="h-24 animate-pulse rounded-[14px] bg-[#F4F4F4]" />
-            ) : !authenticated ? (
+            ) : !signedIn ? (
               <p className="rounded-[14px] border border-dashed border-[#E5E5E0] px-6 py-10 text-center text-sm text-[#8F8F8F]">log in on the account page to see wallet-attributed history</p>
             ) : rows === null ? (
               <div className="h-24 animate-pulse rounded-[14px] bg-[#F4F4F4]" />

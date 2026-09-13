@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import LoginButton from "./components/login-button";
-import { MockBanner, useMock } from "./components/mock";
+import { DemoInvite, TopBanner, useDemo, useMock } from "./components/mock";
 import { MOCK_HOST_MATH, MOCK_HERO, MOCK_RECEIPTS, MOCK_STATS, type StatPoint } from "../lib/mock";
 import { topicUrl, txUrl } from "../lib/chain";
 import { Wordmark } from "./components/mark";
@@ -69,6 +69,7 @@ function Meter({ name, value, pct, tone }: { name: string; value: string; pct: n
 
 export default function Landing() {
   const [mock, toggleMock] = useMock();
+  const [demo, setDemo] = useDemo();
   const [stats, setStats] = useState<StatPoint[] | null>(null);
   const [receipts, setReceipts] = useState<ReceiptView[] | null>(null);
   const [hero, setHero] = useState<{ hosts: number; settled: string } | null>(null);
@@ -141,7 +142,8 @@ export default function Landing() {
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]" style={{ letterSpacing: "-0.011em" }}>
-      {mock && <MockBanner onOff={toggleMock} />}
+      <TopBanner mock={mock} demo={demo} onOffMock={toggleMock} onOffDemo={setDemo} />
+      {!demo && <DemoInvite onOn={() => setDemo(true)} />}
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between gap-6 px-6">
           <Link href="/" className="flex items-center gap-2">

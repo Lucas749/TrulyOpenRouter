@@ -2,18 +2,24 @@
 
 import Link from "next/link";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { MockBanner, useMock } from "../components/mock";
+import { DEMO_ME, TopBanner, useDemo, useMock } from "../components/mock";
 import TeamOrgs from "./orgs";
 
 export default function TeamPage() {
   const { user } = usePrivy();
   const { wallets } = useWallets();
   const [mock, toggleMock] = useMock();
-  const me = user ? { did: user.id, wallet: wallets[0]?.address ?? user?.wallet?.address ?? null, email: (user as any)?.email?.address ?? (user as any)?.google?.email ?? null } : null;
+  const [demo, setDemo] = useDemo();
+  // Demo mode stands in for a login so a visitor can read the team surfaces.
+  const me = user
+    ? { did: user.id, wallet: wallets[0]?.address ?? user?.wallet?.address ?? null, email: (user as any)?.email?.address ?? (user as any)?.google?.email ?? null }
+    : demo
+      ? DEMO_ME
+      : null;
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
-      {mock && <MockBanner onOff={toggleMock} />}
+      <TopBanner mock={mock} demo={demo} onOffMock={toggleMock} onOffDemo={setDemo} />
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1240px] items-center justify-between px-6">
           <Link href="/account" className="text-sm text-[#6E6E73] hover:text-black">← Account</Link>

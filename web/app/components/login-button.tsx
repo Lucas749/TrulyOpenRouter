@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
+import { DEMO_ME, useDemo } from "./mock";
 
 export default function LoginButton() {
   const { ready, authenticated, user, login } = usePrivy();
+  const [demo] = useDemo();
   const { wallets } = useWallets();
   const { createWallet } = useCreateWallet();
   const [stuck, setStuck] = useState(false);
@@ -34,6 +36,20 @@ export default function LoginButton() {
       .finally(() => setCreating(false));
   }, [ready, authenticated, walletAddr, createWallet]);
 
+  // Demo mode has no Privy session, but the signed-in surfaces ARE browsable, so the
+  // header has to offer a way in. Sits above the !ready check: on a deployment with no
+  // Privy app id, ready never turns true and the explorer would otherwise be stranded.
+  if (demo && !authenticated) {
+    return (
+      <Link
+        href="/account"
+        title="Demo account — sample data"
+        className="flex h-10 items-center rounded-full border border-black/10 px-5 text-sm hover:bg-black/5"
+      >
+        {DEMO_ME.wallet.slice(0, 6)}…{DEMO_ME.wallet.slice(-4)}
+      </Link>
+    );
+  }
   if (!ready) {
     return (
       <button
