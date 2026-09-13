@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import LoginButton from "../components/login-button";
 import { useAuthFetch } from "../components/use-auth-fetch";
+import { TopBanner, useDemo, useMock } from "../components/mock";
 import { Wordmark } from "../components/mark";
 
 const SUGGESTIONS = ["Summarise this contract clause in two sentences.", "What can you run on a laptop GPU?", "How do host payouts work?"];
@@ -50,6 +51,8 @@ function emptyThread(): Thread {
 export default function ChatPage() {
   const { wallets } = useWallets();
   const { getAccessToken, login, authenticated } = usePrivy();
+  const [mock, toggleMock] = useMock();
+  const [demo, setDemo] = useDemo();
   // Logged-in identity = first wallet. Server threads follow the login
   // (any browser); logged-out keeps localStorage threads (this browser only).
   const handle = wallets[0]?.address ?? null;
@@ -131,7 +134,7 @@ export default function ChatPage() {
   async function send(prefill?: string) {
     const text = (prefill ?? input).trim();
     if (!text || busy) return;
-    if (!authenticated) { login(); return; }
+    if (!authenticated && !demo) { login(); return; }
     let id = currentId;
     let snapshot = threads;
     if (!id) {
@@ -152,20 +155,29 @@ export default function ChatPage() {
     apply({ role: "user", content: text }, isFirst ? text.slice(0, 42) : undefined);
     setInput("");
     try {
-      const token = await getAccessToken();
-      if (!token) {
+      // Demo mode has no login: the call goes through /api/demo/chat, which holds the demo
+      // credential server-side and forwards only model + messages. Same gateway, same host,
+      // a real receipt; the demo key's own ceilings bound what an explorer can spend.
+      const token = demo ? null : await getAccessToken();
+      if (!demo && !token) {
         apply({ role: "assistant", content: "Sign in again to continue." });
         setBusy(false);
         login();
         return;
       }
-      const r = await fetch(`${GATEWAY}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        // The gateway verifies that the selected wallet belongs to this login, or
-        // that this login is an active member of the selected team.
-        body: JSON.stringify({ model, messages: [{ role: "user", content: text }], ...(billTo !== "personal" ? { tor_team: billTo } : handle ? { userHandle: handle } : {}) }),
-      });
+      const r = demo
+        ? await fetch("/api/demo/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, messages: [{ role: "user", content: text }] }),
+          })
+        : await fetch(`${GATEWAY}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            // The gateway verifies that the selected wallet belongs to this login, or
+            // that this login is an active member of the selected team.
+            body: JSON.stringify({ model, messages: [{ role: "user", content: text }], ...(billTo !== "personal" ? { tor_team: billTo } : handle ? { userHandle: handle } : {}) }),
+          });
       const d = await r.json();
       // The chat response carries the receipt id but not the debit hash, so read the
       // receipt once and link the proof straight out to HashScan.
@@ -201,6 +213,7 @@ export default function ChatPage() {
 
   return (
     <div className="min-h-screen bg-white font-sans text-[#0D0D0D]">
+      <TopBanner mock={mock} demo={demo} onOffMock={toggleMock} onOffDemo={setDemo} />
       <header className="sticky top-0 z-30 border-b border-[#E5E5E0] bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 w-full max-w-2xl items-center justify-between px-6">
           <Link href="/" >

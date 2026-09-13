@@ -109,7 +109,7 @@ export function DemoBanner({ onOff }: { onOff: () => void }) {
   return (
     <div className="flex w-full flex-wrap items-center justify-center gap-2 bg-[#EFF4FF] px-4 py-1.5 text-xs text-[#1E40AF]">
       <span>
-        <span className="font-medium">You&apos;re in demo mode.</span> Sample data, nothing here can be executed.
+        <span className="font-medium">You&apos;re in demo mode.</span> Sample data everywhere except chat, which runs on a live host.
       </span>
       <Link href="/onboarding" className="rounded-full bg-[#2563EB] px-3 py-1 font-medium text-white hover:bg-[#1D4ED8]">
         Sign up for the real thing
