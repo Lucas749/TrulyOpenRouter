@@ -2575,7 +2575,12 @@ export function createApp(opts: GatewayOptions = {}) {
 
 const PORT = Number(process.env.PORT ?? 4021);
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Run directly (`node dist/index.js`) this boots and listens. Vercel imports the module rather
+// than executing it, so boot there too and hand the app over as the default export instead.
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+let app: ReturnType<typeof createApp> | undefined;
+
+if (isMain || process.env.VERCEL) {
   // Standalone server defaults: fresh key store + receipt log (tests inject their own).
   // Live legs (all env-driven, all optional in dev):
   //   REGISTRY (HostRegistry) + RPC_URL + MODELS + VAULT_ADDRESS + OPERATOR_KEY (vault debit)
@@ -2694,5 +2699,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     };
   }
   startVerifyLoop(opts); // VERIFY_INTERVAL_MS=0/unset = off; VERIFY_AUTO_CHALLENGE=1 + OPERATOR_KEY files challenges
-  createApp(opts).listen(PORT, () => console.log(`tor-gateway on :${PORT}`));
+  app = createApp(opts);
+  if (isMain) app.listen(PORT, () => console.log(`tor-gateway on :${PORT}`));
 }
+
+export default app;
