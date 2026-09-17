@@ -1,8 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "src/index.ts": {
-      "includeFiles": "schema.sql"
-    }
-  }
+  "framework": "express"
 }
